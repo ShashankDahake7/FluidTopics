@@ -4,7 +4,7 @@ const { generateUniqueSlug } = require('../../utils/helpers');
  * Extract topics from parsed document sections
  * Builds hierarchical topic structure from heading-based sections
  */
-const extractTopics = (sections, documentMetadata = {}) => {
+const extractTopics = (sections, documentMetadata = {}, sourcePath = '') => {
   const topics = [];
   const stack = []; // Stack to track parent hierarchy
 
@@ -14,6 +14,7 @@ const extractTopics = (sections, documentMetadata = {}) => {
     const topic = {
       title: section.title,
       slug,
+      sourcePath,
       content: {
         html: section.html || '',
         text: section.text || '',

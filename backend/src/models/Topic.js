@@ -63,6 +63,10 @@ const topicSchema = new mongoose.Schema(
         ref: 'Topic',
       },
     ],
+    sourcePath: {
+      type: String,
+      default: '',
+    },
     viewCount: {
       type: Number,
       default: 0,

@@ -10,7 +10,7 @@ const { generateSummary, generateTags } = require('../ai/groqService');
  * - Structured topics with hierarchy
  * - Extracted media
  */
-const transformContent = async (parsedDoc, originalFilename = '') => {
+const transformContent = async (parsedDoc, originalFilename = '', sourcePath = '') => {
   // 1. Extract & enrich metadata
   const metadata = extractMetadata(parsedDoc, originalFilename);
 
@@ -18,7 +18,7 @@ const transformContent = async (parsedDoc, originalFilename = '') => {
   const media = await extractMedia(parsedDoc);
 
   // 3. Extract topics from sections
-  const topics = extractTopics(parsedDoc.sections, metadata);
+  const topics = extractTopics(parsedDoc.sections, metadata, sourcePath);
 
   // 4. Distribute media to topics (attach to the topic where they appear)
   topics.forEach((topic, index) => {

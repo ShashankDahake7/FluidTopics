@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const cheerio = require('cheerio');
 const Document = require('../../models/Document');
 const Topic = require('../../models/Topic');
 const { parseHTML } = require('./parsers/htmlParser');
@@ -43,12 +44,15 @@ const ingestFile = async (file, userId = null) => {
         level: 'info',
       });
 
+      const fileTopicResults = [];
       for (const zipFile of files) {
         const parsed = await parseByFormat(zipFile.format, zipFile.content, zipFile.filename);
-        const transformed = await transformContent(parsed, zipFile.filename);
+        const transformed = await transformContent(parsed, zipFile.filename, zipFile.path);
         const topicIds = await saveTopics(transformed, doc._id);
+        fileTopicResults.push({ filePath: zipFile.path, topicIds });
         allTopicIds.push(...topicIds);
       }
+      await rewriteZipLinks(fileTopicResults);
     } else {
       // Single file
       const content =
@@ -136,6 +140,7 @@ const saveTopics = async (transformed, documentId) => {
       documentId,
       title: topicData.title,
       slug: topicData.slug,
+      sourcePath: topicData.sourcePath || '',
       content: topicData.content,
       hierarchy: {
         level: topicData.hierarchy.level,
@@ -168,6 +173,56 @@ const saveTopics = async (transformed, documentId) => {
   }
 
   return topicIds;
+};
+
+/**
+ * After all ZIP files are ingested, rewrite relative <a href> links in topic HTML
+ * so they point to /topics/{topicId} instead of raw file paths.
+ */
+const rewriteZipLinks = async (fileTopicResults) => {
+  const posix = path.posix;
+
+  // Map each file path to the ID of the first topic extracted from that file
+  const pathToTopicId = {};
+  for (const { filePath, topicIds } of fileTopicResults) {
+    if (topicIds.length > 0) {
+      pathToTopicId[filePath] = topicIds[0];
+    }
+  }
+
+  const allIds = fileTopicResults.flatMap((r) => r.topicIds);
+  const topics = await Topic.find({ _id: { $in: allIds }, sourcePath: { $ne: '' } });
+
+  for (const topic of topics) {
+    if (!topic.content.html) continue;
+
+    const $ = cheerio.load(topic.content.html);
+    let modified = false;
+
+    $('a[href]').each((_, el) => {
+      const href = $(el).attr('href');
+      if (!href || /^(https?:|\/|#|mailto:)/.test(href)) return;
+
+      // Strip fragment/query before resolving
+      const [filePart] = href.split(/[?#]/);
+      if (!filePart) return;
+
+      // Resolve relative to the source file's directory within the ZIP
+      const sourceDir = posix.dirname(topic.sourcePath);
+      const resolved = posix.normalize(posix.join(sourceDir, filePart));
+
+      const targetId = pathToTopicId[resolved];
+      if (targetId) {
+        $(el).attr('href', `/topics/${targetId}`);
+        modified = true;
+      }
+    });
+
+    if (modified) {
+      topic.content.html = $('body').html() || topic.content.html;
+      await topic.save();
+    }
+  }
 };
 
 module.exports = { ingestFile };

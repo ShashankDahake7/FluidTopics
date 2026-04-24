@@ -19,7 +19,7 @@ coverage/
 .turbo/
 .parcel-cache/
 .vite/
-
+.claude/
 # Python / backend
 __pycache__/
 *.py[cod]

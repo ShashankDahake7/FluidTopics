@@ -22,13 +22,41 @@ const parseHTML = (htmlContent, filename = '') => {
     language: $('html').attr('lang') || 'en',
   };
 
+  // Remove non-content elements (scripts, styles, nav chrome)
+  $('script, style, link, noscript').remove();
+  $('header, footer, nav, aside').remove();
+  $('[role="navigation"], [role="banner"], [role="contentinfo"]').remove();
+
+  // Try to isolate the main content area (Paligo and common doc formats)
+  // Cheerio objects are always truthy, so we must check .length explicitly.
+  const contentSelectors = [
+    '#content-wrapper',
+    'article',
+    'main',
+    '[role="main"]',
+    '#main-content',
+    '.topic-content',
+    '.content',
+  ];
+  let workingRoot = $('body').length ? $('body') : $.root();
+  for (const sel of contentSelectors) {
+    const found = $(sel).first();
+    if (found.length) {
+      workingRoot = found;
+      break;
+    }
+  }
+
   // Extract sections based on headings
   const sections = [];
-  const headings = $('h1, h2, h3, h4, h5, h6');
+  // Only count headings that are direct children — if headings are nested deeper
+  // (e.g. Paligo's <section><div class="titlepage"><h2>) we treat the whole
+  // content area as one section rather than doing a broken flat walk.
+  const directHeadings = workingRoot.children().filter('h1, h2, h3, h4, h5, h6');
 
-  if (headings.length === 0) {
-    // No headings — treat entire body as one section
-    const bodyHtml = $('body').html() || htmlContent;
+  if (directHeadings.length === 0) {
+    // No direct-child headings — treat entire content area as one section
+    const bodyHtml = workingRoot.html() || htmlContent;
     sections.push({
       title: metadata.title,
       level: 1,
@@ -36,8 +64,9 @@ const parseHTML = (htmlContent, filename = '') => {
       text: stripHtml(bodyHtml),
     });
   } else {
+    // Headings are direct children — walk them to build sections
     let currentSection = null;
-    const bodyChildren = $('body').length ? $('body').children() : $.root().children();
+    const bodyChildren = workingRoot.children();
 
     bodyChildren.each((_, element) => {
       const el = $(element);
