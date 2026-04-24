@@ -1,8 +1,8 @@
 services:
-  - type: private
+  - type: pserv
     name: elasticsearch
     runtime: docker
-    plan: standard # At least 2GB RAM is recommended
+    plan: standard
     envVars:
       - key: discovery.type
         value: single-node
