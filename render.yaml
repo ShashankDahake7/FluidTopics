@@ -1,0 +1,16 @@
+services:
+  - type: private
+    name: elasticsearch
+    runtime: docker
+    plan: standard # At least 2GB RAM is recommended
+    envVars:
+      - key: discovery.type
+        value: single-node
+      - key: xpack.security.enabled
+        value: "false"
+      - key: ES_JAVA_OPTS
+        value: "-Xms512m -Xmx512m"
+    disk:
+      name: es-data
+      mountPath: /usr/share/elasticsearch/data
+      sizeGB: 10

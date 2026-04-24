@@ -18,7 +18,7 @@ const adminRoutes = require('./routes/admin');
 const bookmarkRoutes = require('./routes/bookmarks');
 const userRoutes = require('./routes/user');
 const designerRoutes = require('./routes/designer');
-const portalRoutes   = require('./routes/portal');
+const portalRoutes = require('./routes/portal');
 
 const app = express();
 
@@ -45,7 +45,7 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/bookmarks', bookmarkRoutes);
 app.use('/api/user', userRoutes);
 app.use('/api/designer', designerRoutes);
-app.use('/api/portal',   portalRoutes);
+app.use('/api/portal', portalRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -65,12 +65,16 @@ const start = async () => {
     await connectDB();
     await initElasticsearch();
 
-    app.listen(config.port, () => {
-      console.log(`\n🚀 Fluid Topics API server running on http://localhost:${config.port}`);
-      console.log(`📚 Environment: ${config.nodeEnv}`);
-      console.log(`🔍 Elasticsearch: ${config.elasticsearch.url}`);
-      console.log(`💾 MongoDB: connected\n`);
-    });
+    if (process.env.VERCEL) {
+      console.log('✅ Server running in serverless mode (Vercel)');
+    } else {
+      app.listen(config.port, () => {
+        console.log(`\n🚀 Fluid Topics API server running on http://localhost:${config.port}`);
+        console.log(`📚 Environment: ${config.nodeEnv}`);
+        console.log(`🔍 Elasticsearch: ${config.elasticsearch.url}`);
+        console.log(`💾 MongoDB: connected\n`);
+      });
+    }
   } catch (error) {
     console.error('Failed to start server:', error);
     process.exit(1);
