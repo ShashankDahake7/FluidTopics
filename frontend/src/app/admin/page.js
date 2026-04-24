@@ -12,36 +12,51 @@ export default function AdminDashboard() {
       .catch(e => { console.error(e); setLoading(false); });
   }, []);
 
-  if (loading) return (<><Header /><div style={{ display: 'flex', justifyContent: 'center', padding: '100px' }}><div className="spinner" /></div></>);
+  if (loading) return (
+    <>
+      <Header />
+      <div style={{ background: 'var(--bg-secondary)', minHeight: 'calc(100vh - var(--header-height))', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+        <div className="spinner" />
+      </div>
+    </>
+  );
 
-  const cards = [
-    { label: 'Documents', value: stats?.documents || 0, icon: '📄', color: '#6366f1' },
-    { label: 'Topics', value: stats?.topics || 0, icon: '📚', color: '#8b5cf6' },
-    { label: 'Users', value: stats?.users || 0, icon: '👥', color: '#10b981' },
+  const kpis = [
+    { label: 'Documents', value: stats?.documents || 0, icon: '📄', color: 'var(--accent-primary)' },
+    { label: 'Topics', value: stats?.topics || 0, icon: '📚', color: '#7c3aed' },
+    { label: 'Users', value: stats?.users || 0, icon: '👥', color: 'var(--success)' },
+  ];
+
+  const quickLinks = [
+    { href: '/admin/ingest', icon: '⬆️', title: 'Upload Content', desc: 'Ingest new documents' },
+    { href: '/admin/content', icon: '📋', title: 'Manage Content', desc: 'View and manage topics' },
+    { href: '/admin/analytics', icon: '📊', title: 'Analytics', desc: 'Search & engagement stats' },
   ];
 
   return (
     <>
       <Header />
-      <main style={{ position: 'relative', zIndex: 1 }} className="container">
-        <div style={{ padding: '32px 0' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+      <div style={{ background: 'var(--bg-secondary)', minHeight: 'calc(100vh - var(--header-height))' }}>
+        <main className="container" style={{ padding: '36px 0 56px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '28px' }}>
             <div>
-              <h1 style={{ fontSize: '1.8rem', fontWeight: 700 }}>Admin Dashboard</h1>
-              <p style={{ color: 'var(--text-secondary)', marginTop: '4px' }}>Manage content and monitor platform</p>
+              <h1 style={{ fontSize: '1.6rem', fontWeight: 700, letterSpacing: '-0.02em' }}>Admin Dashboard</h1>
+              <p style={{ color: 'var(--text-secondary)', marginTop: '4px', fontSize: '0.9rem' }}>Manage content and monitor the platform</p>
             </div>
-            <a href="/admin/ingest" className="btn btn-primary">+ Upload Content</a>
+            <a href="/admin/ingest" className="btn btn-primary">+ Upload content</a>
           </div>
 
-          {/* Stats Cards */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', marginBottom: '32px' }}>
-            {cards.map((c, i) => (
-              <div key={i} className="card animate-fadeIn" style={{ animationDelay: `${i * 80}ms` }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  <span style={{ fontSize: '2rem' }}>{c.icon}</span>
+          {/* KPI Cards */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', marginBottom: '28px' }}>
+            {kpis.map((c, i) => (
+              <div key={i} className="card animate-fadeIn" style={{ animationDelay: `${i * 60}ms` }}>
+                <div style={{ display: 'flex', align: 'center', gap: '14px' }}>
+                  <div style={{ width: '44px', height: '44px', borderRadius: '10px', background: 'var(--bg-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.3rem', flexShrink: 0 }}>
+                    {c.icon}
+                  </div>
                   <div>
-                    <div style={{ fontSize: '1.8rem', fontWeight: 700, color: c.color }}>{c.value}</div>
-                    <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{c.label}</div>
+                    <div style={{ fontSize: '1.7rem', fontWeight: 700, color: c.color, lineHeight: 1 }}>{c.value.toLocaleString()}</div>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '3px' }}>{c.label}</div>
                   </div>
                 </div>
               </div>
@@ -49,52 +64,48 @@ export default function AdminDashboard() {
           </div>
 
           {/* Quick Links */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', marginBottom: '32px' }}>
-            {[
-              { href: '/admin/ingest', icon: '⬆️', title: 'Upload Content', desc: 'Ingest new documents' },
-              { href: '/admin/content', icon: '📋', title: 'Manage Content', desc: 'View and manage topics' },
-              { href: '/admin/analytics', icon: '📊', title: 'Analytics', desc: 'Search & engagement stats' },
-            ].map((link, i) => (
-              <a key={i} href={link.href} className="card card-glow" style={{ textDecoration: 'none' }}>
-                <span style={{ fontSize: '1.5rem' }}>{link.icon}</span>
-                <h3 style={{ fontSize: '0.95rem', fontWeight: 600, marginTop: '8px', color: 'var(--text-primary)' }}>{link.title}</h3>
-                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '4px' }}>{link.desc}</p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', marginBottom: '28px' }}>
+            {quickLinks.map((link, i) => (
+              <a key={i} href={link.href} className="card" style={{ textDecoration: 'none', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <span style={{ fontSize: '1.4rem' }}>{link.icon}</span>
+                <h3 style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-primary)' }}>{link.title}</h3>
+                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{link.desc}</p>
               </a>
             ))}
           </div>
 
           {/* Recent Documents */}
           <div className="card">
-            <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '16px' }}>Recent Ingestions</h3>
+            <h3 style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: '16px' }}>Recent Ingestions</h3>
             {(stats?.recentDocuments || []).length > 0 ? (
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
                     {['Title', 'Format', 'Topics', 'Status', 'Date'].map(h => (
-                      <th key={h} style={{ textAlign: 'left', padding: '8px 12px', fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 600 }}>{h}</th>
+                      <th key={h} style={{ textAlign: 'left', padding: '8px 12px', fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {stats.recentDocuments.map(doc => (
                     <tr key={doc._id} style={{ borderBottom: '1px solid var(--border-color)' }}>
-                      <td style={tdStyle}>{doc.title}</td>
-                      <td style={tdStyle}><span className="badge">{doc.sourceFormat}</span></td>
-                      <td style={tdStyle}>{doc.topicCount || 0}</td>
-                      <td style={tdStyle}><span className={`badge badge-${doc.status === 'completed' ? 'success' : doc.status === 'failed' ? 'error' : 'warning'}`}>{doc.status}</span></td>
-                      <td style={tdStyle}>{new Date(doc.createdAt).toLocaleDateString()}</td>
+                      <td style={td}>{doc.title}</td>
+                      <td style={td}><span className="badge">{doc.sourceFormat}</span></td>
+                      <td style={td}>{doc.topicCount || 0}</td>
+                      <td style={td}><span className={`badge badge-${doc.status === 'completed' ? 'success' : doc.status === 'failed' ? 'error' : 'warning'}`}>{doc.status}</span></td>
+                      <td style={td}>{new Date(doc.createdAt).toLocaleDateString()}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             ) : (
-              <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>No documents ingested yet</p>
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem' }}>No documents ingested yet</p>
             )}
           </div>
-        </div>
-      </main>
+        </main>
+      </div>
     </>
   );
 }
 
-const tdStyle = { padding: '10px 12px', fontSize: '0.85rem', color: 'var(--text-secondary)' };
+const td = { padding: '10px 12px', fontSize: '0.85rem', color: 'var(--text-secondary)' };

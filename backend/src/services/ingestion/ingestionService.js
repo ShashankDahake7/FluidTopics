@@ -1,8 +1,10 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const cheerio = require('cheerio');
 const Document = require('../../models/Document');
 const Topic = require('../../models/Topic');
+const config = require('../../config/env');
 const { parseHTML } = require('./parsers/htmlParser');
 const { parseMarkdown } = require('./parsers/markdownParser');
 const { parseDOCX } = require('./parsers/docxParser');
@@ -38,11 +40,14 @@ const ingestFile = async (file, userId = null) => {
 
     if (format === 'zip') {
       // Handle ZIP — process each file inside
-      const files = handleZip(file.path);
+      const { files, images } = handleZip(file.path);
       doc.ingestionLog.push({
-        message: `ZIP extracted: ${files.length} files found`,
+        message: `ZIP extracted: ${files.length} content files, ${images.length} images`,
         level: 'info',
       });
+
+      // Save images to disk and build zipPath → served URL map
+      const imageSrcMap = saveZipImages(images);
 
       const fileTopicResults = [];
       for (const zipFile of files) {
@@ -52,7 +57,7 @@ const ingestFile = async (file, userId = null) => {
         fileTopicResults.push({ filePath: zipFile.path, topicIds });
         allTopicIds.push(...topicIds);
       }
-      await rewriteZipLinks(fileTopicResults);
+      await rewriteZipContent(fileTopicResults, imageSrcMap);
     } else {
       // Single file
       const content =
@@ -176,10 +181,34 @@ const saveTopics = async (transformed, documentId) => {
 };
 
 /**
- * After all ZIP files are ingested, rewrite relative <a href> links in topic HTML
- * so they point to /topics/{topicId} instead of raw file paths.
+ * Save image files extracted from a ZIP to uploads/media/ on disk.
+ * Returns a map of { zipPath: '/uploads/media/filename.ext' }.
  */
-const rewriteZipLinks = async (fileTopicResults) => {
+const saveZipImages = (images) => {
+  const mediaDir = path.resolve(config.upload.dir, 'media');
+  if (!fs.existsSync(mediaDir)) {
+    fs.mkdirSync(mediaDir, { recursive: true });
+  }
+
+  const srcMap = {};
+  for (const img of images) {
+    const hash = crypto.createHash('md5').update(img.content).digest('hex');
+    const ext = img.filename.toLowerCase().split('.').pop();
+    const savedName = `${hash}.${ext}`;
+    const savedPath = path.join(mediaDir, savedName);
+    if (!fs.existsSync(savedPath)) {
+      fs.writeFileSync(savedPath, img.content);
+    }
+    srcMap[img.zipPath] = `/uploads/media/${savedName}`;
+  }
+  return srcMap;
+};
+
+/**
+ * After all ZIP files are ingested, rewrite relative <a href> and <img src>
+ * in topic HTML so they point to served routes instead of raw ZIP paths.
+ */
+const rewriteZipContent = async (fileTopicResults, imageSrcMap) => {
   const posix = path.posix;
 
   // Map each file path to the ID of the first topic extracted from that file
@@ -198,22 +227,33 @@ const rewriteZipLinks = async (fileTopicResults) => {
 
     const $ = cheerio.load(topic.content.html);
     let modified = false;
+    const sourceDir = posix.dirname(topic.sourcePath);
 
+    // Rewrite internal links
     $('a[href]').each((_, el) => {
       const href = $(el).attr('href');
       if (!href || /^(https?:|\/|#|mailto:)/.test(href)) return;
 
-      // Strip fragment/query before resolving
       const [filePart] = href.split(/[?#]/);
       if (!filePart) return;
 
-      // Resolve relative to the source file's directory within the ZIP
-      const sourceDir = posix.dirname(topic.sourcePath);
       const resolved = posix.normalize(posix.join(sourceDir, filePart));
-
       const targetId = pathToTopicId[resolved];
       if (targetId) {
         $(el).attr('href', `/topics/${targetId}`);
+        modified = true;
+      }
+    });
+
+    // Rewrite image sources
+    $('img[src]').each((_, el) => {
+      const src = $(el).attr('src');
+      if (!src || /^(https?:|data:|\/|#)/.test(src)) return;
+
+      const resolved = posix.normalize(posix.join(sourceDir, src));
+      const newSrc = imageSrcMap[resolved];
+      if (newSrc) {
+        $(el).attr('src', newSrc);
         modified = true;
       }
     });

@@ -49,24 +49,30 @@ export default function IngestPage() {
   return (
     <>
       <Header />
-      <main style={{ position: 'relative', zIndex: 1 }} className="container">
-        <div style={{ padding: '32px 0' }}>
-          <h1 style={{ fontSize: '1.8rem', fontWeight: 700 }}>Content Ingestion</h1>
-          <p style={{ color: 'var(--text-secondary)', marginTop: '4px' }}>Upload documents to parse and index</p>
+      <div style={{ background: 'var(--bg-secondary)', minHeight: 'calc(100vh - var(--header-height))' }}>
+        <main className="container" style={{ padding: '36px 0 56px' }}>
+          <div style={{ marginBottom: '28px' }}>
+            <h1 style={{ fontSize: '1.6rem', fontWeight: 700, letterSpacing: '-0.02em' }}>Content Ingestion</h1>
+            <p style={{ color: 'var(--text-secondary)', marginTop: '4px', fontSize: '0.9rem' }}>Upload documents to parse and index</p>
+          </div>
 
           {/* Upload Zone */}
           <div
-            className="card" onClick={() => inputRef.current?.click()}
-            onDrop={handleDrop} onDragOver={e => { e.preventDefault(); setDragActive(true); }}
+            className="card"
+            onClick={() => inputRef.current?.click()}
+            onDrop={handleDrop}
+            onDragOver={e => { e.preventDefault(); setDragActive(true); }}
             onDragLeave={() => setDragActive(false)}
             style={{
-              marginTop: '24px', textAlign: 'center', padding: '48px', cursor: 'pointer',
+              textAlign: 'center', padding: '56px 24px', cursor: 'pointer',
               border: `2px dashed ${dragActive ? 'var(--accent-primary)' : 'var(--border-color)'}`,
-              background: dragActive ? 'rgba(99,102,241,0.05)' : 'var(--bg-card)',
-              transition: 'all 0.2s',
+              background: dragActive ? 'rgba(79,70,229,0.04)' : '#fff',
+              transition: 'all 200ms', boxShadow: 'none',
             }}>
-            <span style={{ fontSize: '3rem' }}>📁</span>
-            <p style={{ marginTop: '12px', color: 'var(--text-secondary)' }}>
+            <div style={{ width: '56px', height: '56px', borderRadius: '14px', background: 'rgba(79,70,229,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', fontSize: '1.6rem' }}>
+              📁
+            </div>
+            <p style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.95rem' }}>
               {file ? file.name : 'Drag & drop or click to select'}
             </p>
             <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '4px' }}>
@@ -78,23 +84,36 @@ export default function IngestPage() {
           </div>
 
           {file && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '16px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '14px', padding: '12px 16px', background: '#fff', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)' }}>
               <span className="badge">{file.name}</span>
               <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
                 {(file.size / 1024).toFixed(1)} KB
               </span>
-              <button onClick={handleUpload} className="btn btn-primary" disabled={uploading}>
-                {uploading ? '⏳ Processing...' : '🚀 Upload & Process'}
+              <button onClick={handleUpload} className="btn btn-primary btn-sm" disabled={uploading} style={{ marginLeft: 'auto' }}>
+                {uploading ? 'Processing…' : 'Upload & Process'}
               </button>
             </div>
           )}
 
-          {error && <div style={{ marginTop: '16px', padding: '12px 16px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 'var(--radius-md)', color: 'var(--error)', fontSize: '0.85rem' }}>{error}</div>}
+          {error && (
+            <div style={{
+              marginTop: '14px', padding: '12px 16px',
+              background: '#fef2f2', border: '1px solid #fca5a5',
+              borderRadius: 'var(--radius-md)', color: '#dc2626', fontSize: '0.85rem',
+              display: 'flex', alignItems: 'center', gap: '8px',
+            }}>
+              <span>⚠</span> {error}
+            </div>
+          )}
 
           {result && (
-            <div style={{ marginTop: '16px', padding: '16px', background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.3)', borderRadius: 'var(--radius-md)' }}>
-              <p style={{ color: 'var(--success)', fontWeight: 600 }}>✅ {result.message}</p>
-              <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '4px' }}>
+            <div style={{
+              marginTop: '14px', padding: '14px 18px',
+              background: '#f0fdf4', border: '1px solid #86efac',
+              borderRadius: 'var(--radius-md)',
+            }}>
+              <p style={{ color: '#166534', fontWeight: 600, fontSize: '0.9rem' }}>✓ {result.message}</p>
+              <p style={{ color: '#15803d', fontSize: '0.82rem', marginTop: '3px' }}>
                 Created {result.document?.topicCount || 0} topics from "{result.document?.title}"
               </p>
             </div>
@@ -102,14 +121,14 @@ export default function IngestPage() {
 
           {/* Jobs Table */}
           <div className="card" style={{ marginTop: '32px' }}>
-            <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '16px' }}>Ingestion History</h3>
+            <h3 style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: '16px', color: 'var(--text-primary)' }}>Ingestion History</h3>
             {jobs.length > 0 ? (
               <div style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
                       {['Title', 'Format', 'Size', 'Topics', 'Status', 'Date', ''].map(h => (
-                        <th key={h} style={{ textAlign: 'left', padding: '8px 12px', fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 600 }}>{h}</th>
+                        <th key={h} style={{ textAlign: 'left', padding: '8px 12px', fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</th>
                       ))}
                     </tr>
                   </thead>
@@ -122,16 +141,20 @@ export default function IngestPage() {
                         <td style={td}>{job.topicCount || 0}</td>
                         <td style={td}><span className={`badge badge-${job.status === 'completed' ? 'success' : job.status === 'failed' ? 'error' : 'warning'}`}>{job.status}</span></td>
                         <td style={td}>{new Date(job.createdAt).toLocaleDateString()}</td>
-                        <td style={td}><button onClick={() => handleDelete(job._id)} className="btn btn-ghost btn-sm" style={{ color: 'var(--error)' }}>🗑️</button></td>
+                        <td style={td}>
+                          <button onClick={() => handleDelete(job._id)} className="btn btn-ghost btn-sm" style={{ color: 'var(--error)', padding: '4px 8px' }}>Delete</button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
-            ) : <p style={{ color: 'var(--text-muted)' }}>No ingestion jobs yet</p>}
+            ) : (
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem' }}>No ingestion jobs yet</p>
+            )}
           </div>
-        </div>
-      </main>
+        </main>
+      </div>
     </>
   );
 }

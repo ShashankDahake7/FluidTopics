@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Header from '@/components/layout/Header';
 import api from '@/lib/api';
@@ -10,6 +10,15 @@ export default function LoginPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const router = useRouter();
+
+  useEffect(() => {
+    if (localStorage.getItem('ft_token')) {
+      router.replace('/');
+      return;
+    }
+    setIsRegister(false);
+    setError('');
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -31,52 +40,74 @@ export default function LoginPage() {
   return (
     <>
       <Header />
-      <main style={{ position: 'relative', zIndex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 'calc(100vh - var(--header-height))', padding: '24px' }}>
-        <div className="card" style={{ width: '100%', maxWidth: '420px', padding: '40px' }}>
-          <h1 style={{ fontSize: '1.5rem', fontWeight: 700, textAlign: 'center' }}>
-            {isRegister ? 'Create Account' : 'Welcome Back'}
-          </h1>
-          <p style={{ color: 'var(--text-muted)', textAlign: 'center', marginTop: '8px', fontSize: '0.9rem' }}>
-            {isRegister ? 'Sign up to access the platform' : 'Sign in to your account'}
-          </p>
+      <div style={{
+        background: 'var(--bg-secondary)',
+        minHeight: 'calc(100vh - var(--header-height))',
+        display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '24px',
+      }}>
+        <div className="card" style={{ width: '100%', maxWidth: '400px', padding: '40px' }}>
+          <div style={{ textAlign: 'center', marginBottom: '28px' }}>
+            <h1 style={{ fontSize: '1.4rem', fontWeight: 700, letterSpacing: '-0.01em' }}>
+              {isRegister ? 'Create an account' : 'Welcome back'}
+            </h1>
+            <p style={{ color: 'var(--text-muted)', marginTop: '6px', fontSize: '0.875rem' }}>
+              {isRegister ? 'Sign up to access the platform' : 'Sign in to your account'}
+            </p>
+          </div>
 
           {error && (
-            <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 'var(--radius-md)', padding: '10px 14px', marginTop: '20px', color: 'var(--error)', fontSize: '0.85rem' }}>
-              {error}
+            <div style={{
+              background: '#fef2f2', border: '1px solid #fca5a5',
+              borderRadius: 'var(--radius-md)', padding: '10px 14px',
+              marginBottom: '20px', color: '#dc2626', fontSize: '0.85rem',
+              display: 'flex', alignItems: 'center', gap: '8px',
+            }}>
+              <span style={{ flexShrink: 0 }}>⚠</span> {error}
             </div>
           )}
 
-          <form onSubmit={handleSubmit} style={{ marginTop: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
             {isRegister && (
               <div>
-                <label style={labelStyle}>Name</label>
-                <input className="input" type="text" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} required />
+                <label style={labelStyle}>Full name</label>
+                <input className="input" type="text" value={form.name}
+                  onChange={e => setForm({ ...form, name: e.target.value })} required
+                  placeholder="Jane Smith" />
               </div>
             )}
             <div>
-              <label style={labelStyle}>Email</label>
-              <input className="input" type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} required />
+              <label style={labelStyle}>Email address</label>
+              <input className="input" type="email" value={form.email}
+                onChange={e => setForm({ ...form, email: e.target.value })} required
+                placeholder="you@company.com" />
             </div>
             <div>
               <label style={labelStyle}>Password</label>
-              <input className="input" type="password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} required minLength={6} />
+              <input className="input" type="password" value={form.password}
+                onChange={e => setForm({ ...form, password: e.target.value })} required minLength={6}
+                placeholder="••••••••" />
             </div>
-            <button type="submit" className="btn btn-primary btn-lg" style={{ width: '100%', justifyContent: 'center', marginTop: '8px' }} disabled={loading}>
-              {loading ? 'Please wait...' : isRegister ? 'Create Account' : 'Sign In'}
+            <button type="submit" className="btn btn-primary btn-lg"
+              style={{ width: '100%', justifyContent: 'center', marginTop: '6px' }}
+              disabled={loading}>
+              {loading ? 'Please wait…' : isRegister ? 'Create account' : 'Sign in'}
             </button>
           </form>
 
           <p style={{ textAlign: 'center', marginTop: '20px', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
             {isRegister ? 'Already have an account?' : "Don't have an account?"}{' '}
             <button onClick={() => { setIsRegister(!isRegister); setError(''); }}
-              style={{ background: 'none', border: 'none', color: 'var(--accent-tertiary)', cursor: 'pointer', fontFamily: 'var(--font-sans)', fontSize: '0.85rem' }}>
-              {isRegister ? 'Sign In' : 'Sign Up'}
+              style={{ background: 'none', border: 'none', color: 'var(--accent-primary)', cursor: 'pointer', fontFamily: 'var(--font-sans)', fontSize: '0.85rem', fontWeight: 500 }}>
+              {isRegister ? 'Sign in' : 'Sign up'}
             </button>
           </p>
         </div>
-      </main>
+      </div>
     </>
   );
 }
 
-const labelStyle = { display: 'block', fontSize: '0.85rem', fontWeight: 500, color: 'var(--text-secondary)', marginBottom: '6px' };
+const labelStyle = {
+  display: 'block', fontSize: '0.82rem', fontWeight: 500,
+  color: 'var(--text-secondary)', marginBottom: '5px',
+};

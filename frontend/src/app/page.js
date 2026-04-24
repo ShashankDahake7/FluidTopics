@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Header from '@/components/layout/Header';
 import api from '@/lib/api';
@@ -19,11 +19,8 @@ export default function HomePage() {
 
     api.get('/user/recommendations?limit=6')
       .then(d => {
-        if (d.recommendations && d.recommendations.length > 0) {
-          setRecs(d.recommendations);
-        } else {
-          loadPopular();
-        }
+        if (d.recommendations && d.recommendations.length > 0) setRecs(d.recommendations);
+        else loadPopular();
       })
       .catch(() => loadPopular());
 
@@ -39,149 +36,181 @@ export default function HomePage() {
   return (
     <>
       <Header />
-      <main style={{ position: 'relative', zIndex: 1 }}>
+      <main>
         {/* Hero */}
-        <section style={styles.hero}>
-          <div style={styles.heroGlow} />
-          <h1 style={styles.heroTitle}>
-            Find answers <span style={styles.heroAccent}>instantly</span>
+        <section style={s.hero}>
+          <div style={s.heroBadge}>Documentation Platform</div>
+          <h1 style={s.heroTitle}>
+            Find answers <span style={s.heroAccent}>instantly</span>
           </h1>
-          <p style={styles.heroSub}>Search across all your documentation in one place</p>
-          <form onSubmit={handleSearch} style={styles.heroSearch}>
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2" style={styles.heroSearchIcon}>
+          <p style={s.heroSub}>
+            Search across all your documentation, guides, and references in one place.
+          </p>
+          <form onSubmit={handleSearch} style={s.heroSearch}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2" style={s.heroSearchIcon}>
               <circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>
             </svg>
             <input
               type="text" value={query} onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search topics, guides, and references..."
-              style={styles.heroInput}
+              placeholder="Search topics, guides, and references…"
+              style={s.heroInput}
             />
-            <button type="submit" className="btn btn-primary">Search</button>
+            <button type="submit" className="btn btn-primary" style={{ borderRadius: '6px' }}>Search</button>
           </form>
-          <div style={styles.statsRow}>
+
+          <div style={s.statsRow}>
             {[
               { label: 'Documents', value: stats.documents || 0 },
               { label: 'Topics', value: stats.topics || 0 },
               { label: 'Users', value: stats.users || 0 },
-            ].map((s,i) => (
-              <div key={i} style={styles.statItem}>
-                <span style={styles.statVal}>{s.value}</span>
-                <span style={styles.statLabel}>{s.label}</span>
+            ].map((stat, i) => (
+              <div key={i} style={s.statItem}>
+                <span style={s.statVal}>{stat.value.toLocaleString()}</span>
+                <span style={s.statLabel}>{stat.label}</span>
               </div>
             ))}
           </div>
         </section>
 
-        {/* Personalized Recommendations */}
-        {recs.length > 0 && (
-          <section style={styles.section} className="container">
-            <h2 style={styles.sectionTitle}>✨ Recommended For You</h2>
-            <div style={styles.grid}>
-              {recs.map(t => (
-                <a key={t._id} href={`/topics/${t._id}`} className="card card-glow" style={styles.topicCard}>
-                  <h3 style={styles.topicTitle}>{t.title}</h3>
-                  <div style={styles.topicMeta}>
-                    {(t.metadata?.tags || []).slice(0, 3).map((tag, i) => (
-                      <span key={i} className="badge">{tag}</span>
-                    ))}
-                  </div>
-                  <span style={styles.views}>👁 {t.viewCount || 0} views</span>
-                </a>
-              ))}
-            </div>
-          </section>
-        )}
+        <div style={{ background: 'var(--bg-secondary)', borderTop: '1px solid var(--border-color)', paddingBottom: '48px' }}>
+          {/* Recommended */}
+          {recs.length > 0 && (
+            <section style={s.section} className="container">
+              <div style={s.sectionHeader}>
+                <h2 style={s.sectionTitle}>Recommended for you</h2>
+                <a href="/profile/recommendations" style={s.sectionLink}>View all →</a>
+              </div>
+              <div style={s.grid}>
+                {recs.map((t, i) => (
+                  <a key={t._id} href={`/topics/${t._id}`} className="card animate-fadeIn" style={{ ...s.topicCard, animationDelay: `${i * 40}ms` }}>
+                    <h3 style={s.topicTitle}>{t.title}</h3>
+                    <div style={s.topicTags}>
+                      {(t.metadata?.tags || []).slice(0, 3).map((tag, j) => (
+                        <span key={j} className="badge">{tag}</span>
+                      ))}
+                    </div>
+                    <span style={s.topicMeta}>{t.viewCount || 0} views</span>
+                  </a>
+                ))}
+              </div>
+            </section>
+          )}
 
-        {/* Popular Topics (Fallback) */}
-        {recs.length === 0 && popular.length > 0 && (
-          <section style={styles.section} className="container">
-            <h2 style={styles.sectionTitle}>📚 Popular Topics</h2>
-            <div style={styles.grid}>
-              {popular.map(t => (
-                <a key={t._id} href={`/topics/${t._id}`} className="card card-glow" style={styles.topicCard}>
-                  <h3 style={styles.topicTitle}>{t.title}</h3>
-                  <div style={styles.topicMeta}>
-                    {(t.metadata?.tags || []).slice(0, 3).map((tag, i) => (
-                      <span key={i} className="badge">{tag}</span>
-                    ))}
-                  </div>
-                  <span style={styles.views}>👁 {t.viewCount || 0} views</span>
-                </a>
-              ))}
-            </div>
-          </section>
-        )}
+          {/* Popular (fallback) */}
+          {recs.length === 0 && popular.length > 0 && (
+            <section style={s.section} className="container">
+              <div style={s.sectionHeader}>
+                <h2 style={s.sectionTitle}>Popular topics</h2>
+                <a href="/topics" style={s.sectionLink}>Browse all →</a>
+              </div>
+              <div style={s.grid}>
+                {popular.map((t, i) => (
+                  <a key={t._id} href={`/topics/${t._id}`} className="card animate-fadeIn" style={{ ...s.topicCard, animationDelay: `${i * 40}ms` }}>
+                    <h3 style={s.topicTitle}>{t.title}</h3>
+                    <div style={s.topicTags}>
+                      {(t.metadata?.tags || []).slice(0, 3).map((tag, j) => (
+                        <span key={j} className="badge">{tag}</span>
+                      ))}
+                    </div>
+                    <span style={s.topicMeta}>{t.viewCount || 0} views</span>
+                  </a>
+                ))}
+              </div>
+            </section>
+          )}
 
-        {/* Recent */}
-        {recent.length > 0 && (
-          <section style={styles.section} className="container">
-            <h2 style={styles.sectionTitle}>🕐 Recently Updated</h2>
-            <div style={styles.grid}>
-              {recent.map(t => (
-                <a key={t._id} href={`/topics/${t._id}`} className="card" style={styles.topicCard}>
-                  <h3 style={styles.topicTitle}>{t.title}</h3>
-                  <span style={styles.date}>{new Date(t.updatedAt).toLocaleDateString()}</span>
-                </a>
-              ))}
-            </div>
-          </section>
-        )}
+          {/* Recently updated */}
+          {recent.length > 0 && (
+            <section style={s.section} className="container">
+              <div style={s.sectionHeader}>
+                <h2 style={s.sectionTitle}>Recently updated</h2>
+              </div>
+              <div style={s.grid}>
+                {recent.map((t, i) => (
+                  <a key={t._id} href={`/topics/${t._id}`} className="card animate-fadeIn" style={{ ...s.topicCard, animationDelay: `${i * 40}ms` }}>
+                    <h3 style={s.topicTitle}>{t.title}</h3>
+                    <span style={s.topicMeta}>{new Date(t.updatedAt).toLocaleDateString()}</span>
+                  </a>
+                ))}
+              </div>
+            </section>
+          )}
 
-        {/* Empty state */}
-        {recs.length === 0 && popular.length === 0 && recent.length === 0 && (
-          <section style={styles.emptySection} className="container">
-            <div style={styles.emptyCard} className="card">
-              <span style={{ fontSize: '3rem' }}>📄</span>
-              <h2 style={{ color: 'var(--text-primary)', marginTop: '12px' }}>No content yet</h2>
-              <p style={{ color: 'var(--text-secondary)', marginTop: '8px' }}>
-                Upload your first document to get started
-              </p>
-              <a href="/admin/ingest" className="btn btn-primary" style={{ marginTop: '20px' }}>
-                Upload Content
-              </a>
-            </div>
-          </section>
-        )}
+          {/* Empty state */}
+          {recs.length === 0 && popular.length === 0 && recent.length === 0 && (
+            <section className="container" style={{ padding: '64px 0', textAlign: 'center' }}>
+              <div className="card" style={{ maxWidth: '420px', margin: '0 auto', padding: '48px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                <div style={{ width: '64px', height: '64px', borderRadius: '16px', background: 'rgba(79,70,229,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '2rem', marginBottom: '16px' }}>📄</div>
+                <h2 style={{ fontSize: '1.1rem', fontWeight: 600, color: 'var(--text-primary)' }}>No content yet</h2>
+                <p style={{ color: 'var(--text-secondary)', marginTop: '8px', fontSize: '0.9rem' }}>
+                  Upload your first document to get started
+                </p>
+                <a href="/admin/ingest" className="btn btn-primary" style={{ marginTop: '20px' }}>
+                  Upload content
+                </a>
+              </div>
+            </section>
+          )}
+        </div>
       </main>
     </>
   );
 }
 
-const styles = {
+const s = {
   hero: {
-    textAlign: 'center', padding: '80px 24px 60px', position: 'relative', overflow: 'hidden',
+    textAlign: 'center',
+    padding: '72px 24px 56px',
+    background: 'linear-gradient(180deg, rgba(79,70,229,0.05) 0%, rgba(255,255,255,0) 100%)',
+    borderBottom: '1px solid var(--border-color)',
   },
-  heroGlow: {
-    position: 'absolute', top: '-100px', left: '50%', transform: 'translateX(-50%)',
-    width: '600px', height: '400px', borderRadius: '50%',
-    background: 'radial-gradient(circle, rgba(99,102,241,0.15), transparent 70%)',
-    pointerEvents: 'none',
+  heroBadge: {
+    display: 'inline-flex', alignItems: 'center',
+    padding: '4px 14px', borderRadius: 'var(--radius-full)',
+    background: 'rgba(79,70,229,0.08)', color: 'var(--accent-primary)',
+    fontSize: '0.78rem', fontWeight: 600, letterSpacing: '0.02em',
+    textTransform: 'uppercase', marginBottom: '20px',
   },
-  heroTitle: { fontSize: '3rem', fontWeight: 800, lineHeight: 1.1, position: 'relative' },
-  heroAccent: { background: 'var(--gradient-hero)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' },
-  heroSub: { color: 'var(--text-secondary)', fontSize: '1.1rem', marginTop: '12px', position: 'relative' },
+  heroTitle: {
+    fontSize: 'clamp(2rem, 5vw, 3.2rem)', fontWeight: 800,
+    lineHeight: 1.1, letterSpacing: '-0.03em', color: 'var(--text-primary)',
+  },
+  heroAccent: {
+    background: 'var(--gradient-hero)',
+    WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
+  },
+  heroSub: {
+    color: 'var(--text-secondary)', fontSize: '1.05rem',
+    marginTop: '14px', maxWidth: '520px', margin: '14px auto 0',
+  },
   heroSearch: {
-    display: 'flex', maxWidth: '600px', margin: '32px auto 0', position: 'relative',
-    background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-lg)',
-    border: '1px solid var(--border-color)', padding: '6px',
+    display: 'flex', maxWidth: '580px', margin: '28px auto 0',
+    background: '#fff', borderRadius: 'var(--radius-md)',
+    border: '1px solid var(--border-color)',
+    padding: '6px 6px 6px 0',
+    boxShadow: 'var(--shadow-md)',
+    position: 'relative',
   },
-  heroSearchIcon: { position: 'absolute', left: '18px', top: '50%', transform: 'translateY(-50%)' },
+  heroSearchIcon: { position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', flexShrink: 0 },
   heroInput: {
-    flex: 1, padding: '14px 16px 14px 48px', background: 'transparent', border: 'none',
-    color: 'var(--text-primary)', fontSize: '1rem', outline: 'none', fontFamily: 'var(--font-sans)',
+    flex: 1, padding: '11px 12px 11px 46px', background: 'transparent', border: 'none',
+    color: 'var(--text-primary)', fontSize: '0.95rem', outline: 'none',
+    fontFamily: 'var(--font-sans)',
   },
-  statsRow: { display: 'flex', justifyContent: 'center', gap: '48px', marginTop: '40px', position: 'relative' },
-  statItem: { display: 'flex', flexDirection: 'column', alignItems: 'center' },
-  statVal: { fontSize: '1.5rem', fontWeight: 700, color: 'var(--accent-tertiary)' },
-  statLabel: { fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '2px' },
-  section: { padding: '40px 0' },
-  sectionTitle: { fontSize: '1.3rem', fontWeight: 600, marginBottom: '20px' },
-  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '16px' },
-  topicCard: { display: 'flex', flexDirection: 'column', gap: '8px', textDecoration: 'none', cursor: 'pointer' },
-  topicTitle: { fontSize: '1rem', fontWeight: 600, color: 'var(--text-primary)' },
-  topicMeta: { display: 'flex', gap: '6px', flexWrap: 'wrap' },
-  views: { fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: 'auto' },
-  date: { fontSize: '0.8rem', color: 'var(--text-muted)' },
-  emptySection: { padding: '60px 0', textAlign: 'center' },
-  emptyCard: { maxWidth: '400px', margin: '0 auto', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '48px' },
+  statsRow: {
+    display: 'flex', justifyContent: 'center', gap: '40px',
+    marginTop: '36px',
+  },
+  statItem: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' },
+  statVal: { fontSize: '1.5rem', fontWeight: 700, color: 'var(--accent-primary)', lineHeight: 1 },
+  statLabel: { fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 500 },
+  section: { paddingTop: '40px' },
+  sectionHeader: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: '16px' },
+  sectionTitle: { fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)' },
+  sectionLink: { fontSize: '0.85rem', color: 'var(--accent-primary)', fontWeight: 500 },
+  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '12px' },
+  topicCard: { display: 'flex', flexDirection: 'column', gap: '10px', textDecoration: 'none' },
+  topicTitle: { fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.4 },
+  topicTags: { display: 'flex', gap: '5px', flexWrap: 'wrap' },
+  topicMeta: { fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 'auto' },
 };

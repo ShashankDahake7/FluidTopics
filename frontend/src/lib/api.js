@@ -1,4 +1,6 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api';
+// Use relative URL so requests go through the Next.js rewrite proxy (/api → localhost:4000/api).
+// This keeps all API calls same-origin and avoids CORS preflight issues.
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || '/api';
 
 const getHeaders = () => {
   const headers = { 'Content-Type': 'application/json' };
