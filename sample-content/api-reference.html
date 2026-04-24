@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="author" content="Engineering Team">
+  <meta name="description" content="Complete API reference for Fluid Topics platform">
+  <meta name="keywords" content="api, reference, rest, endpoints, authentication">
+  <title>API Reference Guide</title>
+</head>
+<body>
+  <h1>API Reference Guide</h1>
+  <p>This document covers all available API endpoints for the Fluid Topics Content Delivery Platform.</p>
+
+  <h2>Authentication</h2>
+  <p>All API requests require authentication using JWT tokens. Include the token in the Authorization header:</p>
+  <pre><code>Authorization: Bearer &lt;your-jwt-token&gt;</code></pre>
+
+  <h3>Register</h3>
+  <p><strong>POST /api/auth/register</strong></p>
+  <p>Create a new user account. Required fields: name, email, password.</p>
+
+  <h3>Login</h3>
+  <p><strong>POST /api/auth/login</strong></p>
+  <p>Authenticate and receive a JWT token. Required fields: email, password.</p>
+
+  <h2>Content Ingestion</h2>
+  <p>Upload and process documents through the ingestion pipeline.</p>
+
+  <h3>Upload File</h3>
+  <p><strong>POST /api/ingest/upload</strong></p>
+  <p>Upload a single file for ingestion. Supports HTML, Markdown, DOCX, XML, and ZIP formats. Maximum file size: 100MB.</p>
+
+  <h3>Ingestion Status</h3>
+  <p><strong>GET /api/ingest/status/:id</strong></p>
+  <p>Check the processing status of an ingestion job. Returns status (pending, processing, completed, failed) and ingestion logs.</p>
+
+  <h2>Search</h2>
+  <p>Search across all indexed topics with full-text and faceted filtering.</p>
+
+  <h3>Full-Text Search</h3>
+  <p><strong>GET /api/search?q=query&amp;page=1&amp;limit=20</strong></p>
+  <p>Search for topics matching the query. Supports fuzzy matching, highlighting, and relevance scoring.</p>
+  <table>
+    <thead>
+      <tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>q</td><td>string</td><td>Search query</td></tr>
+      <tr><td>page</td><td>number</td><td>Page number (default: 1)</td></tr>
+      <tr><td>limit</td><td>number</td><td>Results per page (default: 20)</td></tr>
+      <tr><td>tags</td><td>string</td><td>Comma-separated tag filter</td></tr>
+      <tr><td>product</td><td>string</td><td>Product filter</td></tr>
+      <tr><td>sort</td><td>string</td><td>relevance, date, or views</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Topics</h2>
+  <p>Retrieve and browse topic content.</p>
+
+  <h3>List Topics</h3>
+  <p><strong>GET /api/topics?page=1&amp;limit=20</strong></p>
+  <p>Get a paginated list of all topics with basic metadata.</p>
+
+  <h3>Get Topic</h3>
+  <p><strong>GET /api/topics/:id</strong></p>
+  <p>Retrieve full topic content including HTML body, metadata, and hierarchy information.</p>
+
+  <h3>Related Topics</h3>
+  <p><strong>GET /api/topics/:id/related</strong></p>
+  <p>Get content-based recommendations for related topics using tag overlap and product matching.</p>
+
+  <h2>Analytics</h2>
+  <p>Track user interactions and retrieve engagement metrics.</p>
+
+  <h3>Track Event</h3>
+  <p><strong>POST /api/analytics/track</strong></p>
+  <p>Record a user event (search, view, click, feedback).</p>
+
+  <h3>Dashboard Stats</h3>
+  <p><strong>GET /api/analytics/dashboard?days=30</strong></p>
+  <p>Retrieve aggregate analytics including total searches, views, top queries, and daily trends.</p>
+</body>
+</html>

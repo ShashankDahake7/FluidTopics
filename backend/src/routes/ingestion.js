@@ -1,0 +1,126 @@
+const express = require('express');
+const upload = require('../middleware/upload');
+const { auth, requireRole } = require('../middleware/auth');
+const { ingestFile } = require('../services/ingestion/ingestionService');
+const Document = require('../models/Document');
+
+const router = express.Router();
+
+// POST /api/ingest/upload — Upload file for ingestion
+router.post('/upload', auth, requireRole('admin', 'editor'), upload.single('file'), async (req, res, next) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    const doc = await ingestFile(req.file, req.user._id);
+
+    res.status(201).json({
+      message: 'File ingested successfully',
+      document: {
+        id: doc._id,
+        title: doc.title,
+        status: doc.status,
+        topicCount: doc.topicIds.length,
+        metadata: doc.metadata,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// POST /api/ingest/webhook — Webhook-based ingestion
+router.post('/webhook', async (req, res, next) => {
+  try {
+    // TODO: Validate webhook signature
+    const { url, format, metadata } = req.body;
+    res.json({ message: 'Webhook ingestion endpoint (coming soon)', received: { url, format } });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /api/ingest/jobs — List ingestion jobs
+router.get('/jobs', auth, requireRole('admin', 'editor'), async (req, res, next) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const skip = (page - 1) * limit;
+
+    const [jobs, total] = await Promise.all([
+      Document.find()
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .select('title sourceFormat status topicIds fileSize metadata createdAt updatedAt')
+        .lean(),
+      Document.countDocuments(),
+    ]);
+
+    res.json({
+      jobs: jobs.map((j) => ({
+        ...j,
+        topicCount: j.topicIds?.length || 0,
+      })),
+      total,
+      page,
+      totalPages: Math.ceil(total / limit),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /api/ingest/status/:id — Get ingestion job status
+router.get('/status/:id', auth, async (req, res, next) => {
+  try {
+    const doc = await Document.findById(req.params.id);
+    if (!doc) {
+      return res.status(404).json({ error: 'Document not found' });
+    }
+
+    res.json({
+      id: doc._id,
+      title: doc.title,
+      status: doc.status,
+      sourceFormat: doc.sourceFormat,
+      topicCount: doc.topicIds.length,
+      metadata: doc.metadata,
+      ingestionLog: doc.ingestionLog,
+      createdAt: doc.createdAt,
+      updatedAt: doc.updatedAt,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// DELETE /api/ingest/:id — Delete a document and its topics
+router.delete('/:id', auth, requireRole('admin'), async (req, res, next) => {
+  try {
+    const doc = await Document.findById(req.params.id);
+    if (!doc) {
+      return res.status(404).json({ error: 'Document not found' });
+    }
+
+    const Topic = require('../models/Topic');
+    await Topic.deleteMany({ documentId: doc._id });
+
+    // Remove from Elasticsearch
+    try {
+      const { removeDocumentFromIndex } = require('../services/search/indexingService');
+      await removeDocumentFromIndex(doc._id);
+    } catch (e) {
+      console.warn('ES cleanup warning:', e.message);
+    }
+
+    await Document.findByIdAndDelete(doc._id);
+
+    res.json({ message: 'Document and associated topics deleted', id: doc._id });
+  } catch (error) {
+    next(error);
+  }
+});
+
+module.exports = router;
