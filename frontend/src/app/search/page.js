@@ -2,7 +2,6 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Suspense } from 'react';
-import Header from '@/components/layout/Header';
 import api from '@/lib/api';
 
 function SearchContent() {
@@ -64,7 +63,6 @@ function SearchContent() {
 
   return (
     <>
-      <Header />
       <div style={{ background: 'var(--bg-secondary)', minHeight: 'calc(100vh - var(--header-height))' }}>
         <main className="container" style={{ padding: '28px 0 56px' }}>
           {/* Search bar */}

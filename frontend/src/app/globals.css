@@ -190,3 +190,49 @@ mark { background: #fef3c7; color: #92400e; padding: 1px 2px; border-radius: 3px
   .container { padding: 0 var(--space-md); }
   .hide-mobile { display: none !important; }
 }
+
+/* ========== PORTAL READER HTML CONTENT ========== */
+/* Styles applied inside dangerouslySetInnerHTML blocks in the doc reader */
+[data-portal-content] h1,
+[data-portal-content] h2,
+[data-portal-content] h3,
+[data-portal-content] h4,
+[data-portal-content] h5 {
+  font-weight: 700; color: #111827; line-height: 1.3;
+  margin-top: 1.8em; margin-bottom: 0.5em;
+}
+[data-portal-content] h1 { font-size: 1.6rem; }
+[data-portal-content] h2 { font-size: 1.3rem; border-bottom: 1px solid #e5e7eb; padding-bottom: 6px; }
+[data-portal-content] h3 { font-size: 1.1rem; }
+[data-portal-content] p  { margin-bottom: 1em; }
+[data-portal-content] ul,
+[data-portal-content] ol { padding-left: 1.4em; margin-bottom: 1em; }
+[data-portal-content] li { margin-bottom: 0.3em; }
+[data-portal-content] code {
+  background: #f3f4f6; border-radius: 4px; padding: 2px 6px;
+  font-size: 0.85em; font-family: var(--font-mono, monospace); color: #be185d;
+}
+[data-portal-content] pre {
+  background: #1e293b; border-radius: 8px; padding: 16px; overflow-x: auto;
+  margin-bottom: 1em;
+}
+[data-portal-content] pre code {
+  background: transparent; color: #e2e8f0; padding: 0; font-size: 0.875rem;
+}
+[data-portal-content] table {
+  width: 100%; border-collapse: collapse; margin-bottom: 1em; font-size: 0.9rem;
+}
+[data-portal-content] th {
+  background: #f8fafc; font-weight: 600; color: #374151;
+  padding: 8px 12px; border: 1px solid #e5e7eb; text-align: left;
+}
+[data-portal-content] td {
+  padding: 8px 12px; border: 1px solid #e5e7eb; color: #4b5563;
+}
+[data-portal-content] blockquote {
+  border-left: 4px solid #4f46e5; padding: 8px 16px;
+  margin: 0 0 1em; color: #4b5563; background: #f5f3ff; border-radius: 0 6px 6px 0;
+}
+[data-portal-content] img { max-width: 100%; border-radius: 6px; height: auto; }
+[data-portal-content] a   { color: #1d4ed8; text-decoration: underline; }
+[data-portal-content] hr  { border: none; border-top: 1px solid #e5e7eb; margin: 1.5em 0; }

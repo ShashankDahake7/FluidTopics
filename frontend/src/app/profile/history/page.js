@@ -1,7 +1,6 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import Header from '@/components/layout/Header';
 import api from '@/lib/api';
 
 export default function HistoryPage() {
@@ -29,7 +28,6 @@ export default function HistoryPage() {
 
   return (
     <>
-      <Header />
       <div style={{ background: 'var(--bg-secondary)', minHeight: 'calc(100vh - var(--header-height))' }}>
         <main className="container" style={{ padding: '36px 0 56px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '28px' }}>
@@ -73,7 +71,7 @@ export default function HistoryPage() {
                         </div>
                       </td>
                       <td style={td}><span style={{ fontWeight: 600, color: 'var(--accent-primary)' }}>{h.visitCount}×</span></td>
-                      <td style={td}>{new Date(h.lastVisitedAt).toLocaleDateString()}</td>
+                      <td style={td}>{new Date(h.lastVisitedAt).toLocaleDateString('en-US')}</td>
                     </tr>
                   ))}
                 </tbody>

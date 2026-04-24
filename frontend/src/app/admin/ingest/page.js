@@ -1,6 +1,5 @@
 'use client';
 import { useState, useEffect, useRef } from 'react';
-import Header from '@/components/layout/Header';
 import api from '@/lib/api';
 
 export default function IngestPage() {
@@ -48,7 +47,6 @@ export default function IngestPage() {
 
   return (
     <>
-      <Header />
       <div style={{ background: 'var(--bg-secondary)', minHeight: 'calc(100vh - var(--header-height))' }}>
         <main className="container" style={{ padding: '36px 0 56px' }}>
           <div style={{ marginBottom: '28px' }}>
@@ -140,7 +138,7 @@ export default function IngestPage() {
                         <td style={td}>{job.fileSize ? (job.fileSize / 1024).toFixed(1) + ' KB' : '—'}</td>
                         <td style={td}>{job.topicCount || 0}</td>
                         <td style={td}><span className={`badge badge-${job.status === 'completed' ? 'success' : job.status === 'failed' ? 'error' : 'warning'}`}>{job.status}</span></td>
-                        <td style={td}>{new Date(job.createdAt).toLocaleDateString()}</td>
+                        <td style={td}>{new Date(job.createdAt).toLocaleDateString('en-US')}</td>
                         <td style={td}>
                           <button onClick={() => handleDelete(job._id)} className="btn btn-ghost btn-sm" style={{ color: 'var(--error)', padding: '4px 8px' }}>Delete</button>
                         </td>

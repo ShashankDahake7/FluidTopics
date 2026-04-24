@@ -1,7 +1,6 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import Header from '@/components/layout/Header';
 import api from '@/lib/api';
 
 export default function RecommendationsPage() {
@@ -18,7 +17,6 @@ export default function RecommendationsPage() {
 
   return (
     <>
-      <Header />
       <div style={{ background: 'var(--bg-secondary)', minHeight: 'calc(100vh - var(--header-height))' }}>
         <main className="container" style={{ padding: '36px 0 56px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '28px' }}>

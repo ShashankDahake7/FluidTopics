@@ -1,7 +1,6 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import Header from '@/components/layout/Header';
 import api from '@/lib/api';
 
 export default function BookmarksPage() {
@@ -44,7 +43,6 @@ export default function BookmarksPage() {
 
   return (
     <>
-      <Header />
       <div style={{ background: 'var(--bg-secondary)', minHeight: 'calc(100vh - var(--header-height))' }}>
         <main className="container" style={{ padding: '36px 0 56px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '28px' }}>
@@ -105,7 +103,7 @@ export default function BookmarksPage() {
                         {b.note && <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '5px' }}>{b.note}</p>}
                       </a>
                       <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0 }}>
-                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{new Date(b.createdAt).toLocaleDateString()}</span>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{new Date(b.createdAt).toLocaleDateString('en-US')}</span>
                         <button onClick={() => removeBookmark(b.topic?._id)}
                           className="btn btn-secondary btn-sm"
                           style={{ color: 'var(--error)', borderColor: 'var(--border-color)', padding: '4px 10px', fontSize: '0.78rem' }}>

@@ -1,7 +1,6 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import Header from '@/components/layout/Header';
 import api from '@/lib/api';
 
 export default function ProfilePage() {
@@ -46,7 +45,6 @@ export default function ProfilePage() {
 
   if (loading) return (
     <>
-      <Header />
       <div style={{ background: 'var(--bg-secondary)', minHeight: 'calc(100vh - var(--header-height))', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
         <div className="spinner" />
       </div>
@@ -55,7 +53,6 @@ export default function ProfilePage() {
 
   return (
     <>
-      <Header />
       <div style={{ background: 'var(--bg-secondary)', minHeight: 'calc(100vh - var(--header-height))' }}>
         <main className="container" style={{ padding: '36px 0 56px' }}>
           <div style={{ marginBottom: '28px' }}>
@@ -196,7 +193,7 @@ export default function ProfilePage() {
                     </div>
                   </div>
                   <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', flexShrink: 0, marginLeft: '12px' }}>
-                    {h.visitCount}× · {new Date(h.lastVisitedAt).toLocaleDateString()}
+                    {h.visitCount}× · {new Date(h.lastVisitedAt).toLocaleDateString('en-US')}
                   </span>
                 </a>
               ))}

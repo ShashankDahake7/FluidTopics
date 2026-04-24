@@ -1,6 +1,5 @@
 'use client';
 import { useState, useEffect } from 'react';
-import Header from '@/components/layout/Header';
 import api from '@/lib/api';
 
 export default function TopicsPage() {
@@ -29,7 +28,6 @@ export default function TopicsPage() {
 
   return (
     <>
-      <Header />
       <div style={{ background: 'var(--bg-secondary)', minHeight: 'calc(100vh - var(--header-height))' }}>
         <main className="container" style={{ padding: '36px 0 48px' }}>
           <div style={{ marginBottom: '28px' }}>

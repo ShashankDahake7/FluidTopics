@@ -1,7 +1,6 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import Header from '@/components/layout/Header';
 import api from '@/lib/api';
 
 export default function LoginPage() {
@@ -16,7 +15,8 @@ export default function LoginPage() {
       router.replace('/');
       return;
     }
-    setIsRegister(false);
+    const params = new URLSearchParams(window.location.search);
+    setIsRegister(params.get('register') === '1');
     setError('');
   }, []);
 
@@ -39,7 +39,6 @@ export default function LoginPage() {
 
   return (
     <>
-      <Header />
       <div style={{
         background: 'var(--bg-secondary)',
         minHeight: 'calc(100vh - var(--header-height))',
@@ -96,8 +95,9 @@ export default function LoginPage() {
 
           <p style={{ textAlign: 'center', marginTop: '20px', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
             {isRegister ? 'Already have an account?' : "Don't have an account?"}{' '}
-            <button onClick={() => { setIsRegister(!isRegister); setError(''); }}
-              style={{ background: 'none', border: 'none', color: 'var(--accent-primary)', cursor: 'pointer', fontFamily: 'var(--font-sans)', fontSize: '0.85rem', fontWeight: 500 }}>
+            <button
+              onClick={() => { setIsRegister(r => !r); setError(''); }}
+              style={{ background: 'none', border: 'none', color: 'var(--accent-primary)', cursor: 'pointer', fontFamily: 'var(--font-sans)', fontSize: '0.85rem', fontWeight: 600 }}>
               {isRegister ? 'Sign in' : 'Sign up'}
             </button>
           </p>

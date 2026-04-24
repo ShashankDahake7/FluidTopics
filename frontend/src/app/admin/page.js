@@ -1,6 +1,5 @@
 'use client';
 import { useState, useEffect } from 'react';
-import Header from '@/components/layout/Header';
 import api from '@/lib/api';
 
 export default function AdminDashboard() {
@@ -14,7 +13,6 @@ export default function AdminDashboard() {
 
   if (loading) return (
     <>
-      <Header />
       <div style={{ background: 'var(--bg-secondary)', minHeight: 'calc(100vh - var(--header-height))', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
         <div className="spinner" />
       </div>
@@ -31,11 +29,12 @@ export default function AdminDashboard() {
     { href: '/admin/ingest', icon: '⬆️', title: 'Upload Content', desc: 'Ingest new documents' },
     { href: '/admin/content', icon: '📋', title: 'Manage Content', desc: 'View and manage topics' },
     { href: '/admin/analytics', icon: '📊', title: 'Analytics', desc: 'Search & engagement stats' },
+    { href: '/admin/designer', icon: '🎨', title: 'Portal Designer', desc: 'Design custom portal pages', accent: true },
+    { href: '/portal',         icon: '🌐', title: 'View Portal',     desc: 'Browse published documentation' },
   ];
 
   return (
     <>
-      <Header />
       <div style={{ background: 'var(--bg-secondary)', minHeight: 'calc(100vh - var(--header-height))' }}>
         <main className="container" style={{ padding: '36px 0 56px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '28px' }}>
@@ -55,7 +54,7 @@ export default function AdminDashboard() {
                     {c.icon}
                   </div>
                   <div>
-                    <div style={{ fontSize: '1.7rem', fontWeight: 700, color: c.color, lineHeight: 1 }}>{c.value.toLocaleString()}</div>
+                    <div style={{ fontSize: '1.7rem', fontWeight: 700, color: c.color, lineHeight: 1 }}>{c.value.toLocaleString('en-US')}</div>
                     <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '3px' }}>{c.label}</div>
                   </div>
                 </div>
@@ -66,9 +65,9 @@ export default function AdminDashboard() {
           {/* Quick Links */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', marginBottom: '28px' }}>
             {quickLinks.map((link, i) => (
-              <a key={i} href={link.href} className="card" style={{ textDecoration: 'none', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <a key={i} href={link.href} className="card" style={{ textDecoration: 'none', display: 'flex', flexDirection: 'column', gap: '6px', ...(link.accent ? { borderColor: 'var(--accent-primary)', background: 'rgba(79,70,229,0.03)' } : {}) }}>
                 <span style={{ fontSize: '1.4rem' }}>{link.icon}</span>
-                <h3 style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-primary)' }}>{link.title}</h3>
+                <h3 style={{ fontSize: '0.9rem', fontWeight: 600, color: link.accent ? 'var(--accent-primary)' : 'var(--text-primary)' }}>{link.title}</h3>
                 <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{link.desc}</p>
               </a>
             ))}
@@ -93,7 +92,7 @@ export default function AdminDashboard() {
                       <td style={td}><span className="badge">{doc.sourceFormat}</span></td>
                       <td style={td}>{doc.topicCount || 0}</td>
                       <td style={td}><span className={`badge badge-${doc.status === 'completed' ? 'success' : doc.status === 'failed' ? 'error' : 'warning'}`}>{doc.status}</span></td>
-                      <td style={td}>{new Date(doc.createdAt).toLocaleDateString()}</td>
+                      <td style={td}>{new Date(doc.createdAt).toLocaleDateString('en-US')}</td>
                     </tr>
                   ))}
                 </tbody>

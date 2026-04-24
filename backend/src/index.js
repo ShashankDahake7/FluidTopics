@@ -17,6 +17,8 @@ const recommendationsRoutes = require('./routes/recommendations');
 const adminRoutes = require('./routes/admin');
 const bookmarkRoutes = require('./routes/bookmarks');
 const userRoutes = require('./routes/user');
+const designerRoutes = require('./routes/designer');
+const portalRoutes   = require('./routes/portal');
 
 const app = express();
 
@@ -42,6 +44,8 @@ app.use('/api/recommendations', recommendationsRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/bookmarks', bookmarkRoutes);
 app.use('/api/user', userRoutes);
+app.use('/api/designer', designerRoutes);
+app.use('/api/portal',   portalRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

@@ -1,7 +1,6 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useParams, usePathname } from 'next/navigation';
-import Header from '@/components/layout/Header';
 import api from '@/lib/api';
 
 export default function TopicViewPage() {
@@ -58,7 +57,6 @@ export default function TopicViewPage() {
 
   if (loading) return (
     <>
-      <Header />
       <div style={{ background: 'var(--bg-secondary)', minHeight: 'calc(100vh - var(--header-height))', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
         <div className="spinner" />
       </div>
@@ -67,7 +65,6 @@ export default function TopicViewPage() {
 
   if (!topic) return (
     <>
-      <Header />
       <div style={{ background: 'var(--bg-secondary)', minHeight: 'calc(100vh - var(--header-height))', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
         <div style={{ textAlign: 'center' }}>
           <h2 style={{ fontSize: '1.2rem', fontWeight: 600 }}>Topic not found</h2>
@@ -79,7 +76,6 @@ export default function TopicViewPage() {
 
   return (
     <>
-      <Header />
       <div style={{ background: 'var(--bg-secondary)', minHeight: 'calc(100vh - var(--header-height))' }}>
         <main className="container" style={{ padding: '28px 0 56px' }}>
           <div style={{ display: 'flex', gap: '32px', alignItems: 'flex-start' }}>
@@ -180,7 +176,7 @@ export default function TopicViewPage() {
                 {/* Footer meta */}
                 <div style={{ marginTop: '32px', paddingTop: '16px', borderTop: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
                   <span>{topic.viewCount || 0} views</span>
-                  <span>Updated {new Date(topic.updatedAt).toLocaleDateString()}</span>
+                  <span>Updated {new Date(topic.updatedAt).toLocaleDateString('en-US')}</span>
                 </div>
               </div>
             </article>

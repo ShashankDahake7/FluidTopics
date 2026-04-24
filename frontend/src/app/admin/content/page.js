@@ -1,6 +1,5 @@
 'use client';
 import { useState, useEffect } from 'react';
-import Header from '@/components/layout/Header';
 import api from '@/lib/api';
 
 export default function ContentPage() {
@@ -24,7 +23,6 @@ export default function ContentPage() {
 
   return (
     <>
-      <Header />
       <div style={{ background: 'var(--bg-secondary)', minHeight: 'calc(100vh - var(--header-height))' }}>
         <main className="container" style={{ padding: '36px 0 56px' }}>
           <div style={{ marginBottom: '28px' }}>
@@ -65,7 +63,7 @@ export default function ContentPage() {
                         </div>
                       </td>
                       <td style={td}>{t.viewCount || 0}</td>
-                      <td style={td}>{new Date(t.createdAt).toLocaleDateString()}</td>
+                      <td style={td}>{new Date(t.createdAt).toLocaleDateString('en-US')}</td>
                     </tr>
                   ))}
                 </tbody>

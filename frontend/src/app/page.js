@@ -1,7 +1,6 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import Header from '@/components/layout/Header';
 import api from '@/lib/api';
 
 export default function HomePage() {
@@ -35,7 +34,6 @@ export default function HomePage() {
 
   return (
     <>
-      <Header />
       <main>
         {/* Hero */}
         <section style={s.hero}>
@@ -65,7 +63,7 @@ export default function HomePage() {
               { label: 'Users', value: stats.users || 0 },
             ].map((stat, i) => (
               <div key={i} style={s.statItem}>
-                <span style={s.statVal}>{stat.value.toLocaleString()}</span>
+                <span style={s.statVal}>{stat.value.toLocaleString('en-US')}</span>
                 <span style={s.statLabel}>{stat.label}</span>
               </div>
             ))}
@@ -129,7 +127,7 @@ export default function HomePage() {
                 {recent.map((t, i) => (
                   <a key={t._id} href={`/topics/${t._id}`} className="card animate-fadeIn" style={{ ...s.topicCard, animationDelay: `${i * 40}ms` }}>
                     <h3 style={s.topicTitle}>{t.title}</h3>
-                    <span style={s.topicMeta}>{new Date(t.updatedAt).toLocaleDateString()}</span>
+                    <span style={s.topicMeta}>{new Date(t.updatedAt).toLocaleDateString('en-US')}</span>
                   </a>
                 ))}
               </div>

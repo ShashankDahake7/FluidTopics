@@ -5,19 +5,25 @@ import { useRouter } from 'next/navigation';
 
 export default function Header() {
   const [user, setUser] = useState(null);
+  const [mounted, setMounted] = useState(false);
   const [query, setQuery] = useState('');
   const router = useRouter();
 
   useEffect(() => {
     const syncUser = () => {
-      const stored = localStorage.getItem('ft_user');
-      setUser(stored ? JSON.parse(stored) : null);
+      try {
+        const stored = localStorage.getItem('ft_user');
+        setUser(stored ? JSON.parse(stored) : null);
+      } catch { setUser(null); }
     };
     syncUser();
+    setMounted(true);
+    window.addEventListener('popstate', syncUser);
     window.addEventListener('focus', syncUser);
     window.addEventListener('storage', syncUser);
     window.addEventListener('pageshow', syncUser);
     return () => {
+      window.removeEventListener('popstate', syncUser);
       window.removeEventListener('focus', syncUser);
       window.removeEventListener('storage', syncUser);
       window.removeEventListener('pageshow', syncUser);
@@ -62,10 +68,11 @@ export default function Header() {
 
         <nav style={s.nav}>
           <Link href="/topics" style={s.navLink}>Docs</Link>
-          {user && ['admin', 'editor'].includes(user.role) && (
+          <Link href="/portal" style={s.navLink}>Portal</Link>
+          {mounted && user && ['admin', 'editor'].includes(user.role) && (
             <Link href="/admin" style={s.navLink}>Admin</Link>
           )}
-          {user ? (
+          {mounted && user ? (
             <div style={s.userArea}>
               <Link href="/profile/bookmarks" style={s.navLink}>Bookmarks</Link>
               <Link href="/profile" style={s.navAvatar} title={user.name}>
@@ -74,7 +81,10 @@ export default function Header() {
               <button onClick={handleLogout} className="btn btn-secondary btn-sm">Sign out</button>
             </div>
           ) : (
-            <Link href="/login" className="btn btn-primary btn-sm">Sign in</Link>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <Link href="/login?register=1" className="btn btn-secondary btn-sm">Sign up</Link>
+              <Link href="/login" className="btn btn-primary btn-sm">Sign in</Link>
+            </div>
           )}
         </nav>
       </div>
