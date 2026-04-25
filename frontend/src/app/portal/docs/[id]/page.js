@@ -23,52 +23,87 @@ function buildTree(topics) {
   return roots;
 }
 
+// Find a node by _id anywhere in the tree
+function findNode(nodes, id) {
+  for (const node of nodes) {
+    if (node._id === id) return node;
+    const found = findNode(node.children || [], id);
+    if (found) return found;
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // TOC node (recursive)
 // ---------------------------------------------------------------------------
-function TocNode({ node, selectedId, onSelect, depth = 0, forceOpen }) {
-  const [open, setOpen] = useState(depth < 2);
-  const hasChildren = node.children?.length > 0;
-  const isOpen = forceOpen !== undefined ? forceOpen : open;
-  const nodeId      = node._id;
-  const isSelected  = nodeId && nodeId === selectedId;
+function TocNode({ node, selectedId, onSelect, depth = 0, forceOpen, onResetForce }) {
+  const [open, setOpen] = useState(depth < 1);
+  const showChildren = depth < 1;
+  const hasChildren  = node.children?.length > 0;
+  const isOpen       = forceOpen != null ? forceOpen : open;
+  const nodeId       = node._id;
+  const isSelected   = nodeId && nodeId === selectedId;
+
+  const handleToggle = (e) => {
+    e.stopPropagation();
+    // If a global force is active, hand control back to local state
+    if (forceOpen != null) {
+      onResetForce?.();
+      setOpen(!isOpen);
+    } else {
+      setOpen((o) => !o);
+    }
+  };
 
   return (
     <li style={{ listStyle: 'none', margin: 0, padding: 0 }}>
       <div
         style={{
-          display:      'flex',
-          alignItems:   'center',
-          gap:          '4px',
-          paddingLeft:  `${depth * 14 + 8}px`,
-          paddingRight: '8px',
+          display:     'flex',
+          alignItems:  'center',
+          paddingLeft: `${depth * 16 + 4}px`,
+          paddingRight:'8px',
+          minHeight:   '30px',
+          background:  isSelected ? '#EBF2FF' : 'transparent',
+          borderLeft:  isSelected ? '3px solid #1455C0' : '3px solid transparent',
         }}
       >
-        {hasChildren ? (
+        {/* Toggle (+/-) for sections, dot for leaf nodes */}
+        {hasChildren && showChildren ? (
           <button
             style={toc.toggle}
-            onClick={() => setOpen((o) => !o)}
+            onClick={handleToggle}
             aria-label={isOpen ? 'Collapse' : 'Expand'}
           >
-            {isOpen ? '▾' : '▸'}
+            {isOpen ? '−' : '+'}
           </button>
         ) : (
-          <span style={{ width: '16px', flexShrink: 0 }} />
+          <span style={{
+            width: '18px', height: '18px', flexShrink: 0,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            <span style={{
+              width: isSelected ? '7px' : '5px',
+              height: isSelected ? '7px' : '5px',
+              borderRadius: '50%',
+              background: isSelected ? '#1455C0' : '#c0cad8',
+              flexShrink: 0,
+              transition: 'all 120ms',
+            }} />
+          </span>
         )}
         <button
           style={{
             ...toc.item,
-            background:   isSelected ? '#eff6ff' : 'transparent',
-            color:        isSelected ? '#1d4ed8' : '#374151',
-            fontWeight:   isSelected ? 600 : 400,
-            borderLeft:   isSelected ? '2px solid #1d4ed8' : '2px solid transparent',
+            color:      isSelected ? '#1455C0' : '#1a2942',
+            fontWeight: isSelected ? 600 : 400,
           }}
           onClick={() => nodeId && onSelect(nodeId)}
         >
           {node.title}
         </button>
       </div>
-      {isOpen && hasChildren && (
+      {isOpen && hasChildren && showChildren && (
         <ul style={{ margin: 0, padding: 0 }}>
           {node.children.map((child, ci) => (
             <TocNode
@@ -78,6 +113,7 @@ function TocNode({ node, selectedId, onSelect, depth = 0, forceOpen }) {
               onSelect={onSelect}
               depth={depth + 1}
               forceOpen={forceOpen}
+              onResetForce={onResetForce}
             />
           ))}
         </ul>
@@ -98,8 +134,9 @@ export default function DocReaderPage() {
   const [topicContent, setTopicContent] = useState(null);
   const [loadingDoc,   setLoadingDoc]   = useState(true);
   const [loadingTopic, setLoadingTopic] = useState(false);
-  const [expandAll,    setExpandAll]    = useState(false);
-  const contentRef = useRef(null);
+  const [expandAll,    setExpandAll]    = useState(null); // null=default, true=all open, false=all closed
+  const contentRef    = useRef(null);
+  const pendingHashRef = useRef(null);
 
   // Load document + topic list
   useEffect(() => {
@@ -144,9 +181,20 @@ export default function DocReaderPage() {
       .catch(console.error)
       .finally(() => setLoadingTopic(false));
 
-    // Scroll content to top
-    if (contentRef.current) contentRef.current.scrollTop = 0;
+    // Scroll content to top (unless we have a pending in-page hash to scroll to)
+    if (contentRef.current && !pendingHashRef.current) contentRef.current.scrollTop = 0;
   }, [selectedId]);
+
+  // After topic content renders, scroll to any pending in-page hash
+  useEffect(() => {
+    if (!topicContent || !pendingHashRef.current) return;
+    const hash = pendingHashRef.current;
+    pendingHashRef.current = null;
+    setTimeout(() => {
+      const target = contentRef.current?.querySelector(`[id="${hash}"]`);
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 80);
+  }, [topicContent]);
 
   const handleSelect = useCallback((topicId) => {
     setSelectedId(topicId);
@@ -158,11 +206,30 @@ export default function DocReaderPage() {
     if (!anchor) return;
 
     const href = anchor.getAttribute('href');
-    if (!href || /^(https?:|mailto:|tel:)/.test(href) || href.startsWith('#')) return;
+    if (!href || /^(https?:|mailto:|tel:)/.test(href)) return;
+
+    // Pure hash link — scroll within the content pane
+    if (href.startsWith('#')) {
+      e.preventDefault();
+      const targetId = href.slice(1);
+      const target = contentRef.current?.querySelector(`[id="${targetId}"]`);
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
+
+    // Already-rewritten portal doc link: /portal/docs/{topicId}[#hash]
+    const portalMatch = href.match(/^\/portal\/docs\/([^#?/]+)(?:#(.+))?$/);
+    if (portalMatch) {
+      e.preventDefault();
+      const [, topicId, hash] = portalMatch;
+      if (hash) pendingHashRef.current = hash;
+      setSelectedId(topicId);
+      return;
+    }
 
     e.preventDefault();
 
-    const [filePart] = href.split('#');
+    const [filePart, hash] = href.split('#');
     if (!filePart) return;
 
     // Resolve relative path against current topic's permalink directory
@@ -177,10 +244,46 @@ export default function DocReaderPage() {
       .join('/');
 
     if (!doc?._id) return;
+    // Store hash so we can scroll after the new topic loads
+    if (hash) pendingHashRef.current = hash;
     api.get(`/portal/documents/${doc._id}/by-permalink?permalink=${encodeURIComponent(resolved)}`)
       .then((data) => { if (data.topic?._id) setSelectedId(data.topic._id); })
       .catch(console.error);
   }, [topicContent, doc]);
+
+  // Compute children of the current topic (from the TOC tree)
+  const currentNode = selectedId ? findNode(tree, selectedId) : null;
+  const childTopics = currentNode?.children?.filter((c) => c._id) ?? [];
+
+  // After the HTML renders, fix up Paligo's empty `.section-toc` placeholder:
+  //  - if there are children, populate it with links to them
+  //  - otherwise remove it so the orphan "In this section:" text doesn't appear
+  useEffect(() => {
+    if (!contentRef.current || !topicContent) return;
+    const placeholder = contentRef.current.querySelector('.section-toc');
+    if (!placeholder) return;
+
+    // Idempotent: remove any list we previously injected
+    placeholder.querySelector('.section-toc-injected')?.remove();
+
+    if (childTopics.length === 0) {
+      const footer = placeholder.closest('.footer-content') || placeholder;
+      footer.remove();
+      return;
+    }
+
+    const ul = document.createElement('ul');
+    ul.className = 'section-toc-injected';
+    for (const child of childTopics) {
+      const li = document.createElement('li');
+      const a  = document.createElement('a');
+      a.href        = `/portal/docs/${child._id}`;
+      a.textContent = child.title;
+      li.appendChild(a);
+      ul.appendChild(li);
+    }
+    placeholder.appendChild(ul);
+  }, [topicContent, selectedId, tree]);
 
   // Loading state
   if (loadingDoc) {
@@ -216,9 +319,9 @@ export default function DocReaderPage() {
         <div style={layout.tocControls}>
           <button
             style={toc.expandBtn}
-            onClick={() => setExpandAll((e) => !e)}
+            onClick={() => setExpandAll((e) => e === true ? false : true)}
           >
-            {expandAll ? 'COLLAPSE ALL' : 'EXPAND ALL'}
+            {expandAll === true ? 'Collapse all' : 'Expand all'}
           </button>
         </div>
 
@@ -232,7 +335,8 @@ export default function DocReaderPage() {
                 selectedId={selectedId}
                 onSelect={handleSelect}
                 depth={0}
-                forceOpen={expandAll ? true : undefined}
+                forceOpen={expandAll}
+                onResetForce={() => setExpandAll(null)}
               />
             ))}
           </ul>
@@ -282,46 +386,48 @@ const layout = {
     background: '#ffffff',
   },
   sidebar: {
-    width:          '280px',
-    flexShrink:     0,
-    display:        'flex',
-    flexDirection:  'column',
-    borderRight:    '1px solid #e5e7eb',
-    background:     '#f8fafc',
-    overflow:       'hidden',
+    width:         '260px',
+    flexShrink:    0,
+    display:       'flex',
+    flexDirection: 'column',
+    borderRight:   '1px solid #e5e7eb',
+    background:    '#ffffff',
+    overflow:      'hidden',
   },
   sidebarHeader: {
-    padding:      '16px 16px 12px',
+    padding:      '14px 16px 10px',
     borderBottom: '1px solid #e5e7eb',
     flexShrink:   0,
   },
   backLink: {
-    fontSize:       '0.75rem',
-    color:          '#6b7280',
+    fontSize:       '0.72rem',
+    color:          '#9ca3af',
     textDecoration: 'none',
-    display:        'block',
-    marginBottom:   '8px',
+    display:        'inline-flex',
+    alignItems:     'center',
+    gap:            '4px',
+    marginBottom:   '10px',
+    letterSpacing:  '0.01em',
   },
   docTitle: {
-    fontSize:    '0.9rem',
-    fontWeight:  700,
-    color:       '#111827',
-    lineHeight:  1.3,
-    marginBottom:'4px',
+    fontSize:     '0.875rem',
+    fontWeight:   700,
+    color:        '#0f172a',
+    lineHeight:   1.35,
+    marginBottom: '3px',
   },
   docMeta: {
-    fontSize: '0.75rem',
-    color:    '#9ca3af',
+    fontSize: '0.72rem',
+    color:    '#94a3b8',
   },
   tocControls: {
-    padding:      '8px 14px',
-    borderBottom: '1px solid #e5e7eb',
-    flexShrink:   0,
+    padding:    '6px 12px 4px',
+    flexShrink: 0,
   },
   tocScroll: {
-    flex:     1,
-    overflowY:'auto',
-    padding:  '8px 0',
+    flex:      1,
+    overflowY: 'auto',
+    padding:   '4px 0 16px',
   },
   content: {
     flex:      1,
@@ -334,23 +440,22 @@ const layout = {
     justifyContent: 'center',
     height:         '100%',
     gap:            '12px',
-    color:          '#6b7280',
+    color:          '#94a3b8',
   },
   article: {
-    maxWidth:  '760px',
-    margin:    '0 auto',
-    padding:   '40px 32px 80px',
+    maxWidth: '780px',
+    margin:   '0 auto',
+    padding:  '44px 40px 100px',
   },
   articleTitle: {
-    fontSize:     '1.8rem',
-    fontWeight:   800,
-    color:        '#111827',
-    marginBottom: '24px',
-    letterSpacing:'-0.02em',
-    lineHeight:   1.2,
+    fontSize:     '1.75rem',
+    fontWeight:   700,
+    color:        '#0f172a',
+    marginBottom: '20px',
+    lineHeight:   1.25,
   },
   htmlContent: {
-    fontSize:   '0.95rem',
+    fontSize:   '0.9375rem',
     lineHeight: 1.75,
     color:      '#374151',
   },
@@ -373,10 +478,10 @@ const layout = {
     color:          '#374151',
   },
   spinner: {
-    width:          '30px',
-    height:         '30px',
-    border:         '3px solid #e2e8f0',
-    borderTopColor: '#4f46e5',
+    width:          '28px',
+    height:         '28px',
+    border:         '2px solid #e2e8f0',
+    borderTopColor: '#1455C0',
     borderRadius:   '50%',
     animation:      'spin 0.7s linear infinite',
   },
@@ -384,43 +489,45 @@ const layout = {
 
 const toc = {
   toggle: {
-    width:      '16px',
-    height:     '16px',
-    background: 'none',
-    border:     'none',
-    padding:    0,
-    cursor:     'pointer',
-    color:      '#9ca3af',
-    fontSize:   '0.7rem',
-    display:    'flex',
-    alignItems: 'center',
+    width:          '18px',
+    height:         '18px',
+    background:     'none',
+    border:         'none',
+    padding:        0,
+    cursor:         'pointer',
+    color:          '#94a3b8',
+    fontSize:       '0.875rem',
+    display:        'flex',
+    alignItems:     'center',
     justifyContent: 'center',
-    flexShrink: 0,
+    flexShrink:     0,
+    lineHeight:     1,
   },
   item: {
-    flex:         1,
-    background:   'none',
-    border:       'none',
-    textAlign:    'left',
-    padding:      '5px 6px',
-    fontSize:     '0.82rem',
-    cursor:       'pointer',
-    borderRadius: '4px',
-    lineHeight:   1.4,
-    fontFamily:   'var(--font-sans)',
-    transition:   'background 100ms',
-    width:        '100%',
+    flex:       1,
+    background: 'none',
+    border:     'none',
+    textAlign:  'left',
+    padding:    '3px 6px 3px 4px',
+    fontSize:   '0.8125rem',
+    cursor:     'pointer',
+    lineHeight: 1.45,
+    fontFamily: 'var(--font-sans)',
+    width:      '100%',
+    whiteSpace: 'normal',
+    wordBreak:  'break-word',
   },
   expandBtn: {
     background:   'none',
-    border:       '1px solid #d1d5db',
-    borderRadius: '4px',
-    padding:      '3px 8px',
-    fontSize:     '0.7rem',
-    fontWeight:   600,
-    color:        '#6b7280',
+    border:       'none',
+    padding:      '2px 0',
+    fontSize:     '0.75rem',
+    fontWeight:   500,
+    color:        '#1455C0',
     cursor:       'pointer',
-    letterSpacing:'0.05em',
+    letterSpacing:'0.01em',
     fontFamily:   'var(--font-sans)',
+    textDecoration:'underline',
+    textUnderlineOffset: '2px',
   },
 };
