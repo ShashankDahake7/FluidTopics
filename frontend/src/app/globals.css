@@ -233,7 +233,50 @@ mark { background: #fef3c7; color: #92400e; padding: 1px 2px; border-radius: 3px
   border-left: 4px solid #4f46e5; padding: 8px 16px;
   margin: 0 0 1em; color: #4b5563; background: #f5f3ff; border-radius: 0 6px 6px 0;
 }
-[data-portal-content] img { max-width: 100%; border-radius: 6px; height: auto; }
+[data-portal-content] img {
+  max-width: 100%;
+  height: auto;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+}
+
+/* ===== Videos (Paligo wraps iframes in .mediaobject > .video-container) ===== */
+[data-portal-content] .mediaobject {
+  margin: 1.5em 0;
+}
+[data-portal-content] .video-container {
+  position: relative;
+  width: 100%;
+  max-width: 860px;
+  aspect-ratio: 16 / 9;
+  margin: 0 auto;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.06);
+  background: #000;
+}
+[data-portal-content] .video-container iframe,
+[data-portal-content] .video-container video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: none;
+  display: block;
+}
+/* Bare iframes / videos outside .video-container */
+[data-portal-content] iframe,
+[data-portal-content] video {
+  max-width: 100%;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  height: auto;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.06);
+}
 [data-portal-content] a   { color: #1d4ed8; text-decoration: underline; }
 [data-portal-content] hr  { border: none; border-top: 1px solid #e5e7eb; margin: 1.5em 0; }
 
