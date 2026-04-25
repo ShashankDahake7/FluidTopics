@@ -15,6 +15,7 @@ const ICONS = ['📄', '📚', '🗂️', '📑', '📋', '📝', '🔖', '📰'
 function DocTile({ doc, index }) {
   const color = TILE_COLORS[index % TILE_COLORS.length];
   const icon  = ICONS[index % ICONS.length];
+  const label = doc.isPaligo && doc.companyName ? doc.companyName : (doc.product || '');
 
   return (
     <Link href={`/portal/docs/${doc._id}`} style={styles.tile}>
@@ -28,7 +29,10 @@ function DocTile({ doc, index }) {
         )}
         <div style={styles.tileMeta}>
           {doc.topicCount} topic{doc.topicCount !== 1 ? 's' : ''}
-          {doc.product && <> · {doc.product}</>}
+          {label && <> · {label}</>}
+          {doc.isPaligo && (
+            <span style={{ marginLeft: '6px', background: '#eff6ff', color: '#1d4ed8', borderRadius: '4px', padding: '0 5px', fontSize: '0.68rem', fontWeight: 600 }}>Paligo</span>
+          )}
         </div>
       </div>
     </Link>

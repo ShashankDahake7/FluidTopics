@@ -39,6 +39,18 @@ const handleZip = (zipPath) => {
       return;
     }
 
+    // Always include params.manifest for Paligo publication metadata
+    if (filename === 'params.manifest') {
+      files.push({
+        filename,
+        path: entry.entryName,
+        format: 'manifest',
+        content: entry.getData().toString('utf-8'),
+        size: entry.header.size,
+      });
+      return;
+    }
+
     const format = detectFormat(filename);
 
     if (!format) {

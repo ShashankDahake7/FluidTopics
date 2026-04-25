@@ -30,7 +30,8 @@ function TocNode({ node, selectedId, onSelect, depth = 0, forceOpen }) {
   const [open, setOpen] = useState(depth < 2);
   const hasChildren = node.children?.length > 0;
   const isOpen = forceOpen !== undefined ? forceOpen : open;
-  const isSelected  = node._id === selectedId;
+  const nodeId      = node._id;
+  const isSelected  = nodeId && nodeId === selectedId;
 
   return (
     <li style={{ listStyle: 'none', margin: 0, padding: 0 }}>
@@ -57,21 +58,21 @@ function TocNode({ node, selectedId, onSelect, depth = 0, forceOpen }) {
         <button
           style={{
             ...toc.item,
-            background:  isSelected ? '#eff6ff' : 'transparent',
+            background:   isSelected ? '#eff6ff' : 'transparent',
             color:        isSelected ? '#1d4ed8' : '#374151',
             fontWeight:   isSelected ? 600 : 400,
             borderLeft:   isSelected ? '2px solid #1d4ed8' : '2px solid transparent',
           }}
-          onClick={() => onSelect(node._id)}
+          onClick={() => nodeId && onSelect(nodeId)}
         >
           {node.title}
         </button>
       </div>
       {isOpen && hasChildren && (
         <ul style={{ margin: 0, padding: 0 }}>
-          {node.children.map((child) => (
+          {node.children.map((child, ci) => (
             <TocNode
-              key={child._id}
+              key={child._id || child.originId || ci}
               node={child}
               selectedId={selectedId}
               onSelect={onSelect}
@@ -110,7 +111,23 @@ export default function DocReaderPage() {
           (a, b) => (a.hierarchy?.order ?? 0) - (b.hierarchy?.order ?? 0)
         );
         setTopics(sorted);
-        setTree(buildTree(sorted));
+
+        // Paligo: use stored tocTree to preserve the exact Paligo ordering.
+        // Map originId → _id so TocNode can resolve topic IDs from the tree.
+        if (data.document?.isPaligoFormat && data.document?.tocTree?.length) {
+          const originMap = {};
+          sorted.forEach((t) => { if (t.originId) originMap[t.originId] = t._id; });
+          const assignIds = (nodes) =>
+            nodes.map((n) => ({
+              ...n,
+              _id:      originMap[n.originId] || null,
+              children: assignIds(n.children || []),
+            }));
+          setTree(assignIds(data.document.tocTree));
+        } else {
+          setTree(buildTree(sorted));
+        }
+
         // Auto-select first topic
         if (sorted.length > 0) setSelectedId(sorted[0]._id);
       })
@@ -134,6 +151,36 @@ export default function DocReaderPage() {
   const handleSelect = useCallback((topicId) => {
     setSelectedId(topicId);
   }, []);
+
+  // Intercept link clicks in rendered HTML content
+  const handleContentClick = useCallback((e) => {
+    const anchor = e.target.closest('a[href]');
+    if (!anchor) return;
+
+    const href = anchor.getAttribute('href');
+    if (!href || /^(https?:|mailto:|tel:)/.test(href) || href.startsWith('#')) return;
+
+    e.preventDefault();
+
+    const [filePart] = href.split('#');
+    if (!filePart) return;
+
+    // Resolve relative path against current topic's permalink directory
+    const currentPermalink = topicContent?.permalink || '';
+    const dirParts = currentPermalink.split('/').slice(0, -1);
+    const resolved = [...dirParts, ...filePart.split('/')]
+      .reduce((acc, p) => {
+        if (p === '..') return acc.slice(0, -1);
+        if (p && p !== '.') return [...acc, p];
+        return acc;
+      }, [])
+      .join('/');
+
+    if (!doc?._id) return;
+    api.get(`/portal/documents/${doc._id}/by-permalink?permalink=${encodeURIComponent(resolved)}`)
+      .then((data) => { if (data.topic?._id) setSelectedId(data.topic._id); })
+      .catch(console.error);
+  }, [topicContent, doc]);
 
   // Loading state
   if (loadingDoc) {
@@ -206,6 +253,7 @@ export default function DocReaderPage() {
                 data-portal-content
                 style={layout.htmlContent}
                 dangerouslySetInnerHTML={{ __html: topicContent.content.html }}
+                onClick={handleContentClick}
               />
             ) : (
               <p style={{ color: '#94a3b8', fontStyle: 'italic' }}>

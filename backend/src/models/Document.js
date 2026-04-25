@@ -65,6 +65,26 @@ const documentSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
     },
+    // Paligo-specific fields
+    isPaligoFormat: {
+      type: Boolean,
+      default: false,
+    },
+    tocTree: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null,
+    },
+    publication: {
+      publicationId:  { type: String, default: '' },
+      companyName:    { type: String, default: '' },
+      copyright:      { type: String, default: '' },
+      logoPath:       { type: String, default: '' },
+      backgroundPath: { type: String, default: '' },
+      theme:          { type: String, default: '1' },
+      contentTheme:   { type: String, default: '1' },
+      portalTitle:    { type: String, default: '' },
+      stickyHeader:   { type: Boolean, default: false },
+    },
   },
   {
     timestamps: true,

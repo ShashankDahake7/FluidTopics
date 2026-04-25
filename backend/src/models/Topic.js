@@ -67,6 +67,25 @@ const topicSchema = new mongoose.Schema(
       type: String,
       default: '',
     },
+    // Paligo-specific fields (populated when ingesting Paligo HTML ZIP)
+    originId: {
+      type: String,
+      default: '',
+      index: true,
+    },
+    permalink: {
+      type: String,
+      default: '',
+    },
+    timeModified: {
+      type: Date,
+      default: null,
+    },
+    accessLevel: {
+      type: String,
+      enum: ['public', 'authenticated', 'admin'],
+      default: 'public',
+    },
     viewCount: {
       type: Number,
       default: 0,

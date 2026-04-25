@@ -26,6 +26,27 @@ const userSchema = new mongoose.Schema(
       enum: ['admin', 'editor', 'viewer'],
       default: 'viewer',
     },
+    // Granular feature permissions (BRD Workflow 3)
+    permissions: [{
+      type: String,
+      enum: [
+        'PRINT_USER',
+        'RATING_USER',
+        'FEEDBACK_USER',
+        'GENERATIVE_AI_USER',
+        'GENERATIVE_AI_EXPORT_USER',
+        'PERSONAL_BOOK_USER',
+        'PERSONAL_BOOK_SHARE_USER',
+        'HTML_EXPORT_USER',
+        'PDF_EXPORT_USER',
+        'SAVED_SEARCH_USER',
+        'COLLECTION_USER',
+        'OFFLINE_USER',
+        'ANALYTICS_USER',
+        'BETA_USER',
+        'DEBUG_USER',
+      ],
+    }],
     avatar: {
       type: String,
       default: '',

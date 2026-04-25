@@ -13,6 +13,7 @@ const { handleZip } = require('./zipHandler');
 const { transformContent } = require('../transformation/transformationEngine');
 const { indexTopics } = require('../search/indexingService');
 const { detectFormat } = require('../../utils/helpers');
+const { detectPaligoRoot, parsePaligoZip } = require('./paligoParser');
 
 /**
  * Main ingestion orchestrator
@@ -49,15 +50,37 @@ const ingestFile = async (file, userId = null) => {
       // Save images to disk and build zipPath → served URL map
       const imageSrcMap = saveZipImages(images);
 
-      const fileTopicResults = [];
-      for (const zipFile of files) {
-        const parsed = await parseByFormat(zipFile.format, zipFile.content, zipFile.filename);
-        const transformed = await transformContent(parsed, zipFile.filename, zipFile.path);
-        const topicIds = await saveTopics(transformed, doc._id);
-        fileTopicResults.push({ filePath: zipFile.path, topicIds });
-        allTopicIds.push(...topicIds);
+      // Check if this is a Paligo HTML5 Help Center publication
+      const paligoRoot = detectPaligoRoot(files);
+
+      if (paligoRoot) {
+        doc.ingestionLog.push({ message: `Paligo format detected (root: ${paligoRoot})`, level: 'info' });
+
+        const { topicDataList, tocTree, publication, langPrefix } = await parsePaligoZip(files, images, paligoRoot);
+        doc.ingestionLog.push({ message: `Paligo TOC parsed: ${topicDataList.length} topics`, level: 'info' });
+
+        allTopicIds = await savePaligoTopics(topicDataList, doc._id, imageSrcMap, langPrefix);
+
+        doc.isPaligoFormat = true;
+        doc.tocTree       = tocTree;
+        doc.publication   = publication;
+
+        // Use publication title if available
+        if (publication.portalTitle) doc.title = publication.portalTitle;
+        if (publication.companyName)  doc.metadata = { ...doc.metadata, author: publication.companyName };
+
+      } else {
+        // Generic ZIP — use existing pipeline
+        const fileTopicResults = [];
+        for (const zipFile of files) {
+          const parsed = await parseByFormat(zipFile.format, zipFile.content, zipFile.filename);
+          const transformed = await transformContent(parsed, zipFile.filename, zipFile.path);
+          const topicIds = await saveTopics(transformed, doc._id);
+          fileTopicResults.push({ filePath: zipFile.path, topicIds });
+          allTopicIds.push(...topicIds);
+        }
+        await rewriteZipContent(fileTopicResults, imageSrcMap);
       }
-      await rewriteZipContent(fileTopicResults, imageSrcMap);
     } else {
       // Single file
       const content =
@@ -113,6 +136,138 @@ const ingestFile = async (file, userId = null) => {
     await doc.save();
     throw error;
   }
+};
+
+/**
+ * Save Paligo topics from parsed topicDataList.
+ * Uses parentIndex/children from the TOC (not heading levels).
+ */
+const savePaligoTopics = async (topicDataList, documentId, imageSrcMap, langPrefix = '') => {
+  const topicIds   = [];
+  const savedTopics = [];
+
+  // Use a slug generator that incorporates originId to ensure uniqueness
+  const usedSlugs = new Set();
+  const makeSlug = (title, originId, idx) => {
+    const base = (title || 'topic')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '')
+      .substring(0, 60);
+    const suffix = originId ? originId.slice(-8) : String(idx);
+    let slug = `${base}-${suffix}`;
+    let n = 0;
+    while (usedSlugs.has(slug)) slug = `${base}-${suffix}-${++n}`;
+    usedSlugs.add(slug);
+    return slug;
+  };
+
+  // First pass: create all topics
+  for (let i = 0; i < topicDataList.length; i++) {
+    const td = topicDataList[i];
+    const topic = await Topic.create({
+      documentId,
+      title:      td.title,
+      slug:       makeSlug(td.title, td.originId, i),
+      originId:   td.originId || '',
+      permalink:  td.permalink || '',
+      timeModified: td.timeModified || null,
+      sourcePath: td.sourcePath || '',
+      content:    td.content,
+      hierarchy: {
+        level:    td.topicLevel || 1,
+        parent:   null,
+        children: [],
+        order:    td.order,
+      },
+      metadata: { language: 'en' },
+    });
+    topicIds.push(topic._id);
+    savedTopics.push(topic);
+  }
+
+  // Second pass: wire up parent-child references
+  for (let i = 0; i < topicDataList.length; i++) {
+    const td = topicDataList[i];
+    if (td.parentIndex !== null && td.parentIndex !== undefined && savedTopics[td.parentIndex]) {
+      savedTopics[i].hierarchy.parent = savedTopics[td.parentIndex]._id;
+      await savedTopics[i].save();
+
+      savedTopics[td.parentIndex].hierarchy.children.push(savedTopics[i]._id);
+      await savedTopics[td.parentIndex].save();
+    }
+  }
+
+  // Third pass: rewrite image sources using imageSrcMap
+  const posix = require('path').posix;
+  for (let i = 0; i < savedTopics.length; i++) {
+    const topic    = savedTopics[i];
+    const permalink = topicDataList[i].permalink || '';
+    if (!topic.content.html || !Object.keys(imageSrcMap).length) continue;
+
+    const $ = require('cheerio').load(topic.content.html);
+    let modified = false;
+    const sourceDir = posix.dirname(permalink);
+
+    $('img[src]').each((_, el) => {
+      const src = $(el).attr('src');
+      if (!src || /^(https?:|data:|\/|#)/.test(src)) return;
+      // Resolve relative to the full ZIP path (langPrefix + topic's directory)
+      const resolved = posix.normalize(posix.join(langPrefix, sourceDir, src));
+      const newSrc = imageSrcMap[resolved];
+      if (newSrc) { $(el).attr('src', newSrc); modified = true; }
+    });
+
+    if (modified) {
+      topic.content.html = $('body').html() || topic.content.html;
+      await topic.save();
+    }
+  }
+
+  // Fourth pass: rewrite internal <a href> links to /portal/docs/{topicId}
+  const permalinkToTopicId = {};
+  for (let i = 0; i < topicDataList.length; i++) {
+    if (topicDataList[i].permalink) permalinkToTopicId[topicDataList[i].permalink] = savedTopics[i]._id;
+  }
+
+  for (let i = 0; i < savedTopics.length; i++) {
+    const topic     = savedTopics[i];
+    const permalink = topicDataList[i].permalink || '';
+    if (!topic.content.html) continue;
+
+    const $ = require('cheerio').load(topic.content.html);
+    let modified = false;
+    const dirParts = permalink.split('/').slice(0, -1);
+
+    $('a[href]').each((_, el) => {
+      const href = $(el).attr('href');
+      if (!href || /^(https?:|\/|#|mailto:|tel:)/.test(href)) return;
+
+      const [filePart, anchor] = href.split('#');
+      if (!filePart) return;
+
+      const resolved = [...dirParts, ...filePart.split('/')]
+        .reduce((acc, p) => {
+          if (p === '..') return acc.slice(0, -1);
+          if (p && p !== '.') return [...acc, p];
+          return acc;
+        }, [])
+        .join('/');
+
+      const targetId = permalinkToTopicId[resolved];
+      if (targetId) {
+        $(el).attr('href', anchor ? `/portal/docs/${targetId}#${anchor}` : `/portal/docs/${targetId}`);
+        modified = true;
+      }
+    });
+
+    if (modified) {
+      topic.content.html = $('body').html() || topic.content.html;
+      await topic.save();
+    }
+  }
+
+  return topicIds;
 };
 
 /**
