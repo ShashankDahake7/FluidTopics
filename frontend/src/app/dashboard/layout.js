@@ -1,9 +1,10 @@
 import '@/components/portal/portal.css';
+import PortalRouteGate from '@/components/portal/PortalRouteGate';
 
 export default function PortalLayout({ children }) {
   return (
     <div className="portal-shell">
-      <main className="portal-shell-main">{children}</main>
+      <PortalRouteGate>{children}</PortalRouteGate>
     </div>
   );
 }

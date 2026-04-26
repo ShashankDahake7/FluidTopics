@@ -18,6 +18,7 @@
 const path   = require('path');
 const cheerio = require('cheerio');
 const xml2js  = require('xml2js');
+const { extractAuthorFromHtml } = require('../../utils/authorFromHtml');
 
 // ---------------------------------------------------------------------------
 // Detection
@@ -297,6 +298,22 @@ const parsePaligoZip = async (files, images, rootPrefix, langCode = 'en') => {
     };
   }
 
+  // Default author from Paligo language landing page (e.g. en/index-en.html) when
+  // individual topic HTML files omit <meta name="author">.
+  const indexAuthorFallback = (() => {
+    const langSeg =
+      (langPrefix.replace(/\/$/, '').split('/').pop() || langCode || 'en').toLowerCase();
+    const names = [`index-${langSeg}.html`, `index-${langCode}.html`, 'index-en.html', 'index.html'];
+    for (const name of names) {
+      const fe = fileMap[`${langPrefix}${name}`];
+      if (fe?.content) {
+        const a = extractAuthorFromHtml(fe.content);
+        if (a) return a;
+      }
+    }
+    return '';
+  })();
+
   // ---- 4. Build topic data from TOC entries ----
   //
   // Skip anchor-link entries: Paligo adds sub-section anchors (e.g. #id45407)
@@ -332,12 +349,15 @@ const parsePaligoZip = async (files, images, rootPrefix, langCode = 'en') => {
     const fileEntry  = fileMap[htmlPath];
     let content      = { html: '', text: '' };
 
+    let author = '';
     if (fileEntry?.content) {
+      author = extractAuthorFromHtml(fileEntry.content);
       const extracted = extractTopicBody(fileEntry.content);
       content = { html: extracted.html, text: extracted.text };
     } else {
       console.warn(`[paligoParser] Missing file for: ${entry.permalink}`);
     }
+    if (!author && indexAuthorFallback) author = indexAuthorFallback;
 
     topicDataList.push({
       title:        entry.title,
@@ -347,6 +367,7 @@ const parsePaligoZip = async (files, images, rootPrefix, langCode = 'en') => {
       timeModified: parseModifiedDate(entry.timeModified),
       parentIndex:  parentListIndex,
       order:        entry.index,
+      author,
       content,
       sourcePath:   entry.permalink,
     });

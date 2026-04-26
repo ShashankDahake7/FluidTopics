@@ -18,10 +18,24 @@ const TRANSLATIONS = {
     myLibraryNav: 'My Library',
     myAccount: 'My Account',
     manageUsers: 'Manage users',
+    analyticsNav: 'Analytics',
+    knowledgeHub: 'Knowledge Hub',
+    navDesign: 'Design',
+    navPortal: 'Portal',
+    integrations: 'Integrations',
+    myTenant: 'My tenant',
+    aboutThisTenant: 'About this tenant',
     notifications: 'Notifications',
     profile: 'Profile',
     searchPreferences: 'Search preferences',
     logOut: 'Log out',
+    signInNav: 'Sign In',
+    resetYourPassword: 'RESET YOUR PASSWORD',
+    resetPasswordLead:
+      'If your password is managed internally, you will receive a password reset link.',
+    resetPasswordSent: 'If that account exists, a reset link has been sent.',
+    resetPasswordError: 'Something went wrong. Please try again.',
+    sendResetLinkPrimary: 'Send reset link',
 
     // ─── Portal home ────────────────────────────────────────────────────
     portalTitle: 'Darwinbox Product Documentation',
@@ -37,6 +51,7 @@ const TRANSLATIONS = {
     aboutMe: 'About me',
     name: 'Name',
     emailAddress: 'Email address',
+    emailPlaceholder: 'Email',
     lastLogin: 'Last login',
     password: 'Password',
     changePassword: 'Change password',
@@ -70,6 +85,31 @@ const TRANSLATIONS = {
     create: 'Create',
     clearAll: 'Clear all',
     createCollection: 'Create a collection',
+    editCollection: 'Edit collection',
+    editCollectionMeta: 'Rename or change appearance.',
+    smartCollectionShort: 'Smart collection',
+    smartCollectionLead: 'Topics are filled automatically from your saved search.',
+    collectionNotFound: 'Collection not found.',
+    collectionTopics: 'Topics in this collection',
+    emptyCollectionTopics: 'No topics yet. Open a help article and use “Add to collection”.',
+    removeFromCollection: 'Remove from collection',
+    backToCollections: '← Collections',
+    addToCollection: 'Add to collection',
+    addedToCollection: 'Added to collection',
+    alreadyInCollection: 'Already in this collection',
+    createCollectionFirst: 'Create a manual collection in My Library first.',
+    collectionDuplicateTitle: 'A collection with the same title already exists',
+    collectionCreateFailedName: 'Failed to create collection \'{name}\'.',
+    collectionUpdateFailedName: 'Failed to update collection \'{name}\'.',
+    collectionCreatedToast: 'Collection \'{name}\' created.',
+    collectionUpdatedToast: 'Collection \'{name}\' updated.',
+    collectionDeletedToast: 'Collection \'{name}\' successfully deleted.',
+    deleteCollectionQuestion: 'Delete collection "{name}"?',
+    delete: 'Delete',
+    orderBy: 'Order by',
+    filterPlaceholder: 'Filter',
+    topicCount: '{n} topic',
+    topicCountPlural: '{n} topics',
     enterName: 'Enter a name',
     addDescription: 'Add a description',
     chooseColor: 'Choose a color',
@@ -83,6 +123,9 @@ const TRANSLATIONS = {
     saveSearch: 'SAVE SEARCH',
     savedSearch: 'SAVED SEARCH',
     searchScope: 'SEARCH SCOPE',
+    contentLanguage: 'Content language',
+    contentLangPreferred: 'Match my account',
+    contentLangAll: 'All languages',
     searchTitlesOnly: 'Search in document titles only',
     releaseNotes: 'RELEASE_NOTES',
     releaseNotesItem: 'Release Notes',
@@ -119,6 +162,7 @@ const TRANSLATIONS = {
     addedBookmark: 'Added to bookmarks',
     removedBookmark: 'Removed from bookmarks',
     signInBookmark: 'Sign in to bookmark',
+    signInCollection: 'Sign in to use collections',
     shareTitle: 'Share the topic URL',
     shareLead: 'Copy and send the link below',
     copy: 'COPY',
@@ -223,6 +267,31 @@ const TRANSLATIONS = {
     create: 'Crea',
     clearAll: 'Cancella tutto',
     createCollection: 'Crea una raccolta',
+    editCollection: 'Modifica raccolta',
+    editCollectionMeta: 'Rinomina o modifica l’aspetto.',
+    smartCollectionShort: 'Raccolta intelligente',
+    smartCollectionLead: 'Gli argomenti vengono aggiornati automaticamente dalla ricerca salvata.',
+    collectionNotFound: 'Raccolta non trovata.',
+    collectionTopics: 'Argomenti in questa raccolta',
+    emptyCollectionTopics: 'Nessun argomento. Apri un articolo e usa «Aggiungi alla raccolta».',
+    removeFromCollection: 'Rimuovi dalla raccolta',
+    backToCollections: '← Raccolte',
+    addToCollection: 'Aggiungi alla raccolta',
+    addedToCollection: 'Aggiunto alla raccolta',
+    alreadyInCollection: 'Già presente in questa raccolta',
+    createCollectionFirst: 'Crea prima una raccolta manuale in La mia raccolta.',
+    collectionDuplicateTitle: 'Esiste già una raccolta con lo stesso titolo',
+    collectionCreateFailedName: 'Impossibile creare la raccolta «{name}».',
+    collectionUpdateFailedName: 'Impossibile aggiornare la raccolta «{name}».',
+    collectionCreatedToast: 'Raccolta «{name}» creata.',
+    collectionUpdatedToast: 'Raccolta «{name}» aggiornata.',
+    collectionDeletedToast: 'Raccolta «{name}» eliminata correttamente.',
+    deleteCollectionQuestion: 'Eliminare la raccolta «{name}»?',
+    delete: 'Elimina',
+    orderBy: 'Ordina per',
+    filterPlaceholder: 'Filtra',
+    topicCount: '{n} argomento',
+    topicCountPlural: '{n} argomenti',
     enterName: 'Inserisci un nome',
     addDescription: 'Aggiungi una descrizione',
     chooseColor: 'Scegli un colore',
@@ -270,6 +339,7 @@ const TRANSLATIONS = {
     addedBookmark: 'Aggiunto ai segnalibri',
     removedBookmark: 'Rimosso dai segnalibri',
     signInBookmark: 'Accedi per aggiungere ai segnalibri',
+    signInCollection: 'Accedi per usare le raccolte',
     shareTitle: "Condividi l'URL dell'argomento",
     shareLead: 'Copia e invia il link qui sotto',
     copy: 'COPIA',
@@ -451,6 +521,37 @@ const TRANSLATIONS = {
 const STORAGE_KEY = 'ft_lang';
 const EVENT = 'ft-lang-change';
 
+/** ISO 639-1 (or primary tag) → UI language label used in LANGUAGES. */
+const ISO_TO_UI = {
+  en: 'English',
+  it: 'Italiano',
+  fr: 'Français',
+  de: 'Deutsch',
+  es: 'Español',
+};
+
+const UI_TO_ISO = Object.fromEntries(
+  Object.entries(ISO_TO_UI).map(([iso, label]) => [label, iso])
+);
+
+export function isoToUiLanguage(iso) {
+  if (!iso || typeof iso !== 'string') return 'English';
+  const key = iso.trim().toLowerCase().split('-')[0];
+  return ISO_TO_UI[key] || 'English';
+}
+
+export function uiLanguageToIso(ui) {
+  return UI_TO_ISO[ui] || 'en';
+}
+
+/** After login / profile load — align UI strings with User.preferences.language. */
+export function syncUiLanguageFromUser(user) {
+  const iso = user?.preferences?.language;
+  if (!iso) return;
+  const ui = isoToUiLanguage(iso);
+  if (LANGUAGES.includes(ui)) setStoredLanguage(ui);
+}
+
 export function getStoredLanguage() {
   if (typeof window === 'undefined') return 'English';
   const v = localStorage.getItem(STORAGE_KEY);
@@ -475,6 +576,19 @@ export function useTranslation() {
     const onChange = () => setLang(getStoredLanguage());
     window.addEventListener(EVENT, onChange);
     window.addEventListener('storage', onChange);
+
+    const API_BASE = process.env.NEXT_PUBLIC_API_URL || '/api';
+    if (!localStorage.getItem(STORAGE_KEY)) {
+      fetch(`${API_BASE}/languages/default`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          if (!d?.defaultLocale || localStorage.getItem(STORAGE_KEY)) return;
+          const ui = isoToUiLanguage(d.defaultLocale);
+          if (LANGUAGES.includes(ui)) setStoredLanguage(ui);
+        })
+        .catch(() => {});
+    }
+
     return () => {
       window.removeEventListener(EVENT, onChange);
       window.removeEventListener('storage', onChange);

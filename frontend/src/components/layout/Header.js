@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import api from '@/lib/api';
 
 export default function Header() {
   const [user, setUser] = useState(null);
@@ -35,9 +36,8 @@ export default function Header() {
     if (query.trim()) router.push(`/search?q=${encodeURIComponent(query.trim())}`);
   };
 
-  const handleLogout = () => {
-    localStorage.removeItem('ft_token');
-    localStorage.removeItem('ft_user');
+  const handleLogout = async () => {
+    await api.signOut();
     setUser(null);
     router.push('/');
   };
@@ -68,10 +68,7 @@ export default function Header() {
 
         <nav style={s.nav}>
           <Link href="/topics" style={s.navLink}>Docs</Link>
-          <Link href="/portal" style={s.navLink}>Portal</Link>
-          {mounted && user && ['admin', 'editor'].includes(user.role) && (
-            <Link href="/admin" style={s.navLink}>Admin</Link>
-          )}
+          <Link href="/dashboard" style={s.navLink}>Dashboard</Link>
           {mounted && user ? (
             <div style={s.userArea}>
               <Link href="/profile/bookmarks" style={s.navLink}>Bookmarks</Link>

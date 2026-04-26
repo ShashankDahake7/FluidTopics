@@ -2,9 +2,9 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import api from '@/lib/api';
+import api, { getStoredToken, getStoredUser } from '@/lib/api';
 import ProfileShell from '@/components/profile/ProfileShell';
-import { useTranslation, LANGUAGES } from '@/lib/i18n';
+import { useTranslation, LANGUAGES, syncUiLanguageFromUser, uiLanguageToIso } from '@/lib/i18n';
 
 const Icon = {
   profile: (
@@ -87,22 +87,22 @@ export default function ProfilePage() {
   const { t, lang, setLang } = useTranslation();
 
   useEffect(() => {
-    if (!localStorage.getItem('ft_token')) {
+    if (!getStoredToken()) {
       router.replace('/login');
       return;
     }
-    try {
-      const stored = localStorage.getItem('ft_user');
-      if (stored) setUser(JSON.parse(stored));
-    } catch {}
+    setUser(getStoredUser());
     api.get('/user/profile')
-      .then(setProfile)
+      .then((p) => {
+        setProfile(p);
+        syncUiLanguageFromUser({ preferences: { language: p?.language || 'en' } });
+      })
       .catch(console.error)
       .finally(() => setLoading(false));
   }, []);
 
   const role = user?.role || profile?.role;
-  const isAdmin = role === 'admin' || role === 'editor';
+  const isAdmin = role === 'superadmin' || role === 'admin' || role === 'editor';
   const name = profile?.name || user?.name || '—';
   const email = profile?.email || user?.email || '—';
   const lastLogin = profile?.lastLogin || user?.lastLogin;
@@ -155,7 +155,15 @@ export default function ProfilePage() {
             <span style={{ fontSize: '0.92rem', color: '#1f2937' }}>{t('language')}</span>
             <select
               value={lang}
-              onChange={(e) => setLang(e.target.value)}
+              onChange={async (e) => {
+                const v = e.target.value;
+                setLang(v);
+                try {
+                  await api.patch('/user/preferences', { language: uiLanguageToIso(v) });
+                } catch {
+                  /* ignore */
+                }
+              }}
               style={S.select}
             >
               {LANGUAGES.map((l) => <option key={l}>{l}</option>)}

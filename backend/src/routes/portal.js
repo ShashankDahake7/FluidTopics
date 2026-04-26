@@ -1,6 +1,9 @@
 const express  = require('express');
+const path     = require('path');
+const fs       = require('fs');
 const Document = require('../models/Document');
 const Topic    = require('../models/Topic');
+const Attachment = require('../models/Attachment');
 const { getElasticClient } = require('../config/elasticsearch');
 const config   = require('../config/env');
 const { optionalAuth } = require('../middleware/auth');
@@ -86,6 +89,57 @@ router.get('/documents', optionalAuth, async (req, res, next) => {
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/portal/documents/search?q= — search scoped to documents.
+// MUST come before /documents/:id so the literal "search" segment isn't
+// captured by the dynamic id.
+// ---------------------------------------------------------------------------
+router.get('/documents/search', optionalAuth, async (req, res, next) => {
+  try {
+    const q = (req.query.q || '').toString().trim();
+    if (!q) return res.json({ total: 0, documents: [] });
+    const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const rx = new RegExp(escaped, 'i');
+
+    const matchingByMeta = await Document.find({
+      status: 'completed',
+      $or: [
+        { title: rx },
+        { 'metadata.description': rx },
+        { 'metadata.tags': rx },
+      ],
+    }).select('_id').lean();
+    const matchingByTopic = await Topic.aggregate([
+      { $match: { $or: [{ title: rx }, { 'content.text': rx }] } },
+      { $group: { _id: '$documentId' } },
+    ]);
+    const ids = new Set([
+      ...matchingByMeta.map((d) => String(d._id)),
+      ...matchingByTopic.map((d) => String(d._id)),
+    ]);
+    if (ids.size === 0) return res.json({ total: 0, documents: [] });
+
+    const docs = await Document.find({ _id: { $in: [...ids] }, status: 'completed' })
+      .select('title sourceFormat metadata topicIds isPaligoFormat publication createdAt')
+      .lean();
+    res.json({
+      total: docs.length,
+      documents: docs.map((d) => ({
+        _id: String(d._id),
+        title: d.publication?.portalTitle || d.title,
+        format: d.sourceFormat,
+        topicCount: d.topicIds?.length || 0,
+        tags: d.metadata?.tags || [],
+        product: d.metadata?.product || '',
+        description: d.metadata?.description || '',
+        isPaligo: d.isPaligoFormat || false,
+        companyName: d.publication?.companyName || '',
+        createdAt: d.createdAt,
+      })),
+    });
+  } catch (err) { next(err); }
+});
+
+// ---------------------------------------------------------------------------
 // GET /api/portal/documents/:id — single document + topic list
 // ---------------------------------------------------------------------------
 router.get('/documents/:id', optionalAuth, async (req, res, next) => {
@@ -107,7 +161,7 @@ router.get('/documents/:id', optionalAuth, async (req, res, next) => {
 
     let topics = await Topic.find(topicQuery)
       .sort({ 'hierarchy.order': 1, createdAt: 1 })
-      .select('title slug originId permalink hierarchy.level hierarchy.parent hierarchy.children hierarchy.order timeModified')
+      .select('title slug originId permalink hierarchy.level hierarchy.parent hierarchy.children hierarchy.order timeModified metadata.author')
       .lean();
 
     // If the topic filter ended up matching nothing in this doc, fall back to
@@ -115,7 +169,7 @@ router.get('/documents/:id', optionalAuth, async (req, res, next) => {
     if (filters?.topicIds?.length && topics.length === 0) {
       topics = await Topic.find({ documentId: req.params.id })
         .sort({ 'hierarchy.order': 1, createdAt: 1 })
-        .select('title slug originId permalink hierarchy.level hierarchy.parent hierarchy.children hierarchy.order timeModified')
+        .select('title slug originId permalink hierarchy.level hierarchy.parent hierarchy.children hierarchy.order timeModified metadata.author')
         .lean();
     }
 
@@ -145,6 +199,181 @@ router.get('/navigation/:documentId', async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/portal/documents/:id/toc — standalone TOC (lighter than .../documents/:id)
+// ---------------------------------------------------------------------------
+router.get('/documents/:id/toc', optionalAuth, async (req, res, next) => {
+  try {
+    const doc = await Document.findOne({ _id: req.params.id, status: 'completed' })
+      .select('isPaligoFormat tocTree')
+      .lean();
+    if (!doc) return res.status(404).json({ error: 'Not found' });
+
+    if (doc.isPaligoFormat && doc.tocTree?.length) {
+      return res.json({ tocTree: doc.tocTree });
+    }
+
+    // Build a flat→tree TOC from the topic list when no Paligo tree exists.
+    const filters = getUserFilters(req);
+    const topicQuery = { documentId: req.params.id };
+    if (filters?.topicIds?.length) topicQuery._id = { $in: filters.topicIds };
+    const topics = await Topic.find(topicQuery)
+      .sort({ 'hierarchy.order': 1, createdAt: 1 })
+      .select('title slug hierarchy.parent hierarchy.order')
+      .lean();
+
+    const byId = new Map();
+    topics.forEach((t) => byId.set(String(t._id), { _id: String(t._id), title: t.title, slug: t.slug, children: [] }));
+    const roots = [];
+    topics.forEach((t) => {
+      const parent = t.hierarchy?.parent ? byId.get(String(t.hierarchy.parent)) : null;
+      const node = byId.get(String(t._id));
+      (parent ? parent.children : roots).push(node);
+    });
+    res.json({ tocTree: roots });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/portal/documents/:id/pagination?topicId= — prev/next pointers
+// ---------------------------------------------------------------------------
+router.get('/documents/:id/pagination', async (req, res, next) => {
+  try {
+    const topics = await Topic.find({ documentId: req.params.id })
+      .sort({ 'hierarchy.order': 1, createdAt: 1 })
+      .select('_id title slug')
+      .lean();
+    if (topics.length === 0) return res.status(404).json({ error: 'No topics' });
+
+    const targetId = req.query.topicId ? String(req.query.topicId) : String(topics[0]._id);
+    const idx = topics.findIndex((t) => String(t._id) === targetId);
+    if (idx < 0) return res.status(404).json({ error: 'Topic not in document' });
+
+    const compact = (t) => t ? { _id: String(t._id), title: t.title, slug: t.slug } : null;
+    res.json({
+      first:    compact(topics[0]),
+      last:     compact(topics[topics.length - 1]),
+      previous: compact(topics[idx - 1]),
+      current:  compact(topics[idx]),
+      next:     compact(topics[idx + 1]),
+      position: idx + 1,
+      total:    topics.length,
+    });
+  } catch (err) { next(err); }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/portal/documents/:id/resources — list attachments registered as
+// resources of this document (images, css, data files, etc.).
+// GET /api/portal/documents/:id/resources/:rid/metadata
+// GET /api/portal/documents/:id/resources/:rid/content
+// GET /api/portal/documents/:id/resources/:rid/image?width=
+// ---------------------------------------------------------------------------
+router.get('/documents/:id/resources', async (req, res, next) => {
+  try {
+    const items = await Attachment.find({ documentId: req.params.id })
+      .sort({ createdAt: -1 })
+      .lean();
+    res.json({
+      resources: items.map((a) => ({
+        _id: String(a._id),
+        filename: a.filename,
+        title: a.title || a.filename,
+        mimeType: a.mimeType,
+        size: a.size,
+        contentUrl:  `/api/portal/documents/${req.params.id}/resources/${a._id}/content`,
+        metadataUrl: `/api/portal/documents/${req.params.id}/resources/${a._id}/metadata`,
+      })),
+    });
+  } catch (err) { next(err); }
+});
+
+router.get('/documents/:id/resources/:rid/metadata', async (req, res, next) => {
+  try {
+    const a = await Attachment.findOne({ _id: req.params.rid, documentId: req.params.id }).lean();
+    if (!a) return res.status(404).json({ error: 'Not found' });
+    res.json({
+      _id: String(a._id),
+      filename: a.filename,
+      mimeType: a.mimeType,
+      size: a.size,
+      title: a.title || a.filename,
+      createdAt: a.createdAt,
+    });
+  } catch (err) { next(err); }
+});
+
+router.get('/documents/:id/resources/:rid/content', async (req, res, next) => {
+  try {
+    const a = await Attachment.findOne({ _id: req.params.rid, documentId: req.params.id }).lean();
+    if (!a) return res.status(404).json({ error: 'Not found' });
+    const filePath = path.resolve(config.upload.dir, a.path);
+    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File missing on disk' });
+    res.setHeader('Content-Type', a.mimeType);
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    fs.createReadStream(filePath).pipe(res);
+  } catch (err) { next(err); }
+});
+
+// ?width=… resizes (via Sharp if installed; otherwise falls back to original).
+router.get('/documents/:id/resources/:rid/image', async (req, res, next) => {
+  try {
+    const a = await Attachment.findOne({ _id: req.params.rid, documentId: req.params.id }).lean();
+    if (!a) return res.status(404).json({ error: 'Not found' });
+    if (!/^image\//.test(a.mimeType)) return res.status(400).json({ error: 'Not an image resource' });
+
+    const filePath = path.resolve(config.upload.dir, a.path);
+    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File missing on disk' });
+
+    const width = parseInt(req.query.width, 10);
+    res.setHeader('Content-Type', a.mimeType);
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+
+    if (Number.isFinite(width) && width > 0) {
+      try {
+        const sharp = require('sharp'); // optional dep
+        const buf = await sharp(filePath).resize({ width }).toBuffer();
+        return res.send(buf);
+      } catch {
+        // sharp not installed — silently serve the original
+      }
+    }
+    fs.createReadStream(filePath).pipe(res);
+  } catch (err) { next(err); }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/portal/maps/:mapId/topics/:topicId
+// GET /api/portal/maps/:mapId/topics/:topicId/content
+// FT-style endpoints that resolve a topic in the context of a specific map.
+// ---------------------------------------------------------------------------
+router.get('/maps/:mapId/topics/:topicId', optionalAuth, async (req, res, next) => {
+  try {
+    const topic = await Topic.findOne({
+      _id: req.params.topicId,
+      documentId: req.params.mapId,
+    })
+      .select('-content.html')
+      .lean();
+    if (!topic) return res.status(404).json({ error: 'Topic not in this map' });
+    res.json({ topic });
+  } catch (err) { next(err); }
+});
+
+router.get('/maps/:mapId/topics/:topicId/content', optionalAuth, async (req, res, next) => {
+  try {
+    const topic = await Topic.findOne({
+      _id: req.params.topicId,
+      documentId: req.params.mapId,
+    }).select('content.html').lean();
+    if (!topic) return res.status(404).json({ error: 'Topic not in this map' });
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(topic.content?.html || '');
+  } catch (err) { next(err); }
 });
 
 // ---------------------------------------------------------------------------
@@ -370,7 +599,7 @@ router.get('/topics-index', async (req, res, next) => {
 router.get('/topics/:id', optionalAuth, async (req, res, next) => {
   try {
     const topic = await Topic.findById(req.params.id)
-      .select('title slug content.html documentId hierarchy metadata originId permalink timeModified accessLevel')
+      .select('title slug content.html documentId hierarchy metadata originId permalink timeModified accessLevel updatedAt')
       .lean();
 
     if (!topic) return res.status(404).json({ error: 'Not found' });
@@ -379,7 +608,7 @@ router.get('/topics/:id', optionalAuth, async (req, res, next) => {
     if (topic.accessLevel === 'authenticated' && !req.user) {
       return res.status(401).json({ error: 'Authentication required to view this content' });
     }
-    if (topic.accessLevel === 'admin' && req.user?.role !== 'admin') {
+    if (topic.accessLevel === 'admin' && !['admin', 'superadmin'].includes(req.user?.role)) {
       return res.status(403).json({ error: 'Insufficient permissions' });
     }
 

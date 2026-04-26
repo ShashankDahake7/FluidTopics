@@ -118,7 +118,7 @@ export default function MyLibraryPage() {
               <ul style={s.list}>
                 {bookmarks.map((b) => (
                   <li key={b.id || b.topic?._id} style={s.row}>
-                    <Link href={`/portal/docs/${b.topic?._id}`} style={s.rowMain}>
+                    <Link href={`/dashboard/docs/${b.topic?._id}`} style={s.rowMain}>
                       <div style={s.rowTitle}>{b.topic?.title || 'Untitled'}</div>
                       {b.note && <div style={s.rowSub}>{b.note}</div>}
                     </Link>

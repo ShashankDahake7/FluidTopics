@@ -2,6 +2,9 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const config = require('../config/env');
 
+// Decode the bearer token, look up the user, and (if the token references a
+// session) verify the session is still active. Sets `req.user` and, when
+// applicable, `req.actor` (the admin behind an impersonation) and `req.session`.
 const auth = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
@@ -15,6 +18,24 @@ const auth = async (req, res, next) => {
     const user = await User.findById(decoded.id);
     if (!user || !user.isActive) {
       return res.status(401).json({ error: 'Invalid token or user deactivated.' });
+    }
+
+    // If the JWT carries a session id, the session row is the source of truth
+    // for revocation — even if the JWT is otherwise valid.
+    if (decoded.sid) {
+      const Session = require('../models/Session');
+      const session = await Session.findById(decoded.sid);
+      if (!session || session.revokedAt) {
+        return res.status(401).json({ error: 'Session revoked.' });
+      }
+      req.session = session;
+      session.lastUsedAt = new Date();
+      session.save().catch(() => {});
+    }
+
+    // Impersonation — the JWT carries the original admin's id in `actor`.
+    if (decoded.actor) {
+      req.actor = await User.findById(decoded.actor).lean();
     }
 
     req.user = user;
@@ -34,6 +55,10 @@ const requireRole = (...roles) => {
   return (req, res, next) => {
     if (!req.user) {
       return res.status(401).json({ error: 'Authentication required.' });
+    }
+    // Super administrators may call any role-gated admin/editor route.
+    if (req.user.role === 'superadmin') {
+      return next();
     }
     if (!roles.includes(req.user.role)) {
       return res.status(403).json({ error: 'Insufficient permissions.' });

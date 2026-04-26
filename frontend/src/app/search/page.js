@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect, useCallback, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
-import api from '@/lib/api';
+import api, { getStoredToken } from '@/lib/api';
 import { useTranslation } from '@/lib/i18n';
 
 function SearchContent() {
@@ -27,6 +27,8 @@ function SearchContent() {
   const [modules,        setModules]        = useState([]);
   const [activeDocIds,   setActiveDocIds]   = useState([]);
   const [moduleFilter,   setModuleFilter]   = useState('');
+  const [contentLocales, setContentLocales] = useState([]);
+  const [contentLang, setContentLang] = useState('');
 
   // Load uploaded documents once so the MODULE list can render
   useEffect(() => {
@@ -35,9 +37,22 @@ function SearchContent() {
       .catch(() => setModules([]));
   }, []);
 
+  useEffect(() => {
+    const lp = searchParams.get('lang');
+    if (!lp) setContentLang('');
+    else if (lp === '*') setContentLang('*');
+    else setContentLang(lp);
+  }, [searchParams]);
+
+  useEffect(() => {
+    api.get('/locales')
+      .then((d) => setContentLocales(d.locales || []))
+      .catch(() => setContentLocales([]));
+  }, []);
+
   // Load saved filter preferences so every search is scoped to them.
   useEffect(() => {
-    if (typeof window === 'undefined' || !localStorage.getItem('ft_token')) return;
+    if (typeof window === 'undefined' || !getStoredToken()) return;
     api.get('/user/profile')
       .then((d) => {
         setSavedInterests(d.interests || []);
@@ -71,22 +86,29 @@ function SearchContent() {
       })();
       if (docIdsForRequest.length)  params.set('documentIds', docIdsForRequest.join(','));
       if (savedTopicIds.length)     params.set('topicIds',    savedTopicIds.join(','));
+      if (contentLang === '*' || contentLang === 'all') params.set('language', 'all');
+      else if (contentLang) params.set('language', contentLang);
       const data = await api.get(`/search?${params}`);
       setResults(data);
       setPage(pg);
     } catch (e) { console.error(e); }
     setLoading(false);
-  }, [q, activeTags, activeProducts, releaseNotes, titlesOnly, savedInterests, savedDocIds, savedTopicIds, savedRN, activeDocIds]);
+  }, [q, activeTags, activeProducts, releaseNotes, titlesOnly, savedInterests, savedDocIds, savedTopicIds, savedRN, activeDocIds, contentLang]);
 
   // Re-run search when q or filters change
   useEffect(() => {
     setQuery(q);
     doSearch(1);
-  }, [q, titlesOnly, activeTags, activeProducts, releaseNotes, savedInterests, savedDocIds, savedTopicIds, savedRN, activeDocIds, doSearch]);
+  }, [q, titlesOnly, activeTags, activeProducts, releaseNotes, savedInterests, savedDocIds, savedTopicIds, savedRN, activeDocIds, contentLang, doSearch]);
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    router.push(`/search?q=${encodeURIComponent(query)}`);
+    const p = new URLSearchParams();
+    if (query.trim()) p.set('q', query.trim());
+    if (contentLang === '*' || contentLang === 'all') p.set('lang', '*');
+    else if (contentLang) p.set('lang', contentLang);
+    const qs = p.toString();
+    router.push(qs ? `/search?${qs}` : '/search');
   };
 
   const toggle = (list, setList) => (value) => {
@@ -176,6 +198,33 @@ function SearchContent() {
               checked={titlesOnly}
               onChange={() => setTitlesOnly((v) => !v)}
             />
+          </div>
+
+          <div style={s.facetGroup}>
+            <div style={s.facetLabel}>{t('contentLanguage')}</div>
+            <select
+              value={contentLang === '' ? '__implicit__' : contentLang}
+              onChange={(e) => {
+                const v = e.target.value;
+                const next = v === '__implicit__' ? '' : v;
+                setContentLang(next);
+                const p = new URLSearchParams(window.location.search);
+                if (next === '') p.delete('lang');
+                else if (next === '*' || next === 'all') p.set('lang', '*');
+                else p.set('lang', next);
+                const qs = p.toString();
+                router.replace(qs ? `/search?${qs}` : '/search');
+              }}
+              style={s.facetSelect}
+            >
+              <option value="__implicit__">{t('contentLangPreferred')}</option>
+              <option value="*">{t('contentLangAll')}</option>
+              {contentLocales.map((loc) => (
+                <option key={loc.code} value={loc.code}>
+                  {loc.name} ({loc.count})
+                </option>
+              ))}
+            </select>
           </div>
 
           <div style={s.facetGroup}>
@@ -271,7 +320,7 @@ function SearchContent() {
               {results.hits?.map((hit) => (
                 <a
                   key={hit.id}
-                  href={`/portal/docs/${hit.topicId || hit.id}`}
+                  href={`/dashboard/docs/${hit.topicId || hit.id}`}
                   style={s.resultCard}
                 >
                   <h3
@@ -421,6 +470,18 @@ const s = {
   facetGroup: { marginTop: '12px', borderTop: '1px solid #f1f5f9', paddingTop: '12px' },
   facetLabel: { fontSize: '0.7rem', color: '#94a3b8', fontWeight: 700, letterSpacing: '0.08em', marginBottom: '8px' },
   facetScroll: { maxHeight: '300px', overflowY: 'auto', paddingRight: '4px' },
+  facetSelect: {
+    width: '100%',
+    marginTop: '4px',
+    padding: '8px 10px',
+    border: '1px solid #cbd5e1',
+    borderRadius: '6px',
+    fontSize: '0.82rem',
+    fontFamily: 'var(--font-sans)',
+    background: '#fff',
+    color: '#0f172a',
+    boxSizing: 'border-box',
+  },
   facetFilterInput: {
     width: '100%',
     padding: '6px 10px',

@@ -21,12 +21,32 @@ const designerRoutes = require('./routes/designer');
 const portalRoutes = require('./routes/portal');
 const feedbackRoutes = require('./routes/feedback');
 const collectionsRoutes = require('./routes/collections');
+const ratingsRoutes = require('./routes/ratings');
+const attachmentsRoutes = require('./routes/attachments');
+const assetsRoutes = require('./routes/assets');
+const localesRoutes = require('./routes/locales');
+const sectionsRoutes = require('./routes/sections');
+const khubDocumentsRoutes = require('./routes/khubDocuments');
+const groupsRoutes = require('./routes/groups');
+const savedSearchesRoutes = require('./routes/savedSearches');
+const personalBooksRoutes = require('./routes/personalBooks');
+const languagesRoutes = require('./routes/languages');
+const aiRoutes = require('./routes/ai');
+const portalAssetsRoutes = require('./routes/portalAssets');
 
 const app = express();
 
-// Middleware
+// CORS allow-list — overridable via CORS_ORIGINS env var (comma-separated).
+// In production set this to your real origin(s); the dev defaults below
+// cover the typical Next.js ports.
+const corsOrigins = (process.env.CORS_ORIGINS || 'http://localhost:3000,http://localhost:3001')
+  .split(',').map((s) => s.trim()).filter(Boolean);
 app.use(cors({
-  origin: ['http://localhost:3000', 'http://localhost:3001'],
+  origin: (origin, cb) => {
+    // Allow same-origin / curl (no Origin header) and anything in the allow-list.
+    if (!origin || corsOrigins.includes(origin)) return cb(null, true);
+    return cb(new Error(`Origin ${origin} not allowed by CORS`));
+  },
   credentials: true,
 }));
 app.use(express.json({ limit: '10mb' }));
@@ -47,9 +67,40 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/bookmarks', bookmarkRoutes);
 app.use('/api/user', userRoutes);
 app.use('/api/designer', designerRoutes);
+app.use('/api', portalAssetsRoutes);
 app.use('/api/portal', portalRoutes);
 app.use('/api/feedback', feedbackRoutes);
 app.use('/api/collections', collectionsRoutes);
+
+// Knowledge Hub-equivalent routes (parity with FT /khub/* surface).
+// Ratings is mounted first so its absolute paths win over the /api/khub/documents
+// mount below for the /:id/rating sub-path.
+app.use('/api',                  ratingsRoutes);        // /api/topics/:id/rating, /api/documents/:id/rating, /api/khub/documents/:id/rating
+app.use('/api/portal',           ratingsRoutes);        // /api/portal/documents/:id/rating
+app.use('/api/khub/documents',   khubDocumentsRoutes);  // unstructured documents
+app.use('/api/attachments',      attachmentsRoutes);
+app.use('/api/assets',           assetsRoutes);
+app.use('/api/locales',          localesRoutes);
+app.use('/api/languages',        languagesRoutes);
+app.use('/api/ai',              aiRoutes);
+app.use('/api/sections',         sectionsRoutes);
+app.use('/api/groups',           groupsRoutes);
+app.use('/api/saved-searches',   savedSearchesRoutes);
+app.use('/api/personal-books',   personalBooksRoutes);
+
+// OpenSearch descriptor at the root so browsers can autodiscover.
+app.get('/opensearch.xml', (req, res) => {
+  const origin = `${req.protocol}://${req.get('host')}`;
+  res.setHeader('Content-Type', 'application/opensearchdescription+xml');
+  res.send(`<?xml version="1.0" encoding="UTF-8"?>
+<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
+  <ShortName>Darwinbox Docs</ShortName>
+  <Description>Search Darwinbox product documentation</Description>
+  <InputEncoding>UTF-8</InputEncoding>
+  <Url type="text/html" template="${origin}/search?q={searchTerms}"/>
+  <Url type="application/json" template="${origin}/api/search?q={searchTerms}"/>
+</OpenSearchDescription>`);
+});
 
 // Health check
 app.get('/api/health', (req, res) => {

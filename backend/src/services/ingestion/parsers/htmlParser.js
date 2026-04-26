@@ -1,5 +1,6 @@
 const cheerio = require('cheerio');
 const { stripHtml } = require('../../../utils/helpers');
+const { extractAuthorFromHtml } = require('../../../utils/authorFromHtml');
 
 /**
  * Parse HTML content into structured sections
@@ -13,7 +14,7 @@ const parseHTML = (htmlContent, filename = '') => {
   // Extract metadata
   const metadata = {
     title: $('title').text().trim() || $('h1').first().text().trim() || filename,
-    author: $('meta[name="author"]').attr('content') || '',
+    author: extractAuthorFromHtml(htmlContent),
     description: $('meta[name="description"]').attr('content') || '',
     keywords: ($('meta[name="keywords"]').attr('content') || '')
       .split(',')

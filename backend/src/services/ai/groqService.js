@@ -109,8 +109,47 @@ Provide a clear, concise, and structured answer. If applicable, cite the sources
   }
 };
 
+/**
+ * Translate text between locales (uses optional model / temperature overrides).
+ */
+const translateText = async ({
+  text,
+  sourceLocale = 'auto',
+  targetLocale = 'en',
+  systemPrompt,
+  model,
+  temperature,
+}) => {
+  if (!text || !process.env.GROQ_API_KEY) return '';
+
+  const sys = systemPrompt
+    || 'You are a precise translator. Preserve formatting (Markdown, HTML, code blocks). Reply with the translated text only.';
+  const src = sourceLocale && sourceLocale !== 'auto' ? ` from locale "${sourceLocale}"` : '';
+  const tgt = targetLocale || 'en';
+
+  try {
+    const response = await groq.chat.completions.create({
+      messages: [
+        { role: 'system', content: sys },
+        {
+          role: 'user',
+          content: `Translate the following text${src} into locale "${tgt}". Output only the translation, no preamble.\n\n---\n${text}`,
+        },
+      ],
+      model: model || MODEL,
+      temperature: typeof temperature === 'number' ? temperature : 0.2,
+      max_tokens: 4096,
+    });
+    return response.choices[0]?.message?.content?.trim() || '';
+  } catch (error) {
+    console.error('Groq translateText error:', error.message);
+    return '';
+  }
+};
+
 module.exports = {
   generateSummary,
   generateTags,
   generateAnswer,
+  translateText,
 };

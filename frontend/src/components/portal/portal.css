@@ -214,6 +214,20 @@
   transition: opacity 150ms, transform 150ms, visibility 0s;
 }
 
+button.portal-lang-option {
+  width: 100%;
+  border: none;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.portal-lang-option.is-current {
+  font-weight: 600;
+  color: #1d4ed8;
+}
+
 .portal-menu-icon {
   display: inline-flex;
   align-items: center;
@@ -650,17 +664,68 @@ nav mark {
   border: 1px solid #e5e7eb;
 }
 
-[data-portal-content] video,
-[data-portal-content] iframe {
+/* <video>: keep intrinsic dimensions, capped to the column. No extra
+   border/background — the player chrome is already a frame; an extra one
+   clips the native controls. */
+[data-portal-content] video {
   max-width: 100%;
-  width: 100%;
-  aspect-ratio: 16 / 9;
   height: auto;
   display: block;
-  margin: 16px 0;
-  border: 1px solid #e5e7eb;
+  margin: 18px auto;
   border-radius: 6px;
-  background: #000;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+  background: transparent;
+  border: 0;
+}
+
+/* Video wrappers (Paligo / Wistia / YouTube embeds typically come wrapped in
+   a stack of divs). Strip default styling so the player isn't double-framed. */
+[data-portal-content] .mediaobject,
+[data-portal-content] .video-container,
+[data-portal-content] .videoobject {
+  margin: 18px auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  max-width: 800px;
+  width: 100%;
+}
+
+/* Use a padding-bottom trick so the wrapper drives the height (with extra
+   room for player controls), and the iframe fills it absolutely. This stops
+   the bottom controls from being clipped. */
+[data-portal-content] .video-container {
+  position: relative;
+  padding-bottom: 60%;        /* a touch taller than 16:9 → leaves room for the control bar */
+  height: 0;
+  overflow: hidden;
+  border-radius: 6px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+}
+
+[data-portal-content] .video-container > iframe,
+[data-portal-content] .videoobject > iframe {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: transparent;
+}
+
+/* Standalone iframes that are NOT inside a .video-container wrapper still
+   need a sensible default size. */
+[data-portal-content] iframe:not(.video-container iframe):not(.videoobject iframe) {
+  display: block;
+  width: 100%;
+  max-width: 800px;
+  aspect-ratio: 16 / 9;
+  height: auto;
+  margin: 18px auto;
+  border-radius: 6px;
+  border: 0;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
 }
 
 [data-portal-content] figure {
@@ -699,4 +764,582 @@ nav mark {
   background: #FFFFFF;
   font-weight: 600;
   color: #0f172a;
+}
+
+/* ===================== Portal auth gate & sign-in (Darwinbox-style) ===================== */
+.portal-gate-loading-main {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 50vh;
+}
+
+.portal-gate-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px;
+}
+
+.portal-gate-spinner {
+  width: 36px;
+  height: 36px;
+  border: 3px solid #e2e8f0;
+  border-top-color: #1976d2;
+  border-radius: 50%;
+  animation: spin 0.75s linear infinite;
+}
+
+.portal-signin-page {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  /* Span the viewport so the dark footer always sits flush against the bottom
+     edge instead of leaving the body's background colour visible below it. */
+  min-height: calc(100vh - var(--header-height));
+  background: #ffffff;
+  font-family: var(--font-sans);
+}
+
+.portal-signin-body {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 20px 56px;
+}
+
+.portal-signin-card {
+  width: 100%;
+  max-width: 420px;
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 12px 32px rgba(15, 23, 42, 0.08);
+  border: 1px solid #eef2f6;
+  padding: 36px 40px 36px;
+}
+
+.portal-signin-card-brand {
+  text-align: center;
+  margin-bottom: 24px;
+}
+
+.portal-signin-card-logo {
+  height: 38px;
+  width: auto;
+  /* The source logo is white-on-transparent (designed for the dark header/footer);
+     invert it so the wordmark reads as dark on the white sign-in card. */
+  filter: invert(1);
+}
+
+.portal-signin-roles {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 22px;
+}
+
+.portal-signin-role-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 14px;
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: #1565c0;
+  background: #ffffff;
+  border: 1px solid #d8e3ec;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+
+.portal-signin-role-btn:hover {
+  background: #f5f9ff;
+  border-color: #42a5f5;
+}
+
+.portal-signin-role-btn.is-active {
+  background: #e3f2fd;
+  border-color: #1976d2;
+  box-shadow: 0 0 0 1px rgba(25, 118, 210, 0.2);
+}
+
+.portal-signin-role-icon {
+  flex-shrink: 0;
+  color: #1976d2;
+}
+
+.portal-signin-title {
+  text-align: center;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: #1a1a1a;
+  margin: 0 0 22px;
+  letter-spacing: -0.02em;
+}
+
+.portal-signin-muted {
+  font-size: 0.85rem;
+  color: #64748b;
+  text-align: center;
+  margin: 0 0 12px;
+}
+
+.portal-signin-warn {
+  font-size: 0.85rem;
+  color: #92400e;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+}
+
+.portal-signin-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: #b91c1c;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 14px;
+}
+
+.portal-signin-error-icon {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: #dc2626;
+}
+
+.portal-signin-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.portal-signin-label {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: #374151;
+  margin-bottom: 6px;
+  margin-top: 14px;
+}
+
+.portal-signin-label:first-of-type {
+  margin-top: 0;
+}
+
+.portal-signin-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 11px 14px;
+  font-size: 0.92rem;
+  border: 1px solid #cfd8dc;
+  border-radius: 6px;
+  font-family: var(--font-sans);
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.portal-signin-input:focus {
+  border-color: #1976d2;
+  box-shadow: 0 0 0 2px rgba(25, 118, 210, 0.12);
+}
+
+.portal-signin-password-wrap {
+  position: relative;
+}
+
+.portal-signin-input-password {
+  padding-right: 44px;
+}
+
+.portal-signin-eye {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 40px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.portal-signin-eye:hover {
+  color: #1976d2;
+  background: #f1f5f9;
+}
+
+.portal-signin-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 16px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.portal-signin-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.875rem;
+  color: #374151;
+  cursor: pointer;
+  user-select: none;
+}
+
+.portal-signin-check input {
+  width: 16px;
+  height: 16px;
+  accent-color: #1976d2;
+}
+
+.portal-signin-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #1976d2;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  text-decoration: none;
+}
+
+.portal-signin-link:hover {
+  text-decoration: underline;
+}
+
+.portal-signin-forgot {
+  margin-top: 12px;
+  padding: 14px;
+  background: #f8fafc;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.portal-signin-forgot-msg {
+  font-size: 0.82rem;
+  color: #15803d;
+  margin: 0;
+}
+
+.portal-signin-btn-secondary {
+  align-self: flex-start;
+  padding: 8px 16px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: #1976d2;
+  background: #fff;
+  border: 1px solid #90caf9;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: var(--font-sans);
+}
+
+.portal-signin-btn-secondary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.portal-signin-submit {
+  width: 100%;
+  margin-top: 22px;
+  padding: 12px 20px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #ffffff;
+  background: #1976d2;
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  box-shadow: 0 2px 8px rgba(25, 118, 210, 0.28);
+  transition: background 0.15s, transform 0.1s;
+}
+
+.portal-signin-submit:hover:not(:disabled) {
+  background: #1565c0;
+}
+
+.portal-signin-submit:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.portal-signin-footer-note {
+  text-align: center;
+  margin-top: 22px;
+  font-size: 0.85rem;
+  color: #64748b;
+}
+
+.portal-signin-inline-link {
+  color: #1976d2;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.portal-signin-inline-link:hover {
+  text-decoration: underline;
+}
+
+/* ─── Forgot password (standalone /forgot-password) ───────────────────── */
+.portal-forgot-page .portal-signin-card {
+  max-width: 480px;
+}
+
+.portal-forgot-card {
+  padding-top: 44px;
+  padding-bottom: 40px;
+}
+
+.portal-forgot-title {
+  margin: 0 0 14px;
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: #374151;
+  text-align: center;
+}
+
+.portal-forgot-lead {
+  margin: 0 0 28px;
+  font-size: 0.9rem;
+  line-height: 1.55;
+  color: #64748b;
+  text-align: center;
+}
+
+.portal-forgot-form {
+  display: flex;
+  flex-direction: column;
+}
+
+.portal-forgot-actions {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 28px;
+  flex-wrap: wrap;
+}
+
+.portal-forgot-cancel {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px;
+  font-size: 0.92rem;
+  font-weight: 500;
+  color: #111827;
+  background: #ffffff;
+  border: 1px solid #c4cdd5;
+  border-radius: 6px;
+  text-decoration: none;
+  font-family: var(--font-sans);
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.portal-forgot-cancel:hover {
+  background: #f8fafc;
+  border-color: #94a3b8;
+}
+
+.portal-forgot-submit {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 22px;
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: #ffffff;
+  background: #1976d2;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  box-shadow: 0 2px 8px rgba(25, 118, 210, 0.3);
+  transition: background 0.15s;
+}
+
+.portal-forgot-submit:hover:not(:disabled) {
+  background: #1565c0;
+}
+
+.portal-forgot-submit:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+/* ----------------------------------------- */
+/* About this tenant — large popup modal     */
+/* ----------------------------------------- */
+
+.ft-about-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  z-index: 1100;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 64px 24px;
+  overflow: auto;
+}
+
+.ft-about-modal {
+  width: min(720px, 100%);
+  background: #ffffff;
+  border-radius: 8px;
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.28);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  font-family: var(--font-sans);
+  color: #1f2937;
+}
+
+.ft-about-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #f8fafc;
+}
+
+.ft-about-title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.ft-about-close {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #475569;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.ft-about-close:hover {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+.ft-about-body {
+  padding: 18px 20px 22px;
+  max-height: calc(100vh - 220px);
+  overflow: auto;
+  outline: none;
+}
+
+.ft-about-field {
+  margin-bottom: 20px;
+}
+
+.ft-about-field:last-child {
+  margin-bottom: 0;
+}
+
+.ft-about-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.ft-about-value {
+  font-size: 0.875rem;
+  color: #1f2937;
+  line-height: 1.5;
+  word-break: break-all;
+}
+
+.ft-about-muted {
+  color: #64748b;
+}
+
+.ft-about-table-wrap {
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.ft-about-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+  color: #1f2937;
+  background: #ffffff;
+}
+
+.ft-about-table thead th {
+  background: #e0f2fe;
+  border: 1px solid #bae6fd;
+  color: #0f172a;
+  font-weight: 600;
+  padding: 4px 6px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.ft-about-table tbody td {
+  border: 1px solid #cbd5e1;
+  padding: 3px 6px;
+  text-align: center;
+  background: #f1f5f9;
+  vertical-align: middle;
+}
+
+.ft-about-table tbody td.ft-about-key {
+  text-align: center;
+  background: #e0f2fe;
+  color: #0f172a;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.ft-about-table tbody td.ft-about-mark {
+  color: #16a34a;
+  font-weight: 600;
+}
+
+.ft-about-note {
+  margin-top: 10px;
+  font-size: 0.8rem;
+  color: #1f2937;
+}
+
+.ft-about-note strong {
+  font-weight: 600;
 }

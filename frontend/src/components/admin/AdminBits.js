@@ -71,9 +71,17 @@ export function Checkbox({ checked, onChange, label }) {
   );
 }
 
-export function Radio({ checked, onChange, label }) {
+export function Radio({ checked, onChange, label, disabled = false }) {
   return (
-    <button type="button" onClick={() => onChange(true)} style={S.checkRow}>
+    <button
+      type="button"
+      onClick={() => !disabled && onChange(true)}
+      style={{
+        ...S.checkRow,
+        opacity: disabled ? 0.55 : 1,
+        cursor: disabled ? 'not-allowed' : 'pointer',
+      }}
+    >
       <span style={{
         width: '16px', height: '16px', borderRadius: '50%',
         border: '2px solid', borderColor: checked ? '#a21caf' : '#94a3b8',
@@ -157,13 +165,14 @@ const S = {
   magentaLink: {
     background: 'transparent', border: 'none', textAlign: 'left',
     color: '#a21caf', fontSize: '0.9rem', cursor: 'pointer', padding: 0,
-    fontFamily: 'var(--font-sans)', textDecoration: 'underline',
-    textUnderlineOffset: '2px',
+    fontFamily: 'var(--font-sans)', textDecoration: 'none',
   },
   checkRow: {
-    display: 'inline-flex', alignItems: 'center', gap: '10px',
+    display: 'flex', alignItems: 'center', gap: '10px',
     background: 'transparent', border: 'none', cursor: 'pointer',
     padding: '6px 0', fontFamily: 'var(--font-sans)',
+    width: 'fit-content', textAlign: 'left',
+    outline: 'none',
   },
   reorderRow: {
     display: 'flex', alignItems: 'center', gap: '8px',

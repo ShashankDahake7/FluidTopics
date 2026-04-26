@@ -4,6 +4,6 @@ import Header from './Header';
 
 export default function HeaderGate() {
   const pathname = usePathname();
-  if (pathname?.startsWith('/portal')) return null;
+  if (pathname?.startsWith('/dashboard') || pathname?.startsWith('/portal')) return null;
   return <Header />;
 }

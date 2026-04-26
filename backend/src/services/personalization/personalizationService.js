@@ -183,6 +183,7 @@ const getUserInterestProfile = async (userId) => {
     email: user.email,
     role: user.role,
     lastLogin: user.lastLogin,
+    language: user.preferences?.language || 'en',
     interests: user.preferences?.interests || [],
     products: user.preferences?.products || [],
     documentIds: (user.preferences?.documentIds || []).map(String),

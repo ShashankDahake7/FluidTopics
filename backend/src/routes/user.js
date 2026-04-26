@@ -34,10 +34,19 @@ router.patch('/preferences', async (req, res, next) => {
     const { interests, products, language, theme, documentIds, topicIds, releaseNotesOnly } = req.body;
     const User = require('../models/User');
 
+    const normalizeLang = (v) => {
+      if (typeof v !== 'string') return null;
+      const s = v.trim().toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 12);
+      return s || null;
+    };
+
     const update = {};
     if (interests) update['preferences.interests'] = interests;
     if (products) update['preferences.products'] = products;
-    if (language) update['preferences.language'] = language;
+    if (language !== undefined && language !== null) {
+      const n = normalizeLang(String(language));
+      if (n) update['preferences.language'] = n;
+    }
     if (theme) update['preferences.theme'] = theme;
     if (Array.isArray(documentIds)) update['preferences.documentIds'] = documentIds;
     if (Array.isArray(topicIds))    update['preferences.topicIds']    = topicIds;
@@ -179,6 +188,70 @@ router.delete('/searches', async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+});
+
+/**
+ * PATCH /api/user/profile — let a user edit their own display name / avatar.
+ * Email and role can only be changed by an admin.
+ */
+router.patch('/profile', async (req, res, next) => {
+  try {
+    const User = require('../models/User');
+    const { name, avatar } = req.body || {};
+    const update = {};
+    if (typeof name === 'string'   && name.trim())   update.name = name.trim();
+    if (typeof avatar === 'string') update.avatar = avatar;
+    const user = await User.findByIdAndUpdate(req.user.id, update, { new: true });
+    res.json({ user: user.toJSON() });
+  } catch (err) { next(err); }
+});
+
+/**
+ * GET /api/user/groups — group memberships of the signed-in user.
+ */
+router.get('/groups', async (req, res, next) => {
+  try {
+    const User = require('../models/User');
+    const user = await User.findById(req.user.id).populate('groups').lean();
+    res.json({ groups: user?.groups || [] });
+  } catch (err) { next(err); }
+});
+
+/**
+ * GET /api/user/assets — single roll-up of bookmarks + collections + saved
+ * searches + personal books, mirroring the FT "personal info & assets" call.
+ */
+router.get('/assets', async (req, res, next) => {
+  try {
+    const Bookmark     = require('../models/Bookmark');
+    const Collection   = require('../models/Collection');
+    const SavedSearch  = require('../models/SavedSearch');
+    const PersonalBook = require('../models/PersonalBook');
+    const Analytics    = require('../models/Analytics');
+
+    const [bookmarks, collections, savedSearches, books, recentSearches] = await Promise.all([
+      Bookmark.find({ userId: req.user.id }).populate('topicId', 'title slug').lean(),
+      Collection.find({ userId: req.user.id }).lean(),
+      SavedSearch.find({ userId: req.user.id }).sort({ createdAt: -1 }).lean(),
+      PersonalBook.find({ userId: req.user.id }).sort({ createdAt: -1 }).lean(),
+      Analytics.aggregate([
+        { $match: { userId: req.user._id, eventType: 'search', 'data.query': { $ne: '' } } },
+        { $sort: { timestamp: -1 } },
+        { $group: { _id: '$data.query', lastUsed: { $first: '$timestamp' }, count: { $sum: 1 } } },
+        { $sort: { lastUsed: -1 } },
+        { $limit: 20 },
+        { $project: { _id: 0, query: '$_id', lastUsed: 1, count: 1 } },
+      ]),
+    ]);
+
+    res.json({
+      bookmarks:     bookmarks.map((b) => ({ _id: b._id, topic: b.topicId, note: b.note, folder: b.folder, createdAt: b.createdAt })),
+      collections,
+      savedSearches,
+      personalBooks: books,
+      recentSearches,
+    });
+  } catch (err) { next(err); }
 });
 
 module.exports = router;

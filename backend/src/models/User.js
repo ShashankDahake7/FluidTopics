@@ -23,7 +23,7 @@ const userSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      enum: ['admin', 'editor', 'viewer'],
+      enum: ['superadmin', 'admin', 'editor', 'viewer'],
       default: 'viewer',
     },
     // Granular feature permissions (BRD Workflow 3)
@@ -51,6 +51,29 @@ const userSchema = new mongoose.Schema(
       type: String,
       default: '',
     },
+    // Group memberships and free-form tags — set/managed by admins.
+    groups: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Group' }],
+    tags:   [{ type: String, trim: true }],
+    // Email verification — false until the user clicks the link in the
+    // verification email. Login succeeds either way today; flip a check in
+    // /api/auth/login to enforce verification later.
+    emailVerified: { type: Boolean, default: false },
+    emailVerificationToken: { type: String, default: null, select: false },
+    emailVerificationExpires: { type: Date, default: null, select: false },
+    // Password-reset token — short-lived hash stored alongside the user;
+    // wipes itself once consumed.
+    passwordResetToken:   { type: String, default: null, select: false },
+    passwordResetExpires: { type: Date,   default: null, select: false },
+    // Login bookkeeping — incremented on success, capped on consecutive
+    // failures. `lockedUntil` blocks further sign-ins until the timestamp
+    // passes; cleared on the next successful auth.
+    loginCount:    { type: Number, default: 0 },
+    failedLogins:  { type: Number, default: 0 },
+    lockedUntil:   { type: Date,   default: null },
+    // External-identity links — populated when the user signs in via OIDC
+    // (Google, Microsoft, …) so subsequent logins resolve to the same User.
+    ssoProvider:   { type: String, default: null }, // 'google' | 'microsoft' | 'oidc'
+    ssoSubject:    { type: String, default: null }, // provider-specific user id ("sub")
     preferences: {
       products: [{ type: String }],
       interests: [{ type: String }],  // user-selected interest tags

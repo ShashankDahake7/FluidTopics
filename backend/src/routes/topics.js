@@ -1,6 +1,6 @@
 const express = require('express');
 const Topic = require('../models/Topic');
-const { optionalAuth } = require('../middleware/auth');
+const { optionalAuth, auth } = require('../middleware/auth');
 const { trackEvent } = require('../services/analytics/analyticsService');
 
 const router = express.Router();
@@ -16,6 +16,7 @@ router.get('/', async (req, res, next) => {
       tags,
       level,
       documentId,
+      language,
     } = req.query;
 
     const filter = {};
@@ -23,6 +24,7 @@ router.get('/', async (req, res, next) => {
     if (tags) filter['metadata.tags'] = { $in: tags.split(',') };
     if (level) filter['hierarchy.level'] = parseInt(level);
     if (documentId) filter.documentId = documentId;
+    if (language) filter['metadata.language'] = language;
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
@@ -174,6 +176,51 @@ router.get('/:id/related', async (req, res, next) => {
     const limit = parseInt(req.query.limit) || 5;
     const recommendations = await getRecommendations(req.params.id, limit);
     res.json({ related: recommendations });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// POST /api/topics/:id/translate — AI translate topic body (does not persist; client may save separately).
+router.post('/:id/translate', auth, async (req, res, next) => {
+  try {
+    const TranslationProfile = require('../models/TranslationProfile');
+    const { translateText } = require('../services/ai/groqService');
+    const { targetLocale = 'en', sourceLocale, profile } = req.body || {};
+
+    const topic = await Topic.findById(req.params.id).select('title slug content metadata');
+    if (!topic) return res.status(404).json({ error: 'Topic not found' });
+
+    const raw = topic.content?.html || topic.content?.text || '';
+    if (!raw.trim()) return res.status(400).json({ error: 'Topic has no translatable content' });
+
+    let prof = null;
+    if (profile) prof = await TranslationProfile.findOne({ name: String(profile) }).lean();
+    if (!prof) prof = await TranslationProfile.findOne({ isDefault: true }).lean();
+    if (!prof) prof = await TranslationProfile.findOne().sort({ createdAt: 1 }).lean();
+
+    const translated = await translateText({
+      text: raw.slice(0, 12000),
+      sourceLocale: sourceLocale || topic.metadata?.language || 'en',
+      targetLocale,
+      systemPrompt: prof?.systemPrompt,
+      model: prof?.model,
+      temperature: prof?.temperature,
+    });
+
+    if (!translated && !process.env.GROQ_API_KEY) {
+      return res.status(503).json({ error: 'Translation service not configured (GROQ_API_KEY).' });
+    }
+
+    res.json({
+      translatedText: translated,
+      topicId: String(topic._id),
+      slug: topic.slug,
+      title: topic.title,
+      sourceLocale: sourceLocale || topic.metadata?.language || 'en',
+      targetLocale,
+      profileUsed: prof?.name || null,
+    });
   } catch (error) {
     next(error);
   }

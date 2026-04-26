@@ -1,8 +1,8 @@
 'use client';
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import api from '@/lib/api';
+import api, { getStoredToken } from '@/lib/api';
 import { useTranslation } from '@/lib/i18n';
 
 // ---------------------------------------------------------------------------
@@ -32,6 +32,106 @@ function findNode(nodes, id) {
     if (found) return found;
   }
   return null;
+}
+
+/** Same slug pattern as Darwinbox `/portal-asset/{slug}-avatar` (e.g. Shikha-Gheyee). */
+function slugForPortalAuthorAvatar(name) {
+  if (!name || typeof name !== 'string') return '';
+  return name
+    .trim()
+    .split(/\s+/)
+    .map((w) => w.replace(/[^a-zA-Z0-9]/g, ''))
+    .filter(Boolean)
+    .join('-');
+}
+
+/** Remove first in-body heading that repeats the page title (Paligo often echoes topic title under the shell). */
+function stripLeadingDuplicateTitleHtml(html, title) {
+  if (!html || !title || typeof document === 'undefined') return html;
+  const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  const target = norm(title);
+  if (!target) return html;
+  try {
+    const wrap = document.createElement('div');
+    wrap.innerHTML = html;
+    const skipJunk = () => {
+      let n = wrap.firstChild;
+      while (n) {
+        if (n.nodeType === Node.TEXT_NODE && !n.textContent.trim()) {
+          const nx = n.nextSibling;
+          n.remove();
+          n = nx;
+          continue;
+        }
+        if (n.nodeType === Node.COMMENT_NODE) {
+          const nx = n.nextSibling;
+          n.remove();
+          n = nx;
+          continue;
+        }
+        if (n.nodeType === Node.ELEMENT_NODE && n.tagName === 'SCRIPT') {
+          const nx = n.nextSibling;
+          n.remove();
+          n = nx;
+          continue;
+        }
+        break;
+      }
+    };
+    const stripOnce = () => {
+      skipJunk();
+      const first = wrap.firstElementChild;
+      if (!first) return false;
+      if (/^H[1-6]$/i.test(first.tagName) && norm(first.textContent) === target) {
+        first.remove();
+        return true;
+      }
+      const onlyHeadingChild =
+        first.children.length === 1 && /^H[1-6]$/i.test(first.firstElementChild?.tagName || '')
+          ? first.firstElementChild
+          : null;
+      if (onlyHeadingChild && norm(onlyHeadingChild.textContent) === target) {
+        first.remove();
+        return true;
+      }
+      const inner = first.firstElementChild;
+      if (inner && /^H[1-6]$/i.test(inner.tagName) && norm(inner.textContent) === target) {
+        inner.remove();
+        if (!first.textContent.trim() && first.children.length === 0) first.remove();
+        return true;
+      }
+      return false;
+    };
+    let guard = 0;
+    while (guard++ < 4 && stripOnce()) {
+      /* remove repeated title blocks Paligo sometimes stacks */
+    }
+    return wrap.innerHTML;
+  } catch {
+    return html;
+  }
+}
+
+function formatRelativeUpdated(iso) {
+  if (!iso) return '';
+  try {
+    const diffSec = Math.round((new Date(iso).getTime() - Date.now()) / 1000);
+    const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+    const abs = Math.abs(diffSec);
+    if (abs < 60) return rtf.format(Math.round(diffSec), 'second');
+    const diffMin = Math.round(diffSec / 60);
+    if (Math.abs(diffMin) < 60) return rtf.format(diffMin, 'minute');
+    const diffHr = Math.round(diffSec / 3600);
+    if (Math.abs(diffHr) < 48) return rtf.format(diffHr, 'hour');
+    const diffDay = Math.round(diffSec / 86400);
+    if (Math.abs(diffDay) < 60) return rtf.format(diffDay, 'day');
+    const diffWeek = Math.round(diffDay / 7);
+    if (Math.abs(diffWeek) < 52) return rtf.format(diffWeek, 'week');
+    const diffMonth = Math.round(diffDay / 30);
+    return rtf.format(diffMonth, 'month');
+  } catch {
+    return new Date(iso).toLocaleDateString();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -144,6 +244,11 @@ export default function DocReaderPage() {
   const [bookmarked, setBookmarked] = useState(false);
   const [bookmarkBusy, setBookmarkBusy] = useState(false);
   const [bookmarkMsg, setBookmarkMsg] = useState('');
+  const [collectionOpen, setCollectionOpen] = useState(false);
+  const [collectionList, setCollectionList] = useState([]);
+  const [collectionLoading, setCollectionLoading] = useState(false);
+  const [collectionMsg, setCollectionMsg] = useState('');
+  const collectionMenuRef = useRef(null);
   const contentRef = useRef(null);
   const pendingHashRef = useRef(null);
   const feedbackRef = useRef(null);
@@ -182,8 +287,13 @@ export default function DocReaderPage() {
           setTree(buildTree(sorted));
         }
 
-        // Auto-select first topic
-        if (sorted.length > 0) setSelectedId(sorted[0]._id);
+        const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+        const tid = params?.get('topic');
+        if (tid && sorted.some((x) => String(x._id) === tid)) {
+          setSelectedId(tid);
+        } else if (sorted.length > 0) {
+          setSelectedId(sorted[0]._id);
+        }
       })
       .catch(console.error)
       .finally(() => setLoadingDoc(false));
@@ -220,7 +330,7 @@ export default function DocReaderPage() {
   // Check bookmark status whenever the selected topic changes
   useEffect(() => {
     if (!selectedId) { setBookmarked(false); return; }
-    if (typeof window !== 'undefined' && !localStorage.getItem('ft_token')) {
+    if (typeof window !== 'undefined' && !getStoredToken()) {
       setBookmarked(false); return;
     }
     let cancelled = false;
@@ -232,7 +342,7 @@ export default function DocReaderPage() {
 
   const toggleBookmark = useCallback(async () => {
     if (!selectedId || bookmarkBusy) return;
-    if (typeof window !== 'undefined' && !localStorage.getItem('ft_token')) {
+    if (typeof window !== 'undefined' && !getStoredToken()) {
       setBookmarkMsg(t('signInBookmark'));
       setTimeout(() => setBookmarkMsg(''), 1800);
       return;
@@ -256,6 +366,56 @@ export default function DocReaderPage() {
     }
   }, [selectedId, bookmarked, bookmarkBusy]);
 
+  useEffect(() => {
+    if (!collectionOpen) return;
+    let cancelled = false;
+    setCollectionLoading(true);
+    api.get('/collections')
+      .then((d) => {
+        if (!cancelled) {
+          setCollectionList((d.collections || []).filter((c) => c.kind === 'manual'));
+        }
+      })
+      .catch(() => { if (!cancelled) setCollectionList([]); })
+      .finally(() => { if (!cancelled) setCollectionLoading(false); });
+    return () => { cancelled = true; };
+  }, [collectionOpen]);
+
+  useEffect(() => {
+    if (!collectionOpen) return;
+    const onDown = (e) => {
+      const root = collectionMenuRef.current;
+      if (root && !root.contains(e.target)) setCollectionOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [collectionOpen]);
+
+  const toggleCollectionMenu = useCallback(() => {
+    if (typeof window !== 'undefined' && !getStoredToken()) {
+      setCollectionMsg(t('signInCollection'));
+      setTimeout(() => setCollectionMsg(''), 2000);
+      return;
+    }
+    setCollectionOpen((o) => {
+      if (o) setCollectionList([]);
+      return !o;
+    });
+  }, [t]);
+
+  const addTopicToCollection = useCallback(async (collId, collName) => {
+    if (!selectedId) return;
+    try {
+      await api.post(`/collections/${collId}/topics`, { topicIds: [selectedId] });
+      setCollectionMsg(`${t('addedToCollection')}: ${collName}`);
+    } catch (e) {
+      setCollectionMsg(e?.message || 'Failed');
+    } finally {
+      setCollectionOpen(false);
+      setTimeout(() => setCollectionMsg(''), 2200);
+    }
+  }, [selectedId, t]);
+
   // Intercept link clicks in rendered HTML content
   const handleContentClick = useCallback((e) => {
     const anchor = e.target.closest('a[href]');
@@ -273,11 +433,12 @@ export default function DocReaderPage() {
       return;
     }
 
-    // Already-rewritten portal doc link: /portal/docs/{topicId}[#hash]
-    const portalMatch = href.match(/^\/portal\/docs\/([^#?/]+)(?:#(.+))?$/);
-    if (portalMatch) {
+    // Already-rewritten dashboard doc link: /dashboard/docs/{topicId}[#hash]
+    // (also tolerate the legacy /portal/docs/... shape so older links still work)
+    const dashboardMatch = href.match(/^\/(?:dashboard|portal)\/docs\/([^#?/]+)(?:#(.+))?$/);
+    if (dashboardMatch) {
       e.preventDefault();
-      const [, topicId, hash] = portalMatch;
+      const [, topicId, hash] = dashboardMatch;
       if (hash) pendingHashRef.current = hash;
       setSelectedId(topicId);
       return;
@@ -310,6 +471,18 @@ export default function DocReaderPage() {
   // Compute children of the current topic (from the TOC tree)
   const currentNode = selectedId ? findNode(tree, selectedId) : null;
   const childTopics = currentNode?.children?.filter((c) => c._id) ?? [];
+
+  const authorFromTocTopic = useMemo(() => {
+    const t = topics.find((x) => String(x._id) === String(selectedId));
+    return t?.metadata?.author || '';
+  }, [topics, selectedId]);
+
+  const articleBodyHtml = useMemo(() => {
+    const raw = topicContent?.content?.html;
+    const title = topicContent?.title;
+    if (!raw) return '';
+    return stripLeadingDuplicateTitleHtml(raw, title);
+  }, [topicContent?.content?.html, topicContent?.title]);
 
   // Debounced server-side ES search (titles + body) within this document
   useEffect(() => {
@@ -365,7 +538,7 @@ export default function DocReaderPage() {
       for (const child of childTopics) {
         const li = document.createElement('li');
         const a = document.createElement('a');
-        a.href = `/portal/docs/${child._id}`;
+        a.href = `/dashboard/docs/${child._id}`;
         a.textContent = child.title;
         li.appendChild(a);
         ul.appendChild(li);
@@ -450,7 +623,7 @@ export default function DocReaderPage() {
     return (
       <div style={layout.notFound}>
         <p>{t('documentNotFound')}</p>
-        <Link href="/portal" style={{ color: '#1d4ed8' }}>{t('backToPortal')}</Link>
+        <Link href="/dashboard" style={{ color: '#1d4ed8' }}>{t('backToPortal')}</Link>
       </div>
     );
   }
@@ -461,7 +634,7 @@ export default function DocReaderPage() {
       <aside style={layout.sidebar}>
         {/* Sidebar header — back link kept tiny, search prominent */}
         <div style={layout.sidebarHeader}>
-          <Link href="/portal" style={layout.backLink}>{t('allDocs')}</Link>
+          <Link href="/dashboard" style={layout.backLink}>{t('allDocs')}</Link>
           <div style={layout.searchWrap}>
             <input
               type="text"
@@ -577,18 +750,78 @@ export default function DocReaderPage() {
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill={bookmarked ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" /></svg>
             </ActionBtn>
+            <div ref={collectionMenuRef} style={{ position: 'relative' }}>
+              <ActionBtn label={t('addToCollection')} onClick={toggleCollectionMenu} active={collectionOpen}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <rect x="3" y="4" width="14" height="4" rx="0.5" />
+                  <rect x="3" y="10" width="14" height="4" rx="0.5" />
+                  <path d="M19 6v12M16 9l3-3 3 3" />
+                </svg>
+              </ActionBtn>
+              {collectionOpen && (
+                <div
+                  role="menu"
+                  style={{
+                    position: 'absolute',
+                    top: '100%',
+                    right: 0,
+                    marginTop: '8px',
+                    minWidth: '220px',
+                    maxWidth: 'min(320px, 92vw)',
+                    maxHeight: 'min(280px, 40vh)',
+                    overflowY: 'auto',
+                    background: '#fff',
+                    border: '1px solid #e2e8f0',
+                    borderRadius: '6px',
+                    boxShadow: '0 10px 30px rgba(15,23,42,0.12)',
+                    zIndex: 30,
+                    padding: '6px 0',
+                    fontFamily: 'var(--font-sans)',
+                  }}
+                >
+                  {collectionLoading ? (
+                    <div style={{ padding: '12px 14px', fontSize: '0.8rem', color: '#64748b' }}>{t('loading')}</div>
+                  ) : collectionList.length === 0 ? (
+                    <div style={{ padding: '12px 14px', fontSize: '0.8rem', color: '#475569' }}>
+                      {t('createCollectionFirst')}{' '}
+                      <Link href="/mylibrary/collections" style={{ color: '#1d4ed8' }} onClick={() => setCollectionOpen(false)}>
+                        {t('collections')}
+                      </Link>
+                    </div>
+                  ) : (
+                    collectionList.map((c) => (
+                      <button
+                        key={c._id}
+                        type="button"
+                        role="menuitem"
+                        onClick={() => addTopicToCollection(c._id, c.name)}
+                        style={{
+                          display: 'block', width: '100%', textAlign: 'left',
+                          padding: '10px 14px', border: 'none', background: 'transparent',
+                          cursor: 'pointer', fontSize: '0.85rem', color: '#0f172a',
+                        }}
+                      >
+                        <span style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '50%', background: c.color || '#0f172a', marginRight: '8px', verticalAlign: 'middle' }} aria-hidden />
+                        {c.name}
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
             <ActionBtn label={t('feedback')} onClick={focusFeedback}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
             </ActionBtn>
-            {bookmarkMsg && (
+            {(bookmarkMsg || collectionMsg) && (
               <span style={{
                 position: 'absolute', top: '40px', right: 0,
                 background: '#0f172a', color: '#fff',
                 padding: '6px 10px', borderRadius: '4px',
-                fontSize: '0.75rem', whiteSpace: 'nowrap',
+                fontSize: '0.75rem', maxWidth: 'min(280px, 85vw)', whiteSpace: 'normal',
                 boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                textAlign: 'right',
               }}>
-                {bookmarkMsg}
+                {bookmarkMsg || collectionMsg}
               </span>
             )}
           </div>
@@ -598,20 +831,57 @@ export default function DocReaderPage() {
             <div style={layout.spinner} />
           </div>
         ) : topicContent ? (
-          <article style={layout.article}>
-            <div style={layout.articleMeta}>
-              <span style={layout.avatar} aria-hidden="true" />
-              <span>
-                {topicContent.author ? <>{t('writtenBy')} <strong>{topicContent.author}</strong>. </> : null}
-                {topicContent.updatedAt ? <>{t('updated')} {new Date(topicContent.updatedAt).toLocaleDateString()}</> : null}
-              </span>
-            </div>
-            <h1 style={layout.articleTitle}>{topicContent.title}</h1>
+          <article style={layout.article} aria-label={topicContent.title}>
+            {(() => {
+              const authorName =
+                topicContent.metadata?.author ||
+                topicContent.author ||
+                authorFromTocTopic ||
+                '';
+              const authorSlug = slugForPortalAuthorAvatar(authorName);
+              const updatedAt = topicContent.updatedAt || topicContent.timeModified;
+              const updatedPhrase = updatedAt ? formatRelativeUpdated(updatedAt) : '';
+              if (!authorName && !updatedPhrase) return null;
+              return (
+                <div className="portal-article-author" style={layout.articleAuthor}>
+                  {authorSlug ? (
+                    <div style={layout.avatarPhoto}>
+                      <img
+                        className="portal-article-author-img"
+                        style={layout.avatarImage}
+                        src={`/portal-asset/${authorSlug}-avatar`}
+                        alt={authorName}
+                        width={36}
+                        height={36}
+                      />
+                    </div>
+                  ) : (
+                    <div style={layout.avatarPhoto} aria-hidden="true">
+                      <span style={layout.avatarPlaceholder} />
+                    </div>
+                  )}
+                  <div style={layout.avatarInfos}>
+                    {authorName ? (
+                      <span style={layout.avatarWrittenBy}>
+                        {t('writtenBy')}{' '}
+                        <strong style={layout.avatarName}>{authorName}</strong>.
+                      </span>
+                    ) : null}
+                    {updatedPhrase ? (
+                      <span style={layout.avatarUpdated}>
+                        {authorName ? ' ' : null}
+                        {t('updated')} {updatedPhrase}
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })()}
             {topicContent.content?.html ? (
               <div
                 data-portal-content
                 style={layout.htmlContent}
-                dangerouslySetInnerHTML={{ __html: topicContent.content.html }}
+                dangerouslySetInnerHTML={{ __html: articleBodyHtml }}
                 onClick={handleContentClick}
               />
             ) : (
@@ -1014,21 +1284,46 @@ const layout = {
     padding: '12px 16px 6px',
     flexShrink: 0,
   },
-  articleMeta: {
-    display: 'inline-flex',
+  articleAuthor: {
+    display: 'flex',
     alignItems: 'center',
-    gap: '8px',
+    gap: '12px',
+    marginTop: '0',
+    marginBottom: '28px',
     fontSize: '0.8125rem',
-    color: '#6b7280',
-    marginBottom: '14px',
+    color: '#4a6fa5',
   },
-  avatar: {
-    width: '28px', height: '28px',
+  avatarPhoto: {
+    flexShrink: 0,
+    width: '36px',
+    height: '36px',
+  },
+  avatarImage: {
+    width: '36px',
+    height: '36px',
+    borderRadius: '50%',
+    objectFit: 'cover',
+    display: 'block',
+    background: '#e2e8f0',
+  },
+  avatarPlaceholder: {
+    display: 'block',
+    width: '36px',
+    height: '36px',
     borderRadius: '50%',
     background: 'linear-gradient(135deg, #c7d2fe, #93c5fd)',
-    flexShrink: 0,
-    display: 'inline-block',
   },
+  avatarInfos: {
+    display: 'flex',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: '0 4px',
+    lineHeight: 1.4,
+  },
+  avatarWrittenBy: { display: 'inline' },
+  avatarName: { color: '#3d5a80', fontWeight: 600 },
+  avatarUpdated: { display: 'inline', color: '#5b7a9e' },
   tocScroll: {
     flex: 1,
     overflowY: 'auto',
@@ -1061,13 +1356,6 @@ const layout = {
     margin: '0',
     padding: '44px 64px 100px',
     position: 'relative',
-  },
-  articleTitle: {
-    fontSize: '1.75rem',
-    fontWeight: 700,
-    color: '#0f172a',
-    marginBottom: '20px',
-    lineHeight: 1.25,
   },
   htmlContent: {
     fontSize: '0.9375rem',

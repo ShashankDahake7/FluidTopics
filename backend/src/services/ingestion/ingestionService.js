@@ -67,7 +67,8 @@ const ingestFile = async (file, userId = null) => {
 
         // Use publication title if available
         if (publication.portalTitle) doc.title = publication.portalTitle;
-        if (publication.companyName)  doc.metadata = { ...doc.metadata, author: publication.companyName };
+        // Do not set doc.metadata.author to companyName — that is not the content author
+        // ("Written by" uses per-topic metadata.author from HTML / index-en.html).
 
       } else {
         // Generic ZIP — use existing pipeline
@@ -180,7 +181,7 @@ const savePaligoTopics = async (topicDataList, documentId, imageSrcMap, langPref
         children: [],
         order:    td.order,
       },
-      metadata: { language: 'en' },
+      metadata: { language: 'en', author: td.author || '' },
     });
     topicIds.push(topic._id);
     savedTopics.push(topic);

@@ -12,7 +12,7 @@ export default function CustomTemplatePage() {
     return (
       <div style={s.notFound}>
         <p>Template not found.</p>
-        <Link href="/portal" style={{ color: '#1d4ed8' }}>← Back to portal</Link>
+        <Link href="/dashboard" style={{ color: '#1d4ed8' }}>← Back to dashboard</Link>
       </div>
     );
   }

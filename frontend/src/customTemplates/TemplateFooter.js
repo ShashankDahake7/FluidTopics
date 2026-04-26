@@ -1,12 +1,8 @@
 'use client';
 
-const SOCIAL = [
-  { label: 'Darwinbox', href: 'https://darwinbox.com' },
-  { label: 'Facebook',  href: 'https://www.facebook.com/Darwinbox' },
-  { label: 'Linkedin',  href: 'https://www.linkedin.com/company/darwinbox' },
-  { label: 'Twitter',   href: 'https://x.com/Darwinbox' },
-  { label: 'Instagram', href: 'https://www.instagram.com/Darwinbox' },
-];
+import { DARWINBOX_FOOTER_LINK_ROW } from '@/lib/darwinboxSocial';
+
+const SOCIAL = DARWINBOX_FOOTER_LINK_ROW;
 
 export default function TemplateFooter() {
   const year = new Date().getFullYear();

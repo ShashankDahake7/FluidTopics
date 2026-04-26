@@ -1,7 +1,9 @@
 'use client';
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import AdminShell from '@/components/admin/AdminShell';
 import { ActionFooter, Section, FormInput, MagentaLinks, Checkbox, Radio, ReorderList, Btn } from '@/components/admin/AdminBits';
+import EmailPreviewDrawer from '@/components/admin/EmailPreviewDrawer';
+import { buildEmailPreviewSrcDoc, resolveLogoAbs } from '@/lib/emailPreviews';
 
 const TEMPLATES = [
   'Topic feedback (sent to admin)',
@@ -33,7 +35,19 @@ export default function FeedbackNotificationsPage() {
   const [forbiddenExt, setForbiddenExt] = useState('');
   const [maxSize, setMaxSize] = useState(5);
   const [dirty, setDirty] = useState(false);
+  const [preview, setPreview] = useState(null);
   const set = (fn) => (v) => { fn(v); setDirty(true); };
+
+  // Mirror the body-metadata reorder so the preview tags follow the live state.
+  const previewSrcDoc = useMemo(() => {
+    if (!preview) return '';
+    return buildEmailPreviewSrcDoc(preview, {
+      fromAddr: 'docs@darwinbox.com',
+      adminTo:  recipients,
+      metaTags: bodyMeta && bodyMeta.length ? bodyMeta : undefined,
+      logoAbs:  resolveLogoAbs('/ft-header-logo.png'),
+    });
+  }, [preview, recipients, bodyMeta]);
 
   const addSubjectMeta = () => {
     if (!subjectMeta.includes(subjectAdd)) { setSubjectMeta([...subjectMeta, subjectAdd]); setDirty(true); }
@@ -58,7 +72,7 @@ export default function FeedbackNotificationsPage() {
       <p style={S.subtitle}>Configure and preview the user feedback email template.</p>
 
       <Section title="Preview the email templates">
-        <MagentaLinks items={TEMPLATES} onClick={(t) => alert(`Preview: ${t}`)} />
+        <MagentaLinks items={TEMPLATES} onClick={setPreview} />
       </Section>
 
       <Section title="Recipients" desc="Comma-separated list of recipient email addresses.">
@@ -108,8 +122,18 @@ export default function FeedbackNotificationsPage() {
       </Section>
 
       <Section title="Email service for authenticated users">
-        <Radio checked={authService === 'ft'} onChange={() => set(setAuthService)('ft')} label="Feedback sent by Fluid Topics email sending method" />
-        <Radio checked={authService === 'user'} onChange={() => set(setAuthService)('user')} label="Feedback sent by the user's email application" />
+        <div style={S.radioGroup}>
+          <Radio
+            checked={authService === 'ft'}
+            onChange={() => set(setAuthService)('ft')}
+            label="Feedback sent by Fluid Topics email sending method"
+          />
+          <Radio
+            checked={authService === 'user'}
+            onChange={() => set(setAuthService)('user')}
+            label="Feedback sent by the user's email application"
+          />
+        </div>
       </Section>
 
       <Section title="Email service for unauthenticated users">
@@ -117,15 +141,36 @@ export default function FeedbackNotificationsPage() {
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style={{ color: '#1d4ed8', flexShrink: 0 }}>
             <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm1 15h-2v-6h2v6Zm0-8h-2V7h2v2Z" />
           </svg>
-          <span>Configure SMTP relay in <a href="/admin/notifications/email" style={{ color: '#1d4ed8' }}>Email settings</a> to use Fluid Topics email sending method.</span>
+          <span>
+            Configure SMTP relay in <a href="/admin/notifications/email" style={{ color: '#1d4ed8' }}>Email settings</a> to use Fluid Topics email sending method.
+          </span>
         </div>
-        <Radio checked={unauthService === 'ft'} onChange={() => set(setUnauthService)('ft')} label="Feedback sent by Fluid Topics email sending method (only available with SMTP relay)" />
-        <Radio checked={unauthService === 'user'} onChange={() => set(setUnauthService)('user')} label="Feedback sent by the user's email application" />
+        <div style={S.radioGroup}>
+          <Radio
+            checked={unauthService === 'ft'}
+            onChange={() => set(setUnauthService)('ft')}
+            label="Feedback sent by Fluid Topics email sending method (only available with SMTP relay)"
+          />
+          <Radio
+            checked={unauthService === 'user'}
+            onChange={() => set(setUnauthService)('user')}
+            label="Feedback sent by the user's email application"
+          />
+        </div>
       </Section>
 
-      <Section title="Confirmation email" desc="When authenticated users submit feedback, Fluid Topics sends them an email to acknowledge their action.">
-        <Checkbox checked={confirmEmail} onChange={set(setConfirmEmail)} label="An email is sent to users after submitting feedback" />
-      </Section>
+      {authService === 'ft' && (
+        <Section
+          title="Confirmation email"
+          desc="When authenticated users submit feedback, Fluid Topics sends them an email to acknowledge their action."
+        >
+          <Checkbox
+            checked={confirmEmail}
+            onChange={set(setConfirmEmail)}
+            label="An email is sent to users after submitting feedback"
+          />
+        </Section>
+      )}
 
       <Section title="Forbidden attachment file extensions" desc="Comma-separated list of file extensions.">
         <FormInput label="File extensions" value={forbiddenExt} onChange={set(setForbiddenExt)} placeholder=".exe, .bat" />
@@ -134,6 +179,12 @@ export default function FeedbackNotificationsPage() {
       <Section title="Maximum attachment size" desc="Defines the maximum total size for attached files (between 1MB and 23MB).">
         <FormInput value={maxSize} onChange={set(setMaxSize)} type="number" suffix="MB" />
       </Section>
+
+      <EmailPreviewDrawer
+        template={preview}
+        srcDoc={previewSrcDoc}
+        onClose={() => setPreview(null)}
+      />
     </AdminShell>
   );
 }
@@ -172,5 +223,9 @@ const S = {
     marginBottom: '10px', padding: '8px 12px',
     background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '4px',
     color: '#1e3a8a', fontSize: '0.88rem',
+  },
+  radioGroup: {
+    display: 'flex', flexDirection: 'column', alignItems: 'flex-start',
+    gap: '4px',
   },
 };

@@ -1,260 +1,385 @@
 'use client';
-import { useState, useEffect } from 'react';
-import api from '@/lib/api';
+import { useMemo, useRef, useState } from 'react';
+import AnalyticsShell from '@/components/admin/AnalyticsShell';
 
-export default function AnalyticsPage() {
-  const [stats, setStats] = useState(null);
-  const [gaps, setGaps] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [days, setDays] = useState(30);
-  const [tab, setTab] = useState('overview');
+const TOP_DOCUMENTS = [
+  { views: 6106, title: 'Release Notes Feb 2026' },
+  { views: 1709, title: 'Company' },
+  { views: 1700, title: 'Darwinbox FAQs Articles' },
+  { views: 1333, title: 'Darwinbox Troubleshooting Articles' },
+  { views: 1018, title: 'Recruitment' },
+  { views: 1013, title: 'Performance' },
+  { views: 907,  title: 'Leave' },
+  { views: 879,  title: 'Reports Builder' },
+  { views: 834,  title: 'Import' },
+  { views: 833,  title: 'Payroll' },
+  { views: 798,  title: 'Attendance' },
+  { views: 733,  title: 'Release Notes Nov 2025' },
+  { views: 666,  title: 'Darwinbox Studio' },
+  { views: 630,  title: 'HR Documents' },
+  { views: 579,  title: 'Release Notes May 2025' },
+  { views: 579,  title: 'Employees' },
+  { views: 570,  title: 'Workflow: Custom Workflow' },
+  { views: 490,  title: 'Onboarding' },
+  { views: 448,  title: 'Best Practices' },
+  { views: 432,  title: 'Release Notes May 2023' },
+  { views: 387,  title: 'Release Notes Feb 2025' },
+  { views: 366,  title: 'Form Builder' },
+  { views: 357,  title: 'Permissions' },
+  { views: 345,  title: 'Release Notes August 2025' },
+  { views: 317,  title: 'My Access' },
+  { views: 299,  title: 'Talent Management' },
+  { views: 292,  title: 'Workflow: Standard Workflow' },
+  { views: 258,  title: 'Release Notes November 2024' },
+  { views: 255,  title: 'People Analytics' },
+  { views: 250,  title: '100 Features' },
+];
 
-  useEffect(() => { fetchAll(); }, [days]);
+// 20 monthly data points covering Sep 2024 → Apr 2026 (current month, semi-transparent).
+const SESSIONS = [
+  { month: 'Sep 2024', value: 12433 },
+  { month: 'Oct 2024', value: 12901 },
+  { month: 'Nov 2024', value: 13886 },
+  { month: 'Dec 2024', value: 14367 },
+  { month: 'Jan 2025', value: 18106 },
+  { month: 'Feb 2025', value: 16353 },
+  { month: 'Mar 2025', value: 14907 },
+  { month: 'Apr 2025', value: 15974 },
+  { month: 'May 2025', value: 15756 },
+  { month: 'Jun 2025', value: 14500 },
+  { month: 'Jul 2025', value: 17581 },
+  { month: 'Aug 2025', value: 15529 },
+  { month: 'Sep 2025', value: 15620 },
+  { month: 'Oct 2025', value: 15904 },
+  { month: 'Nov 2025', value: 15625 },
+  { month: 'Dec 2025', value: 13375 },
+  { month: 'Jan 2026', value: 14456 },
+  { month: 'Feb 2026', value: 14844 },
+  { month: 'Mar 2026', value: 15652 },
+  { month: 'Apr 2026', value: 12017 },
+];
 
-  const fetchAll = async () => {
-    setLoading(true);
-    try {
-      const [s, g] = await Promise.all([
-        api.get(`/analytics/dashboard?days=${days}`),
-        api.get(`/analytics/content-gaps?days=${days}`),
-      ]);
-      setStats(s);
-      setGaps(g.gaps || []);
-    } catch (e) { console.error(e); }
-    setLoading(false);
-  };
+const formatNumber = (n) => n.toLocaleString('en-US');
 
-  const exportData = async (type) => {
-    try {
-      const d = await api.get(`/analytics/export?type=${type}&days=${days}`);
-      const csv = jsonToCsv(d.data);
-      const blob = new Blob([csv], { type: 'text/csv' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url; a.download = `analytics_${type}_${days}d.csv`; a.click();
-    } catch (e) { alert(e.message); }
-  };
-
-  if (loading) return (
-    <>
-      <div style={{ background: 'var(--bg-secondary)', minHeight: 'calc(100vh - var(--header-height))', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-        <div className="spinner" />
+function TrendCard({ label, value, trend }) {
+  return (
+    <div style={S.card}>
+      <div style={S.cardLabel}>{label}</div>
+      <div style={S.trendRow}>
+        <span style={S.trendValue}>{formatNumber(value)}</span>
+        <span style={{ ...S.trendArrow, color: trend >= 0 ? '#16a34a' : '#dc2626' }}>{trend >= 0 ? '↗' : '↘'}</span>
+        <span style={{ ...S.trendDelta, color: trend >= 0 ? '#16a34a' : '#dc2626' }}>{trend >= 0 ? `+${trend}%` : `${trend}%`}</span>
       </div>
-    </>
+    </div>
   );
+}
 
-  const kpis = [
-    { label: 'Searches', value: stats?.totalSearches || 0, color: 'var(--accent-primary)' },
-    { label: 'Views', value: stats?.totalViews || 0, color: '#7c3aed' },
-    { label: 'Clicks', value: stats?.totalClicks || 0, color: '#0891b2' },
-    { label: 'CTR', value: `${stats?.clickThroughRate || 0}%`, color: 'var(--success)' },
-    { label: 'Search Success', value: `${stats?.searchSuccessRate || 0}%`, color: stats?.searchSuccessRate >= 85 ? 'var(--success)' : 'var(--warning)' },
-    { label: 'Avg Response', value: `${stats?.avgSearchResponseTime || 0}ms`, color: stats?.avgSearchResponseTime < 200 ? 'var(--success)' : 'var(--warning)' },
-  ];
+function BookIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#475569" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+      <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+    </svg>
+  );
+}
+
+function MostViewedDocsCard() {
+  return (
+    <div style={{ ...S.card, padding: 0, display: 'flex', flexDirection: 'column' }}>
+      <div style={{ padding: '14px 18px 8px' }}>
+        <div style={S.cardLabel}>Most viewed documents</div>
+      </div>
+      <div style={S.docsScroll}>
+        <table style={S.docsTable}>
+          <tbody>
+            {TOP_DOCUMENTS.map((d, i) => (
+              <tr key={i} style={S.docsRow}>
+                <td style={S.docsViews}>{formatNumber(d.views)}</td>
+                <td style={S.docsIconCell}><BookIcon /></td>
+                <td style={S.docsTitle}>{d.title}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div style={S.docsFooter}>
+        <button type="button" style={S.viewAllBtn}>View All</button>
+      </div>
+    </div>
+  );
+}
+
+function SessionsChart() {
+  const chartRef = useRef(null);
+  const [hover, setHover] = useState(null);
+
+  // Inner padding inside the SVG viewbox.
+  const W = 760;
+  const H = 360;
+  const PAD_L = 60;
+  const PAD_R = 24;
+  const PAD_T = 32;
+  const PAD_B = 40;
+  const innerW = W - PAD_L - PAD_R;
+  const innerH = H - PAD_T - PAD_B;
+
+  const max = useMemo(() => {
+    const v = Math.max(...SESSIONS.map((s) => s.value));
+    // Round up to nearest 3000 multiple, with extra headroom — produces 21,000 for the dataset.
+    const step = 3000;
+    return Math.ceil((v * 1.16) / step) * step;
+  }, []);
+
+  const ticks = useMemo(() => {
+    const step = 3000;
+    const out = [];
+    for (let v = 0; v <= max; v += step) out.push(v);
+    return out;
+  }, [max]);
+
+  const N = SESSIONS.length;
+  const slot = innerW / N;
+  const barW = slot * 0.7;
+  const labelMonths = ['Sep 2024', 'Jan 2025', 'May 2025', 'Sep 2025', 'Jan 2026'];
 
   return (
-    <>
-      <div style={{ background: 'var(--bg-secondary)', minHeight: 'calc(100vh - var(--header-height))' }}>
-        <main className="container" style={{ padding: '36px 0 56px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '28px' }}>
-            <div>
-              <h1 style={{ fontSize: '1.6rem', fontWeight: 700, letterSpacing: '-0.02em' }}>Analytics</h1>
-              <p style={{ color: 'var(--text-secondary)', marginTop: '4px', fontSize: '0.9rem' }}>Platform performance & engagement</p>
-            </div>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <select value={days} onChange={e => setDays(parseInt(e.target.value))} className="input" style={{ width: 'auto' }}>
-                <option value={7}>Last 7 days</option>
-                <option value={30}>Last 30 days</option>
-                <option value={90}>Last 90 days</option>
-              </select>
-              <button onClick={() => exportData('search')} className="btn btn-secondary btn-sm">Export CSV</button>
-            </div>
-          </div>
+    <div style={S.chartWrap} ref={chartRef}>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} role="img" aria-label="Monthly sessions chart">
+        {/* y-axis ticks + grid */}
+        {ticks.map((t) => {
+          const y = PAD_T + innerH - (t / max) * innerH;
+          return (
+            <g key={t}>
+              <line x1={PAD_L} y1={y} x2={W - PAD_R} y2={y} stroke="#E0E6F1" />
+              <text x={PAD_L - 8} y={y} dominantBaseline="middle" textAnchor="end" fontSize="12" fill="#6E7079">
+                {t === 0 ? '0' : formatNumber(t)}
+              </text>
+            </g>
+          );
+        })}
 
-          {/* KPI Cards */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '10px', marginBottom: '24px' }}>
-            {kpis.map((c, i) => (
-              <div key={i} className="card animate-fadeIn" style={{ animationDelay: `${i * 35}ms`, padding: '16px' }}>
-                <div style={{ fontSize: '1.5rem', fontWeight: 700, color: c.color, lineHeight: 1 }}>{c.value}</div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>{c.label}</div>
-              </div>
-            ))}
-          </div>
+        {/* y-axis title */}
+        <text x={PAD_L} y={PAD_T - 18} fontSize="12" fill="#6E7079" textAnchor="middle">SESSIONS</text>
 
-          {/* Tabs */}
-          <div style={{ display: 'flex', gap: '4px', marginBottom: '20px', borderBottom: '1px solid var(--border-color)', paddingBottom: '1px' }}>
-            {['overview', 'queries', 'content', 'engagement'].map(t => (
-              <button key={t} onClick={() => setTab(t)}
-                className="btn btn-ghost btn-sm"
-                style={{
-                  textTransform: 'capitalize', borderRadius: '0',
-                  borderBottom: tab === t ? '2px solid var(--accent-primary)' : '2px solid transparent',
-                  color: tab === t ? 'var(--accent-primary)' : 'var(--text-secondary)',
-                  fontWeight: tab === t ? 600 : 400,
-                }}>
-                {t}
-              </button>
-            ))}
-          </div>
+        {/* x-axis baseline */}
+        <line x1={PAD_L} y1={PAD_T + innerH} x2={W - PAD_R} y2={PAD_T + innerH} stroke="#6E7079" />
 
-          {tab === 'overview' && (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
-              <div className="card" style={{ gridColumn: '1 / -1' }}>
-                <h3 style={h3}>Daily Trends</h3>
-                {(stats?.dailyStats || []).length > 0 ? (
-                  <div style={{ marginTop: '14px' }}>
-                    <div style={{ display: 'flex', gap: '16px', marginBottom: '10px' }}>
-                      {[['#4f46e5', 'Searches'], ['#7c3aed', 'Views'], ['#059669', 'Clicks']].map(([color, label]) => (
-                        <span key={label} style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
-                          <span style={{ width: '10px', height: '10px', borderRadius: '2px', background: color, display: 'inline-block' }} />
-                          {label}
-                        </span>
-                      ))}
-                    </div>
-                    <div style={{ display: 'flex', gap: '2px', alignItems: 'flex-end', height: '100px' }}>
-                      {stats.dailyStats.map((d, i) => {
-                        const max = Math.max(...stats.dailyStats.map(s => (s.searches || 0) + (s.views || 0) + (s.clicks || 0)), 1);
-                        return (
-                          <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column-reverse', gap: '1px', height: '100%' }}
-                            title={`${d.date}: ${d.searches} searches, ${d.views} views, ${d.clicks} clicks`}>
-                            <div style={{ height: `${((d.searches || 0) / max) * 100}%`, background: '#4f46e5', borderRadius: '2px 2px 0 0', minHeight: d.searches ? '2px' : 0 }} />
-                            <div style={{ height: `${((d.views || 0) / max) * 100}%`, background: '#7c3aed', borderRadius: '2px 2px 0 0', minHeight: d.views ? '2px' : 0 }} />
-                            <div style={{ height: `${((d.clicks || 0) / max) * 100}%`, background: '#059669', borderRadius: '2px 2px 0 0', minHeight: d.clicks ? '2px' : 0 }} />
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ) : <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem' }}>No daily data yet</p>}
-              </div>
+        {/* x-axis title */}
+        <text x={W - PAD_R + 6} y={PAD_T + innerH} dominantBaseline="middle" fontSize="12" fill="#6E7079">DATE</text>
 
-              <div className="card">
-                <h3 style={h3}>Top Viewed Topics</h3>
-                {(stats?.topViewedTopics || []).map((t, i) => (
-                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color)' }}>
-                    <a href={`/topics/${t._id}`} style={{ fontSize: '0.85rem', color: 'var(--accent-primary)' }}>{t.title}</a>
-                    <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', flexShrink: 0, marginLeft: '8px' }}>{t.viewCount}</span>
-                  </div>
-                ))}
-                {(stats?.topViewedTopics || []).length === 0 && <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem' }}>No data</p>}
-              </div>
+        {/* Bars */}
+        {SESSIONS.map((s, i) => {
+          const h = (s.value / max) * innerH;
+          const x = PAD_L + i * slot + (slot - barW) / 2;
+          const y = PAD_T + innerH - h;
+          const isLast = i === SESSIONS.length - 1;
+          return (
+            <g
+              key={s.month}
+              onMouseEnter={() => setHover({ i, x: x + barW / 2, y, value: s.value, month: s.month })}
+              onMouseLeave={() => setHover(null)}
+            >
+              <rect
+                x={x}
+                y={y}
+                width={barW}
+                height={h}
+                fill="#9D207B"
+                fillOpacity={isLast ? 0.5 : 1}
+                style={{ cursor: 'pointer' }}
+              />
+              <rect
+                x={x - 1}
+                y={PAD_T}
+                width={barW + 2}
+                height={innerH}
+                fill="rgba(0,0,0,0)"
+                onMouseEnter={() => setHover({ i, x: x + barW / 2, y, value: s.value, month: s.month })}
+              />
+            </g>
+          );
+        })}
 
-              <div className="card">
-                <h3 style={h3}>User Activity</h3>
-                <div style={{ marginTop: '8px' }}>
-                  {[
-                    { label: 'Active Users', value: stats?.userActivity?.activeUsers || 0 },
-                    { label: 'Avg Views / User', value: Math.round(stats?.userActivity?.avgViews || 0) },
-                    { label: 'Avg Searches / User', value: Math.round(stats?.userActivity?.avgSearches || 0) },
-                    { label: 'Total Readers', value: stats?.engagement?.totalReaders || 0 },
-                  ].map((s, i) => (
-                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color)' }}>
-                      <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>{s.label}</span>
-                      <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--accent-primary)' }}>{s.value}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
+        {/* x-axis labels (every ~4th month) */}
+        {SESSIONS.map((s, i) => {
+          if (!labelMonths.includes(s.month)) return null;
+          const cx = PAD_L + i * slot + slot / 2;
+          return (
+            <g key={`lbl-${s.month}`}>
+              <line x1={cx} y1={PAD_T + innerH} x2={cx} y2={PAD_T + innerH + 5} stroke="#6E7079" />
+              <text x={cx} y={PAD_T + innerH + 18} fontSize="12" fill="#6E7079" textAnchor="middle">
+                {s.month.replace(/^(\w+) (\d+)$/, (_m, mn, yr) => `${monthName(mn)} ${yr}`)}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
 
-          {tab === 'queries' && (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
-              <div className="card">
-                <h3 style={h3}>Top Queries</h3>
-                {(stats?.topQueries || []).map((q, i) => (
-                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid var(--border-color)', fontSize: '0.85rem' }}>
-                    <span style={{ color: 'var(--text-secondary)' }}>{q.query}</span>
-                    <div style={{ display: 'flex', gap: '10px', flexShrink: 0 }}>
-                      <span style={{ color: 'var(--text-muted)' }}>{q.count}×</span>
-                      <span style={{ color: q.avgResults > 0 ? 'var(--success)' : 'var(--error)' }}>{q.avgResults} results</span>
-                    </div>
-                  </div>
-                ))}
-                {(stats?.topQueries || []).length === 0 && <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem' }}>No search data</p>}
-              </div>
-              <div className="card">
-                <h3 style={h3}>Failed Searches</h3>
-                {(stats?.failedSearches || []).map((q, i) => (
-                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color)', fontSize: '0.85rem' }}>
-                    <span style={{ color: 'var(--error)' }}>{q.query}</span>
-                    <span style={{ color: 'var(--text-muted)' }}>{q.count}×</span>
-                  </div>
-                ))}
-                {(stats?.failedSearches || []).length === 0 && (
-                  <p style={{ color: 'var(--success)', fontSize: '0.875rem', fontWeight: 500 }}>No failed searches ✓</p>
-                )}
-              </div>
-            </div>
-          )}
-
-          {tab === 'content' && (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
-              <div className="card">
-                <h3 style={h3}>Product Breakdown</h3>
-                {(stats?.contentStats?.productBreakdown || []).map((p, i) => (
-                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color)', fontSize: '0.85rem' }}>
-                    <span style={{ color: 'var(--text-secondary)' }}>{p.product}</span>
-                    <span className="badge">{p.topicCount} topics</span>
-                  </div>
-                ))}
-              </div>
-              <div className="card">
-                <h3 style={h3}>Content Gaps</h3>
-                <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '10px' }}>Searches that returned no results</p>
-                {gaps.length > 0 ? gaps.map((g, i) => (
-                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-color)', fontSize: '0.85rem' }}>
-                    <span style={{ color: 'var(--error)' }}>{g.query}</span>
-                    <span style={{ color: 'var(--text-muted)' }}>{g.searchCount}× · {g.uniqueUserCount} users</span>
-                  </div>
-                )) : <p style={{ color: 'var(--success)', fontSize: '0.875rem', fontWeight: 500 }}>No gaps found ✓</p>}
-              </div>
-            </div>
-          )}
-
-          {tab === 'engagement' && (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
-              <div className="card">
-                <h3 style={h3}>Reading Engagement</h3>
-                {[
-                  { label: 'Total Readers', value: stats?.engagement?.totalReaders || 0 },
-                  { label: 'Avg Visits / Topic', value: (stats?.engagement?.avgVisits || 0).toFixed(1) },
-                  { label: 'Avg Time Spent', value: `${Math.round(stats?.engagement?.avgDuration || 0)}s` },
-                  { label: 'Avg Scroll Depth', value: `${Math.round(stats?.engagement?.avgScrollDepth || 0)}%` },
-                ].map((s, i) => (
-                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--border-color)' }}>
-                    <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>{s.label}</span>
-                    <span style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--accent-primary)' }}>{s.value}</span>
-                  </div>
-                ))}
-              </div>
-              <div className="card">
-                <h3 style={h3}>Content Stats</h3>
-                {[
-                  { label: 'Documents', value: stats?.contentStats?.documents || 0 },
-                  { label: 'Topics', value: stats?.contentStats?.topics || 0 },
-                  { label: 'Users', value: stats?.contentStats?.users || 0 },
-                  { label: 'Products', value: stats?.contentStats?.productBreakdown?.length || 0 },
-                ].map((s, i) => (
-                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--border-color)' }}>
-                    <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>{s.label}</span>
-                    <span style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--accent-primary)' }}>{s.value}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </main>
-      </div>
-    </>
+      {hover && (
+        <div
+          style={{
+            ...S.tooltip,
+            left: `${(hover.x / W) * 100}%`,
+            top: `${(hover.y / H) * 100}%`,
+          }}
+        >
+          {formatNumber(hover.value)} session{hover.value === 1 ? '' : 's'} opened in {monthFull(hover.month)}
+        </div>
+      )}
+    </div>
   );
 }
 
-const h3 = { fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' };
-
-function jsonToCsv(data) {
-  if (!data || data.length === 0) return '';
-  const headers = Object.keys(data[0]);
-  const rows = data.map(row => headers.map(h => JSON.stringify(row[h] ?? '')).join(','));
-  return [headers.join(','), ...rows].join('\n');
+function monthName(short) {
+  const map = { Jan: 'January', Feb: 'February', Mar: 'March', Apr: 'April', May: 'May', Jun: 'June', Jul: 'July', Aug: 'August', Sep: 'September', Oct: 'October', Nov: 'November', Dec: 'December' };
+  return map[short] || short;
 }
+function monthFull(label) {
+  const [mn, yr] = label.split(' ');
+  return `${monthName(mn)} ${yr}`;
+}
+
+export default function AnalyticsHomePage() {
+  const currentMonth = useMemo(() => {
+    const m = new Date().toLocaleString('en-US', { month: 'long' });
+    return m;
+  }, []);
+
+  return (
+    <AnalyticsShell active="home" breadcrumb="Home">
+      <div style={S.dashboard}>
+        <div style={S.row}>
+          <div style={S.recapColumn}>
+            <div style={S.colTitle}>Views in {currentMonth}</div>
+            <TrendCard label="Document views" value={29982} trend={5} />
+            <TrendCard label="Topic views" value={76468} trend={1} />
+            <MostViewedDocsCard />
+          </div>
+
+          <div style={S.chartColumn}>
+            <div style={S.colTitle}>Sessions</div>
+            <div style={{ ...S.card, padding: '14px 18px 18px' }}>
+              <SessionsChart />
+            </div>
+          </div>
+        </div>
+      </div>
+    </AnalyticsShell>
+  );
+}
+
+const S = {
+  dashboard: {
+    padding: '20px 22px 28px',
+    minHeight: '100%',
+    background: '#f8fafc',
+  },
+  row: {
+    display: 'grid',
+    gridTemplateColumns: 'minmax(320px, 360px) 1fr',
+    gap: '20px',
+    alignItems: 'flex-start',
+  },
+  recapColumn: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '16px',
+    minHeight: 0,
+  },
+  chartColumn: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '12px',
+    minHeight: 0,
+  },
+  colTitle: {
+    fontSize: '0.92rem',
+    fontWeight: 600,
+    color: '#0f172a',
+  },
+  card: {
+    background: '#ffffff',
+    border: '1px solid #e2e8f0',
+    borderRadius: '12px',
+    padding: '14px 18px',
+    boxShadow: '0 1px 2px rgba(15, 23, 42, 0.04)',
+  },
+  cardLabel: {
+    fontSize: '0.92rem',
+    fontWeight: 600,
+    color: '#0f172a',
+  },
+  trendRow: {
+    display: 'flex',
+    alignItems: 'baseline',
+    gap: '8px',
+    marginTop: '6px',
+  },
+  trendValue: { fontSize: '1.7rem', fontWeight: 700, color: '#0f172a', letterSpacing: '-0.01em' },
+  trendArrow: { fontSize: '1.05rem', fontWeight: 700 },
+  trendDelta: { fontSize: '0.85rem', fontWeight: 600 },
+
+  docsScroll: {
+    flex: 1,
+    overflowY: 'auto',
+    maxHeight: '420px',
+    padding: '0 6px 6px',
+  },
+  docsTable: {
+    width: '100%',
+    borderCollapse: 'collapse',
+    fontSize: '0.85rem',
+  },
+  docsRow: { borderBottom: '1px solid #f1f5f9' },
+  docsViews: {
+    padding: '8px 10px 8px 18px',
+    color: '#0f172a',
+    fontWeight: 600,
+    width: '64px',
+    textAlign: 'right',
+  },
+  docsIconCell: {
+    padding: '8px 4px',
+    width: '24px',
+    color: '#475569',
+  },
+  docsTitle: {
+    padding: '8px 10px',
+    color: '#1d4ed8',
+    cursor: 'pointer',
+  },
+  docsFooter: {
+    borderTop: '1px solid #e2e8f0',
+    padding: '8px 0',
+    display: 'flex',
+    justifyContent: 'center',
+  },
+  viewAllBtn: {
+    padding: '6px 14px',
+    background: 'transparent',
+    border: 'none',
+    color: '#1d4ed8',
+    fontWeight: 600,
+    fontSize: '0.85rem',
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+  },
+
+  chartWrap: {
+    position: 'relative',
+    width: '100%',
+  },
+  tooltip: {
+    position: 'absolute',
+    transform: 'translate(-50%, calc(-100% - 10px))',
+    background: 'rgba(0, 0, 0, 0.78)',
+    color: '#ffffff',
+    fontSize: '0.78rem',
+    padding: '6px 10px',
+    borderRadius: '4px',
+    border: '1px solid rgba(81, 77, 77, 0.8)',
+    pointerEvents: 'none',
+    whiteSpace: 'nowrap',
+    boxShadow: '0 1px 8px rgba(0, 0, 0, 0.18)',
+  },
+};

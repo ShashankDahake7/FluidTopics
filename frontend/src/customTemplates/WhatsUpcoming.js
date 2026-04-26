@@ -6,7 +6,7 @@ import { useTranslation } from '@/lib/i18n';
 // release cycle so the link always points to the most recent notes page.
 const LATEST_RELEASE = {
   label: 'Release Notes February 2026',
-  href: '/portal/templates/release-notes',
+  href: '/dashboard/templates/release-notes',
 };
 
 export default function WhatsUpcoming() {

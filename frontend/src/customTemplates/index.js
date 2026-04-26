@@ -1,7 +1,7 @@
 // Registry of custom (non-ingested) doc templates.
 //
-// Each entry is rendered as a tile on the portal home page, and selecting it
-// opens /portal/templates/<slug>, which loads the matching component below.
+// Each entry is rendered as a tile on the dashboard home page, and selecting it
+// opens /dashboard/templates/<slug>, which loads the matching component below.
 // Add new templates by dropping a file in this folder and registering it
 // here — the registry is the single source of truth.
 
