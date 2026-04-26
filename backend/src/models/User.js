@@ -54,6 +54,15 @@ const userSchema = new mongoose.Schema(
     preferences: {
       products: [{ type: String }],
       interests: [{ type: String }],  // user-selected interest tags
+      // Search-preferences "Edit filters" panel — restricts the user's
+      // search results to a specific set of documents and/or topics.
+      documentIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Document' }],
+      topicIds:    [{ type: mongoose.Schema.Types.ObjectId, ref: 'Topic'    }],
+      releaseNotesOnly: { type: Boolean, default: false },
+      // Prioritize-results panel — these don't restrict, they only boost.
+      priorityDocumentIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Document' }],
+      priorityTopicIds:    [{ type: mongoose.Schema.Types.ObjectId, ref: 'Topic'    }],
+      priorityReleaseNotes: { type: Boolean, default: false },
       language: { type: String, default: 'en' },
       theme: { type: String, enum: ['light', 'dark'], default: 'dark' },
     },

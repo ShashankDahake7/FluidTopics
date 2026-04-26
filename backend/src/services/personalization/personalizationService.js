@@ -179,8 +179,18 @@ const getUserInterestProfile = async (userId) => {
   const bookmarkCount = await Bookmark.countDocuments({ userId });
 
   return {
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    lastLogin: user.lastLogin,
     interests: user.preferences?.interests || [],
     products: user.preferences?.products || [],
+    documentIds: (user.preferences?.documentIds || []).map(String),
+    topicIds:    (user.preferences?.topicIds    || []).map(String),
+    releaseNotesOnly: !!user.preferences?.releaseNotesOnly,
+    priorityDocumentIds: (user.preferences?.priorityDocumentIds || []).map(String),
+    priorityTopicIds:    (user.preferences?.priorityTopicIds    || []).map(String),
+    priorityReleaseNotes: !!user.preferences?.priorityReleaseNotes,
     topTags: topTags.map(([tag, count]) => ({ tag, count })),
     topProducts: topProducts.map(([product, count]) => ({ product, count })),
     totalViews: user.behaviorProfile?.totalViews || 0,
@@ -230,6 +240,9 @@ const getSearchBoostParams = async (userId) => {
     tags: allTags,
     products: allProducts,
     language: user.preferences?.language || 'en',
+    documentIds: (user.preferences?.priorityDocumentIds || []).map(String),
+    topicIds:    (user.preferences?.priorityTopicIds    || []).map(String),
+    releaseNotes: !!user.preferences?.priorityReleaseNotes,
   };
 };
 

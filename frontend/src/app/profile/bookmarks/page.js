@@ -1,123 +1,368 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import api from '@/lib/api';
 
-export default function BookmarksPage() {
+const COLORS = ['#0f172a', '#10b981', '#3b82f6', '#a855f7', '#ef4444', '#f97316', '#eab308'];
+
+export default function MyLibraryPage() {
   const router = useRouter();
+  const [tab, setTab] = useState('bookmarks');     // 'bookmarks' | 'searches' | 'collections'
+  const [collapsed, setCollapsed] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+
   const [bookmarks, setBookmarks] = useState([]);
-  const [folders, setFolders] = useState([]);
-  const [activeFolder, setActiveFolder] = useState('');
+  const [searches, setSearches] = useState([]);
+  const [collections, setCollections] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    if (!localStorage.getItem('ft_token')) { router.replace('/login'); return; }
-    loadFolders();
-    loadBookmarks();
-  }, []);
-
-  const loadFolders = async () => {
-    try {
-      const d = await api.get('/bookmarks/folders');
-      setFolders(d.collections || []);
-    } catch (e) { console.error(e); }
-  };
-
-  const loadBookmarks = async (folder = '') => {
+  const loadAll = useCallback(async () => {
     setLoading(true);
     try {
-      const params = folder ? `?folder=${encodeURIComponent(folder)}` : '';
-      const d = await api.get(`/bookmarks${params}`);
-      setBookmarks(d.bookmarks || []);
-      setActiveFolder(folder);
-    } catch (e) { console.error(e); }
-    setLoading(false);
-  };
+      const [b, s, c] = await Promise.all([
+        api.get('/bookmarks').catch(() => ({ bookmarks: [] })),
+        api.get('/user/searches').catch(() => ({ searches: [] })),
+        api.get('/collections').catch(() => ({ collections: [] })),
+      ]);
+      setBookmarks(b.bookmarks || []);
+      setSearches(s.searches || []);
+      setCollections(c.collections || []);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-  const removeBookmark = async (topicId) => {
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!localStorage.getItem('ft_token')) { router.replace('/login'); return; }
+    loadAll();
+  }, [loadAll, router]);
+
+  const removeBookmark = async (bookmark) => {
+    const id = bookmark.id || bookmark.topic?._id;
+    if (!id) return;
     try {
-      await api.delete(`/bookmarks/${topicId}`);
-      setBookmarks(bookmarks.filter(b => b.topic?._id !== topicId));
+      await api.delete(`/bookmarks/${id}`);
+      setBookmarks((bs) => bs.filter((b) => (b.id || b.topic?._id) !== id));
     } catch (e) { alert(e.message); }
   };
 
+  const removeCollection = async (id) => {
+    if (!confirm('Delete this collection?')) return;
+    try {
+      await api.delete(`/collections/${id}`);
+      setCollections((cs) => cs.filter((c) => c._id !== id));
+    } catch (e) { alert(e.message); }
+  };
+
+  const clearSearches = async () => {
+    if (!confirm('Clear all search history?')) return;
+    await api.delete('/user/searches').catch(() => { });
+    setSearches([]);
+  };
+
+  const handleCreateCollection = async ({ name, description, color }) => {
+    try {
+      const d = await api.post('/collections', { name, description, color });
+      setCollections((cs) => [d.collection, ...cs]);
+      setCreateOpen(false);
+    } catch (e) { alert(e.message); }
+  };
+
+  const counts = {
+    bookmarks: bookmarks.length,
+    searches: searches.length,
+    collections: collections.length,
+  };
+
   return (
-    <>
-      <div style={{ background: 'var(--bg-secondary)', minHeight: 'calc(100vh - var(--header-height))' }}>
-        <main className="container" style={{ padding: '36px 0 56px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '28px' }}>
-            <div>
-              <h1 style={{ fontSize: '1.6rem', fontWeight: 700, letterSpacing: '-0.02em' }}>My Bookmarks</h1>
-              <p style={{ color: 'var(--text-secondary)', marginTop: '4px', fontSize: '0.9rem' }}>
-                {bookmarks.length} saved topic{bookmarks.length !== 1 ? 's' : ''}
-              </p>
-            </div>
-            <a href="/profile" className="btn btn-secondary btn-sm">← Profile</a>
-          </div>
+    <div style={s.shell}>
+      <aside style={{ ...s.sidebar, width: collapsed ? '56px' : '108px' }}>
+        <SideTab icon={IconBookmark} label="Bookmarks" active={tab === 'bookmarks'} collapsed={collapsed} onClick={() => setTab('bookmarks')} />
+        <SideTab icon={IconSearches} label="Searches" active={tab === 'searches'} collapsed={collapsed} onClick={() => setTab('searches')} />
+        <SideTab icon={IconCollections} label="Collections" active={tab === 'collections'} collapsed={collapsed} onClick={() => setTab('collections')} />
+        <div style={{ flex: 1 }} />
+        <Link href="/search" style={{ ...s.sideTab, color: '#1d4ed8', textDecoration: 'none' }}>
+          <IconSearchPage />
+          {!collapsed && <span style={s.sideLabel}>Go to Search<br />page</span>}
+        </Link>
+        <button type="button" onClick={() => setCollapsed((v) => !v)} style={s.collapseBtn} aria-label={collapsed ? 'Expand' : 'Collapse'}>
+          {collapsed ? '»' : '«'}
+        </button>
+      </aside>
 
-          <div style={{ display: 'flex', gap: '20px', alignItems: 'flex-start' }}>
-            {/* Folder sidebar */}
-            {folders.length > 1 && (
-              <aside style={{ width: '200px', flexShrink: 0 }}>
-                <div className="card" style={{ padding: '14px' }}>
-                  <h4 style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Folders</h4>
-                  <button onClick={() => loadBookmarks('')}
-                    className="btn btn-ghost btn-sm"
-                    style={{ width: '100%', justifyContent: 'flex-start', fontWeight: !activeFolder ? 600 : 400, color: !activeFolder ? 'var(--accent-primary)' : 'var(--text-secondary)' }}>
-                    All ({folders.reduce((sum, f) => sum + f.count, 0)})
-                  </button>
-                  {folders.map(f => (
-                    <button key={f.name} onClick={() => loadBookmarks(f.name)}
-                      className="btn btn-ghost btn-sm"
-                      style={{ width: '100%', justifyContent: 'flex-start', fontWeight: activeFolder === f.name ? 600 : 400, color: activeFolder === f.name ? 'var(--accent-primary)' : 'var(--text-secondary)' }}>
-                      {f.name} ({f.count})
-                    </button>
-                  ))}
-                </div>
-              </aside>
-            )}
+      <main style={s.main}>
+        <div style={s.header}>
+          <h1 style={s.headerTitle}>
+            {tab === 'bookmarks' && (counts.bookmarks ? 'Bookmarks' : 'No bookmarks')}
+            {tab === 'searches' && (counts.searches ? 'Searches' : 'No searches')}
+            {tab === 'collections' && (counts.collections ? 'Collections' : 'No collections')}
+          </h1>
+          {tab === 'collections' && (
+            <button type="button" style={s.createBtn} onClick={() => setCreateOpen(true)}>
+              <span style={{ fontSize: '1rem', lineHeight: 1 }}>⊕</span> Create
+            </button>
+          )}
+          {tab === 'searches' && counts.searches > 0 && (
+            <button type="button" style={s.linkBtn} onClick={clearSearches}>Clear all</button>
+          )}
+        </div>
 
-            {/* Bookmarks list */}
-            <div style={{ flex: 1 }}>
-              {loading ? (
-                <div style={{ display: 'flex', justifyContent: 'center', padding: '60px' }}><div className="spinner" /></div>
-              ) : bookmarks.length === 0 ? (
-                <div className="card" style={{ textAlign: 'center', padding: '56px' }}>
-                  <div style={{ fontSize: '2.5rem', marginBottom: '12px' }}>🔖</div>
-                  <h2 style={{ fontSize: '1rem', fontWeight: 600 }}>No bookmarks yet</h2>
-                  <p style={{ color: 'var(--text-muted)', marginTop: '6px', fontSize: '0.875rem' }}>
-                    Click the star on any topic to save it here
-                  </p>
-                  <a href="/topics" className="btn btn-primary" style={{ marginTop: '16px' }}>Browse Topics</a>
-                </div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  {bookmarks.map((b, i) => (
-                    <div key={b.id} className="card animate-fadeIn" style={{ animationDelay: `${i * 35}ms`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px' }}>
-                      <a href={`/topics/${b.topic?._id}`} style={{ textDecoration: 'none', flex: 1, minWidth: 0 }}>
-                        <h3 style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-primary)' }}>{b.topic?.title || 'Unknown'}</h3>
-                        <div style={{ display: 'flex', gap: '5px', marginTop: '5px', flexWrap: 'wrap' }}>
-                          {b.folder !== 'default' && <span className="badge badge-warning">{b.folder}</span>}
-                          {(b.topic?.metadata?.tags || []).slice(0, 3).map((t, j) => <span key={j} className="badge">{t}</span>)}
-                        </div>
-                        {b.note && <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '5px' }}>{b.note}</p>}
-                      </a>
-                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0 }}>
-                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{new Date(b.createdAt).toLocaleDateString('en-US')}</span>
-                        <button onClick={() => removeBookmark(b.topic?._id)}
-                          className="btn btn-secondary btn-sm"
-                          style={{ color: 'var(--error)', borderColor: 'var(--border-color)', padding: '4px 10px', fontSize: '0.78rem' }}>
-                          Remove
-                        </button>
+        {loading ? (
+          <div style={s.empty}>Loading…</div>
+        ) : tab === 'bookmarks' ? (
+          counts.bookmarks === 0
+            ? <div style={s.empty}>Nothing to see here</div>
+            : (
+              <ul style={s.list}>
+                {bookmarks.map((b) => (
+                  <li key={b.id || b.topic?._id} style={s.row}>
+                    <Link href={`/portal/docs/${b.topic?._id}`} style={s.rowMain}>
+                      <div style={s.rowTitle}>{b.topic?.title || 'Untitled'}</div>
+                      {b.note && <div style={s.rowSub}>{b.note}</div>}
+                    </Link>
+                    <button type="button" onClick={() => removeBookmark(b)} style={s.removeBtn} aria-label="Remove bookmark">×</button>
+                  </li>
+                ))}
+              </ul>
+            )
+        ) : tab === 'searches' ? (
+          counts.searches === 0
+            ? <div style={s.empty}>Nothing to see here</div>
+            : (
+              <ul style={s.list}>
+                {searches.map((q) => (
+                  <li key={q.query} style={s.row}>
+                    <Link href={`/search?q=${encodeURIComponent(q.query)}`} style={s.rowMain}>
+                      <div style={s.rowTitle}>{q.query}</div>
+                      <div style={s.rowSub}>
+                        {q.resultCount} result{q.resultCount === 1 ? '' : 's'}
+                        {q.lastUsed ? ` · ${new Date(q.lastUsed).toLocaleString()}` : ''}
                       </div>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )
+        ) : (
+          counts.collections === 0
+            ? <div style={s.empty}>Nothing to see here</div>
+            : (
+              <ul style={s.list}>
+                {collections.map((c) => (
+                  <li key={c._id} style={s.row}>
+                    <div style={s.rowMain}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <span style={{ width: '12px', height: '12px', borderRadius: '50%', background: c.color || '#0f172a', flexShrink: 0 }} />
+                        <div style={s.rowTitle}>{c.name}</div>
+                      </div>
+                      {c.description && <div style={s.rowSub}>{c.description}</div>}
                     </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </main>
-      </div>
-    </>
+                    <button type="button" onClick={() => removeCollection(c._id)} style={s.removeBtn} aria-label="Delete collection">×</button>
+                  </li>
+                ))}
+              </ul>
+            )
+        )}
+      </main>
+
+      {createOpen && <CreateCollectionPanel onClose={() => setCreateOpen(false)} onCreate={handleCreateCollection} />}
+    </div>
   );
 }
+
+function SideTab({ icon: Icon, label, active, collapsed, onClick }) {
+  return (
+    <button type="button" onClick={onClick} style={{
+      ...s.sideTab,
+      background: active ? '#eff6ff' : 'transparent',
+      color: '#1d4ed8',
+    }}>
+      <Icon />
+      {!collapsed && <span style={s.sideLabel}>{label}</span>}
+    </button>
+  );
+}
+
+function CreateCollectionPanel({ onClose, onCreate }) {
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [color, setColor] = useState(COLORS[0]);
+  const canSave = name.trim().length > 0;
+
+  return (
+    <div style={s.backdrop} onClick={onClose}>
+      <div style={s.panel} onClick={(e) => e.stopPropagation()}>
+        <div style={s.panelHeader}>
+          <button type="button" onClick={onClose} style={s.panelClose} aria-label="Close">×</button>
+          <div style={s.panelTitle}>Create a collection</div>
+        </div>
+        <div style={s.panelBody}>
+          <label style={s.fieldLabel}>Enter a name</label>
+          <input value={name} onChange={(e) => setName(e.target.value)} style={s.input} autoFocus />
+          <label style={{ ...s.fieldLabel, marginTop: '18px' }}>Add a description</label>
+          <input value={description} onChange={(e) => setDescription(e.target.value)} style={s.input} />
+          <label style={{ ...s.fieldLabel, marginTop: '18px' }}>Choose a color</label>
+          <div style={{ display: 'flex', gap: '10px', marginTop: '6px' }}>
+            {COLORS.map((c) => (
+              <button key={c} type="button" onClick={() => setColor(c)} style={{
+                width: '28px', height: '28px', borderRadius: '50%',
+                background: c, border: 'none', cursor: 'pointer',
+                color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: '0.8rem', boxShadow: color === c ? '0 0 0 3px #cfe2ff' : 'none',
+              }} aria-label={`Color ${c}`}>{color === c ? '✓' : ''}</button>
+            ))}
+          </div>
+          <div style={s.panelActions}>
+            <button type="button" style={s.cancelBtn} onClick={onClose}>✕ Cancel</button>
+            <button type="button" style={{ ...s.saveBtn, opacity: canSave ? 1 : 0.6, cursor: canSave ? 'pointer' : 'not-allowed' }}
+              disabled={!canSave}
+              onClick={() => onCreate({ name: name.trim(), description: description.trim(), color })}>
+              ✓ Save
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---- Icons ----------------------------------------------------------------
+const IconBookmark = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" /></svg>
+);
+const IconSearches = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" /><rect x="3" y="14" width="7" height="7" /><circle cx="17.5" cy="17.5" r="3" /><line x1="20" y1="20" x2="22" y2="22" /></svg>
+);
+const IconCollections = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="4" rx="1" /><rect x="3" y="10" width="18" height="4" rx="1" /><rect x="3" y="16" width="18" height="4" rx="1" /></svg>
+);
+const IconSearchPage = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7" /><line x1="21" y1="21" x2="16.65" y2="16.65" /><path d="M8 11h6M11 8v6" /></svg>
+);
+
+// ---- Styles ---------------------------------------------------------------
+const s = {
+  shell: {
+    display: 'flex',
+    minHeight: 'calc(100vh - var(--header-height))',
+    background: '#ffffff',
+    fontFamily: 'var(--font-sans)',
+  },
+  sidebar: {
+    display: 'flex', flexDirection: 'column',
+    borderRight: '1px solid #e5e7eb',
+    padding: '16px 8px 8px',
+    background: '#FFFFFF',
+    flexShrink: 0,
+    transition: 'width 150ms',
+  },
+  sideTab: {
+    display: 'flex', flexDirection: 'column',
+    alignItems: 'center', justifyContent: 'center',
+    gap: '6px', padding: '14px 6px',
+    border: 'none', cursor: 'pointer',
+    borderRadius: '8px', marginBottom: '6px',
+    fontSize: '0.7rem', fontWeight: 500,
+    fontFamily: 'var(--font-sans)',
+    background: 'transparent', color: '#1d4ed8',
+    width: '100%',
+  },
+  sideLabel: { textAlign: 'center', lineHeight: 1.2 },
+  collapseBtn: {
+    background: '#0f172a', color: '#fff',
+    width: '28px', height: '28px', borderRadius: '50%',
+    border: 'none', cursor: 'pointer',
+    alignSelf: 'center', marginTop: '6px',
+    fontSize: '0.85rem', lineHeight: 1,
+  },
+  main: { flex: 1, padding: '32px 36px' },
+  header: {
+    display: 'flex', alignItems: 'center', gap: '14px',
+    marginBottom: '24px',
+  },
+  headerTitle: {
+    fontSize: '1.4rem', fontWeight: 600,
+    color: '#1d4ed8', margin: 0, letterSpacing: '-0.01em',
+  },
+  createBtn: {
+    background: '#1d4ed8', color: '#fff', border: 'none',
+    padding: '8px 16px', borderRadius: '4px',
+    cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600,
+    display: 'inline-flex', alignItems: 'center', gap: '6px',
+  },
+  linkBtn: {
+    background: 'transparent', border: 'none',
+    color: '#6b7280', cursor: 'pointer', fontSize: '0.8rem',
+    padding: '6px 8px', textDecoration: 'underline',
+  },
+  empty: {
+    color: '#94a3b8', fontSize: '0.95rem',
+    marginTop: '120px', textAlign: 'center',
+  },
+  list: { listStyle: 'none', padding: 0, margin: 0 },
+  row: {
+    display: 'flex', alignItems: 'center', gap: '12px',
+    padding: '14px 14px',
+    border: '1px solid #e5e7eb', borderRadius: '8px',
+    marginBottom: '10px', background: '#fff',
+  },
+  rowMain: { flex: 1, color: '#0f172a', textDecoration: 'none', display: 'block' },
+  rowTitle: { fontSize: '0.95rem', fontWeight: 600, color: '#0f172a' },
+  rowSub: { fontSize: '0.78rem', color: '#6b7280', marginTop: '4px' },
+  removeBtn: {
+    background: 'transparent', border: 'none',
+    color: '#94a3b8', fontSize: '1.4rem', cursor: 'pointer',
+    width: '28px', height: '28px', borderRadius: '4px',
+  },
+
+  // Slide-out panel
+  backdrop: {
+    position: 'fixed', inset: 0, zIndex: 50,
+    background: 'rgba(15, 23, 42, 0.45)',
+    display: 'flex', justifyContent: 'flex-end',
+  },
+  panel: {
+    width: '100%', maxWidth: '760px',
+    background: '#ffffff',
+    display: 'flex', flexDirection: 'column',
+    boxShadow: '-12px 0 30px rgba(0,0,0,0.15)',
+  },
+  panelHeader: {
+    display: 'flex', alignItems: 'center', gap: '14px',
+    padding: '14px 18px',
+    borderBottom: '1px solid #e5e7eb',
+    background: '#FFFFFF',
+  },
+  panelClose: {
+    background: 'transparent', border: 'none',
+    fontSize: '1.4rem', lineHeight: 1, cursor: 'pointer',
+    color: '#374151', width: '28px', height: '28px',
+  },
+  panelTitle: { fontSize: '0.95rem', fontWeight: 600, color: '#0f172a' },
+  panelBody: { padding: '24px 28px', flex: 1 },
+  fieldLabel: { display: 'block', fontSize: '0.85rem', fontWeight: 600, color: '#0f172a', marginBottom: '8px' },
+  input: {
+    width: '100%', padding: '10px 12px',
+    border: '1px solid #2563eb', borderRadius: '4px',
+    fontSize: '0.9rem', fontFamily: 'var(--font-sans)',
+    color: '#0f172a', outline: 'none', boxSizing: 'border-box',
+  },
+  panelActions: {
+    display: 'flex', justifyContent: 'flex-end', gap: '12px',
+    marginTop: '40px',
+  },
+  cancelBtn: {
+    background: '#fff', color: '#374151',
+    border: '1px solid #d1d5db', borderRadius: '4px',
+    padding: '8px 18px', cursor: 'pointer',
+    fontSize: '0.85rem', fontWeight: 500,
+  },
+  saveBtn: {
+    background: '#1d4ed8', color: '#fff',
+    border: 'none', borderRadius: '4px',
+    padding: '8px 22px', cursor: 'pointer',
+    fontSize: '0.85rem', fontWeight: 600,
+  },
+};

@@ -3,54 +3,56 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import api from '@/lib/api';
+import PortalSearch from '@/components/portal/PortalSearch';
+import PortalFooter from '@/components/portal/PortalFooter';
+import UploadDialog from '@/components/portal/UploadDialog';
+import { customTemplates, GenericDocIcon } from '@/customTemplates';
+import { useTranslation } from '@/lib/i18n';
 
-// Palette of icon backgrounds — cycles by index
-const TILE_COLORS = [
-  '#4f46e5', '#7c3aed', '#0891b2', '#059669',
-  '#d97706', '#dc2626', '#db2777', '#2563eb',
-];
-
-const ICONS = ['📄', '📚', '🗂️', '📑', '📋', '📝', '🔖', '📰'];
-
-function DocTile({ doc, index }) {
-  const color = TILE_COLORS[index % TILE_COLORS.length];
-  const icon  = ICONS[index % ICONS.length];
-  const label = doc.isPaligo && doc.companyName ? doc.companyName : (doc.product || '');
-
+function TemplateTile({ tpl }) {
+  const Icon = tpl.icon || GenericDocIcon;
   return (
-    <Link href={`/portal/docs/${doc._id}`} style={styles.tile}>
-      <div style={{ ...styles.tileIcon, background: color }}>
-        <span style={{ fontSize: '1.6rem' }}>{icon}</span>
-      </div>
-      <div style={styles.tileBody}>
-        <div style={styles.tileTitle}>{doc.title}</div>
-        {doc.description && (
-          <div style={styles.tileDesc}>{doc.description}</div>
-        )}
-        <div style={styles.tileMeta}>
-          {doc.topicCount} topic{doc.topicCount !== 1 ? 's' : ''}
-          {label && <> · {label}</>}
-          {doc.isPaligo && (
-            <span style={{ marginLeft: '6px', background: '#eff6ff', color: '#1d4ed8', borderRadius: '4px', padding: '0 5px', fontSize: '0.68rem', fontWeight: 600 }}>Paligo</span>
-          )}
+    <Link href={`/portal/templates/${tpl.slug}`} style={styles.tile}>
+      <div style={styles.tileBox}>
+        <div style={styles.tileIconBox}>
+          <Icon />
         </div>
       </div>
+      <div style={styles.tileLabel}>{tpl.title}</div>
+    </Link>
+  );
+}
+
+function DocTile({ doc }) {
+  return (
+    <Link href={`/portal/docs/${doc._id}`} style={styles.tile}>
+      <div style={styles.tileBox}>
+        <div style={styles.tileIconBox}>
+          <GenericDocIcon />
+        </div>
+      </div>
+      <div style={styles.tileLabel}>{doc.title}</div>
     </Link>
   );
 }
 
 export default function PortalHomepage() {
-  const [docs,    setDocs]    = useState([]);
+  const [docs, setDocs] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [query,   setQuery]   = useState('');
+  const [query, setQuery] = useState('');
+  const [uploadOpen, setUploadOpen] = useState(false);
   const router = useRouter();
+  const { t } = useTranslation();
 
-  useEffect(() => {
+  const loadDocs = () => {
+    setLoading(true);
     api.get('/portal/documents')
       .then((d) => setDocs(d.documents || []))
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, []);
+  };
+
+  useEffect(() => { loadDocs(); }, []);
 
   const handleSearch = (e) => {
     e.preventDefault();
@@ -59,54 +61,51 @@ export default function PortalHomepage() {
 
   const filtered = query
     ? docs.filter((d) =>
-        d.title.toLowerCase().includes(query.toLowerCase()) ||
-        d.product?.toLowerCase().includes(query.toLowerCase()) ||
-        d.tags?.some((t) => t.toLowerCase().includes(query.toLowerCase()))
-      )
+      d.title.toLowerCase().includes(query.toLowerCase()) ||
+      d.product?.toLowerCase().includes(query.toLowerCase()) ||
+      d.tags?.some((t) => t.toLowerCase().includes(query.toLowerCase()))
+    )
     : docs;
+
+  const filteredTemplates = query
+    ? customTemplates.filter((t) =>
+      t.title.toLowerCase().includes(query.toLowerCase()) ||
+      t.description?.toLowerCase().includes(query.toLowerCase())
+    )
+    : customTemplates;
 
   return (
     <div style={styles.page}>
       {/* Hero */}
-      <div style={styles.hero}>
+      <section style={styles.hero}>
         <div style={styles.heroInner}>
-          <h1 style={styles.heroTitle}>How can we help you?</h1>
-          <p style={styles.heroSub}>Search our documentation or browse topics below</p>
-          <form onSubmit={handleSearch} style={styles.searchWrap}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-              stroke="rgba(255,255,255,0.7)" strokeWidth="2.2" style={styles.searchIcon}>
-              <circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>
-            </svg>
-            <input
-              style={styles.searchInput}
-              placeholder="Search documentation…"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
-            <button type="submit" style={styles.searchBtn}>Search</button>
-          </form>
+          <img src="/Group 79.png" alt="evolve. Everyday" style={styles.heroEvolve} />
+          <div style={styles.heroCenter}>
+            <h1 style={styles.heroTitle}>{t('portalTitle')}</h1>
+            <PortalSearch />
+          </div>
+          <img src="/Group 4562.png" alt="" aria-hidden="true" style={styles.heroFigures} />
         </div>
-      </div>
+      </section>
 
       {/* Tiles */}
       <div style={styles.content}>
         {loading ? (
           <div style={styles.loading}>
             <div style={styles.spinner} />
-            <span>Loading documentation…</span>
+            <span>{t('loadingDocs')}</span>
           </div>
-        ) : filtered.length === 0 ? (
+        ) : filtered.length === 0 && filteredTemplates.length === 0 ? (
           <div style={styles.empty}>
-            {docs.length === 0
-              ? 'No documentation published yet.'
-              : 'No results match your search.'}
+            {docs.length === 0 ? t('noDocsPublished') : t('noResultsMatch')}
           </div>
         ) : (
           <>
-            <h2 style={styles.sectionTitle}>
-              {query ? `Results for "${query}"` : 'Browse Documentation'}
-            </h2>
             <div style={styles.grid}>
+              <UploadTile onClick={() => setUploadOpen(true)} />
+              {filteredTemplates.map((tpl) => (
+                <TemplateTile key={tpl.slug} tpl={tpl} />
+              ))}
               {filtered.map((doc, i) => (
                 <DocTile key={doc._id} doc={doc} index={i} />
               ))}
@@ -114,74 +113,123 @@ export default function PortalHomepage() {
           </>
         )}
       </div>
+      <UploadDialog
+        open={uploadOpen}
+        onClose={() => setUploadOpen(false)}
+        onUploaded={() => { loadDocs(); }}
+      />
+      <section style={styles.disclaimer}>
+        <div style={styles.disclaimerInner}>
+          <strong>{t('disclaimerLabel')}</strong>: {t('disclaimerBody')}
+        </div>
+      </section>
+      <PortalFooter />
     </div>
+  );
+}
+
+function UploadTile({ onClick }) {
+  const { t } = useTranslation();
+  return (
+    <button type="button" onClick={onClick} style={{ ...styles.tile, background: 'transparent', border: 'none', cursor: 'pointer', padding: 0 }} aria-label={t('uploadDocument')}>
+      <div style={styles.tileBox}>
+        <div style={{ ...styles.tileIconBox, color: '#1d4ed8' }}>
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="17 8 12 3 7 8" />
+            <line x1="12" y1="3" x2="12" y2="15" />
+          </svg>
+        </div>
+      </div>
+      <div style={styles.tileLabel}>{t('uploadDocument')}</div>
+    </button>
   );
 }
 
 const styles = {
   page: {
-    minHeight: 'calc(100vh - var(--header-height))',
-    background: '#f8fafc',
+    background: '#FFFFFF',
+    display: 'flex',
+    flexDirection: 'column',
+    flex: 1,
   },
   hero: {
-    background: 'linear-gradient(135deg, #1e3a5f 0%, #1e40af 60%, #4f46e5 100%)',
-    padding: '64px 24px 72px',
+    background: '#EDF6FF',
+    padding: '32px 24px',
   },
   heroInner: {
-    maxWidth: '640px',
+    maxWidth: '1320px',
     margin: '0 auto',
+    display: 'grid',
+    gridTemplateColumns: '1fr minmax(0, 760px) 1fr',
+    alignItems: 'center',
+    gap: '24px',
+  },
+  heroEvolve: {
+    height: '110px',
+    width: 'auto',
+    justifySelf: 'start',
+    objectFit: 'contain',
+  },
+  heroFigures: {
+    height: '160px',
+    width: 'auto',
+    justifySelf: 'end',
+    objectFit: 'contain',
+  },
+  heroCenter: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '18px',
     textAlign: 'center',
+    width: '100%',
   },
   heroTitle: {
-    fontSize: '2.2rem',
-    fontWeight: 800,
-    color: '#ffffff',
-    letterSpacing: '-0.03em',
-    marginBottom: '10px',
-  },
-  heroSub: {
-    fontSize: '1rem',
-    color: 'rgba(255,255,255,0.75)',
-    marginBottom: '28px',
+    fontSize: '1.5rem',
+    fontWeight: 600,
+    color: '#1d4ed8',
+    letterSpacing: '-0.01em',
+    margin: 0,
   },
   searchWrap: {
     display: 'flex',
     alignItems: 'center',
-    background: 'rgba(255,255,255,0.12)',
-    border: '1px solid rgba(255,255,255,0.25)',
-    borderRadius: '12px',
-    padding: '4px 4px 4px 16px',
-    gap: '10px',
-    backdropFilter: 'blur(8px)',
+    background: '#ffffff',
+    border: '1px solid #cfd8e6',
+    borderRadius: '6px',
+    padding: '0',
+    width: '100%',
+    maxWidth: '720px',
+    overflow: 'hidden',
   },
-  searchIcon: { flexShrink: 0 },
   searchInput: {
     flex: 1,
     background: 'transparent',
     border: 'none',
     outline: 'none',
-    fontSize: '1rem',
-    color: '#ffffff',
+    fontSize: '0.95rem',
+    color: '#1f2937',
+    padding: '12px 16px',
     fontFamily: 'var(--font-sans)',
-    '::placeholder': { color: 'rgba(255,255,255,0.5)' },
   },
   searchBtn: {
-    background: '#ffffff',
-    color: '#1e40af',
+    background: 'transparent',
     border: 'none',
-    borderRadius: '8px',
-    padding: '9px 20px',
-    fontSize: '0.875rem',
-    fontWeight: 700,
+    padding: '0 14px',
+    height: '100%',
     cursor: 'pointer',
-    fontFamily: 'var(--font-sans)',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
     flexShrink: 0,
-    transition: 'opacity 150ms',
   },
   content: {
     maxWidth: '1200px',
     margin: '0 auto',
     padding: '48px 24px 64px',
+    width: '100%',
+    flex: 1,
   },
   sectionTitle: {
     fontSize: '1.1rem',
@@ -192,53 +240,43 @@ const styles = {
   },
   grid: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
-    gap: '16px',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))',
+    gap: '24px 28px',
+    justifyItems: 'center',
   },
   tile: {
     display: 'flex',
     flexDirection: 'column',
-    background: '#ffffff',
-    borderRadius: '12px',
-    border: '1px solid #e2e8f0',
-    overflow: 'hidden',
+    alignItems: 'center',
+    gap: '14px',
     textDecoration: 'none',
-    transition: 'box-shadow 150ms, transform 150ms',
-    boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+    width: '100%',
+    maxWidth: '180px',
   },
-  tileIcon: {
-    height: '100px',
+  tileBox: {
+    width: '150px',
+    height: '150px',
+    borderRadius: '14px',
+    background: '#f3f4f6',
+    boxShadow: '6px 6px 14px rgba(15, 23, 42, 0.06), -2px -2px 6px rgba(255, 255, 255, 0.8)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    transition: 'transform 150ms, box-shadow 150ms',
+  },
+  tileIconBox: {
+    width: '76px',
+    height: '76px',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  tileBody: {
-    padding: '16px',
-    flex: 1,
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '6px',
-  },
-  tileTitle: {
+  tileLabel: {
     fontSize: '0.95rem',
-    fontWeight: 700,
-    color: '#1e293b',
-    lineHeight: 1.3,
-  },
-  tileDesc: {
-    fontSize: '0.8rem',
-    color: '#64748b',
-    lineHeight: 1.4,
-    display: '-webkit-box',
-    WebkitLineClamp: 2,
-    WebkitBoxOrient: 'vertical',
-    overflow: 'hidden',
-  },
-  tileMeta: {
-    fontSize: '0.75rem',
+    fontWeight: 500,
     color: '#94a3b8',
-    marginTop: 'auto',
-    paddingTop: '4px',
+    textAlign: 'center',
+    lineHeight: 1.3,
   },
   loading: {
     display: 'flex',
@@ -262,5 +300,15 @@ const styles = {
     color: '#94a3b8',
     padding: '80px 0',
     fontSize: '0.95rem',
+  },
+  disclaimer: {
+    background: '#FFFFFF',
+    padding: '20px 32px',
+  },
+  disclaimerInner: {
+    width: '100%',
+    fontSize: '0.85rem',
+    color: '#475569',
+    lineHeight: 1.6,
   },
 };

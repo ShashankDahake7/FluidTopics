@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const ReadingHistory = require('../models/ReadingHistory');
+const Analytics = require('../models/Analytics');
 const { auth: authenticate } = require('../middleware/auth');
 const {
   updateBehaviorProfile,
@@ -30,7 +31,7 @@ router.get('/profile', async (req, res, next) => {
  */
 router.patch('/preferences', async (req, res, next) => {
   try {
-    const { interests, products, language, theme } = req.body;
+    const { interests, products, language, theme, documentIds, topicIds, releaseNotesOnly } = req.body;
     const User = require('../models/User');
 
     const update = {};
@@ -38,6 +39,12 @@ router.patch('/preferences', async (req, res, next) => {
     if (products) update['preferences.products'] = products;
     if (language) update['preferences.language'] = language;
     if (theme) update['preferences.theme'] = theme;
+    if (Array.isArray(documentIds)) update['preferences.documentIds'] = documentIds;
+    if (Array.isArray(topicIds))    update['preferences.topicIds']    = topicIds;
+    if (typeof releaseNotesOnly === 'boolean') update['preferences.releaseNotesOnly'] = releaseNotesOnly;
+    if (Array.isArray(req.body.priorityDocumentIds)) update['preferences.priorityDocumentIds'] = req.body.priorityDocumentIds;
+    if (Array.isArray(req.body.priorityTopicIds))    update['preferences.priorityTopicIds']    = req.body.priorityTopicIds;
+    if (typeof req.body.priorityReleaseNotes === 'boolean') update['preferences.priorityReleaseNotes'] = req.body.priorityReleaseNotes;
 
     const user = await User.findByIdAndUpdate(req.user.id, update, { new: true });
     res.json({ message: 'Preferences updated', preferences: user.preferences });
@@ -132,6 +139,43 @@ router.post('/track-engagement', async (req, res, next) => {
     const { trackEngagement } = require('../services/analytics/analyticsService');
     await trackEngagement(req.user.id, topicId, { duration, scrollDepth });
     res.json({ message: 'Engagement tracked' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/user/searches — Recent unique search queries by this user
+ */
+router.get('/searches', async (req, res, next) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+    const items = await Analytics.aggregate([
+      { $match: { userId: req.user._id, eventType: 'search', 'data.query': { $ne: '' } } },
+      { $sort: { timestamp: -1 } },
+      { $group: {
+          _id: '$data.query',
+          lastUsed: { $first: '$timestamp' },
+          resultCount: { $first: '$data.resultCount' },
+          count: { $sum: 1 },
+        } },
+      { $sort: { lastUsed: -1 } },
+      { $limit: limit },
+      { $project: { _id: 0, query: '$_id', lastUsed: 1, resultCount: 1, count: 1 } },
+    ]);
+    res.json({ searches: items });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * DELETE /api/user/searches — clear all saved searches for this user
+ */
+router.delete('/searches', async (req, res, next) => {
+  try {
+    await Analytics.deleteMany({ userId: req.user._id, eventType: 'search' });
+    res.json({ message: 'Search history cleared' });
   } catch (err) {
     next(err);
   }

@@ -92,11 +92,17 @@ router.post('/', async (req, res, next) => {
 /**
  * DELETE /api/bookmarks/:topicId — Remove bookmark
  */
-router.delete('/:topicId', async (req, res, next) => {
+router.delete('/:id', async (req, res, next) => {
   try {
+    const mongoose = require('mongoose');
+    const { id } = req.params;
+    if (!mongoose.isValidObjectId(id)) {
+      return res.status(400).json({ error: 'Invalid ID' });
+    }
+    // Allow deleting by either the bookmark's _id or by topicId (legacy clients)
     const result = await Bookmark.findOneAndDelete({
       userId: req.user.id,
-      topicId: req.params.topicId,
+      $or: [{ _id: id }, { topicId: id }],
     });
 
     if (!result) {

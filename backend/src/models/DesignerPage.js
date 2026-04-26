@@ -35,7 +35,7 @@ const designerPageSchema = new mongoose.Schema(
           primary: '#4f46e5',
           secondary: '#6366f1',
           background: '#ffffff',
-          surface: '#f8fafc',
+          surface: '#FFFFFF',
           text: '#0f172a',
           textSecondary: '#64748b',
           border: '#e2e8f0',

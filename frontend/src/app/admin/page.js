@@ -30,7 +30,6 @@ export default function AdminDashboard() {
     { href: '/admin/content',   icon: '📋', title: 'Manage Content', desc: 'View and manage topics' },
     { href: '/admin/analytics', icon: '📊', title: 'Analytics',      desc: 'Search & engagement stats' },
     { href: '/admin/users',     icon: '👥', title: 'Users',           desc: 'Manage users, roles & permissions' },
-    { href: '/admin/designer',  icon: '🎨', title: 'Portal Designer', desc: 'Design custom portal pages', accent: true },
     { href: '/portal',          icon: '🌐', title: 'View Portal',     desc: 'Browse published documentation' },
   ];
 

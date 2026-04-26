@@ -19,6 +19,7 @@ router.get('/', optionalAuth, async (req, res, next) => {
       product,
       version,
       language,
+      titlesOnly,
     } = req.query;
 
     const filters = {};
@@ -26,6 +27,8 @@ router.get('/', optionalAuth, async (req, res, next) => {
     if (product) filters.product = product;
     if (version) filters.version = version;
     if (language) filters.language = language;
+    if (req.query.documentIds) filters.documentIds = req.query.documentIds.split(',').filter(Boolean);
+    if (req.query.topicIds)    filters.topicIds    = req.query.topicIds.split(',').filter(Boolean);
 
     let boost = null;
     if (req.user && sort === 'relevance') {
@@ -40,6 +43,7 @@ router.get('/', optionalAuth, async (req, res, next) => {
       limit: parseInt(limit),
       sort,
       boost,
+      titlesOnly: titlesOnly === '1' || titlesOnly === 'true',
     });
     const responseTime = Date.now() - startTime;
 

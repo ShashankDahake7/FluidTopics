@@ -57,7 +57,7 @@ export default function Header() {
 
         <form onSubmit={handleSearch} style={s.searchForm} className="hide-mobile">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2" style={s.searchIcon}>
-            <circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>
+            <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
           </svg>
           <input
             type="text" value={query} onChange={(e) => setQuery(e.target.value)}
@@ -94,44 +94,45 @@ export default function Header() {
 
 const s = {
   header: {
-    position:    'sticky', top: 0, zIndex: 100, height: 'var(--header-height)',
-    background:  '#13254a',
-    borderBottom:'1px solid rgba(255,255,255,0.08)',
+    position: 'sticky', top: 0, zIndex: 100, height: 'var(--header-height)',
+    background: '#13254a',
+    borderBottom: '1px solid rgba(255,255,255,0.08)',
   },
   inner: {
-    maxWidth:'var(--max-content-width)', margin:'0 auto', height:'100%',
-    display:'flex', alignItems:'center', gap:'20px', padding:'0 24px',
+    maxWidth: 'var(--max-content-width)', margin: '0 auto', height: '100%',
+    display: 'flex', alignItems: 'center', gap: '20px', padding: '0 24px',
   },
-  logo: { display:'flex', alignItems:'center', gap:'9px', textDecoration:'none', flexShrink:0 },
-  logoText: { fontSize:'1.05rem', fontWeight:700, color:'#ffffff', letterSpacing:'-0.01em' },
-  logoAccent: { color:'#60a5fa' },
+  logo: { display: 'flex', alignItems: 'center', gap: '9px', textDecoration: 'none', flexShrink: 0 },
+  logoText: { fontSize: '1.05rem', fontWeight: 700, color: '#ffffff', letterSpacing: '-0.01em' },
+  logoAccent: { color: '#60a5fa' },
   searchForm: {
-    flex:1, maxWidth:'440px', position:'relative', display:'flex', alignItems:'center',
+    flex: 1, maxWidth: '440px', position: 'relative', display: 'flex', alignItems: 'center',
   },
-  searchIcon: { position:'absolute', left:'12px', pointerEvents:'none', flexShrink:0 },
+  searchIcon: { position: 'absolute', left: '12px', pointerEvents: 'none', flexShrink: 0 },
   searchInput: {
-    width:'100%', padding:'7px 80px 7px 38px', fontSize:'0.875rem',
-    background:'rgba(255,255,255,0.1)', color:'#ffffff',
-    border:'1px solid rgba(255,255,255,0.2)', borderRadius:'var(--radius-full)',
-    outline:'none', fontFamily:'var(--font-sans)',
-    transition:'border-color 150ms, box-shadow 150ms',
+    width: '100%', padding: '7px 80px 7px 38px', fontSize: '0.875rem',
+    background: 'rgba(255,255,255,0.1)', color: '#ffffff',
+    border: '1px solid rgba(255,255,255,0.2)', borderRadius: 'var(--radius-full)',
+    outline: 'none', fontFamily: 'var(--font-sans)',
+    transition: 'border-color 150ms, box-shadow 150ms',
   },
   searchKbd: {
-    position:'absolute', right:'12px', fontSize:'0.7rem', color:'rgba(255,255,255,0.5)',
-    background:'rgba(255,255,255,0.08)', border:'1px solid rgba(255,255,255,0.15)',
-    borderRadius:'4px', padding:'2px 6px', pointerEvents:'none', fontFamily:'var(--font-sans)',
+    position: 'absolute', right: '12px', fontSize: '0.7rem', color: 'rgba(255,255,255,0.5)',
+    background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)',
+    borderRadius: '4px', padding: '2px 6px', pointerEvents: 'none', fontFamily: 'var(--font-sans)',
   },
-  nav: { display:'flex', alignItems:'center', gap:'2px', marginLeft:'auto', flexShrink:0 },
+  nav: { display: 'flex', alignItems: 'center', gap: '2px', marginLeft: 'auto', flexShrink: 0 },
   navLink: {
-    fontSize:'0.875rem', color:'rgba(255,255,255,0.85)', fontWeight:500,
-    padding:'6px 10px', borderRadius:'var(--radius-sm)',
-    transition:'color 120ms, background 120ms',
+    fontSize: '0.875rem', color: 'rgba(255,255,255,0.85)', fontWeight: 500,
+    padding: '6px 10px', borderRadius: 'var(--radius-sm)',
+    transition: 'color 120ms, background 120ms',
   },
-  userArea: { display:'flex', alignItems:'center', gap:'4px' },
+  userArea: { display: 'flex', alignItems: 'center', gap: '4px' },
   navAvatar: {
-    width:'32px', height:'32px', borderRadius:'50%',
-    background:'#2662D9', color:'#fff',
-    display:'flex', alignItems:'center', justifyContent:'center',
-    fontSize:'0.8rem', fontWeight:600, textDecoration:'none', flexShrink:0,
+    width: '32px', height: '32px', borderRadius: '50%',
+    background: '#2662D9', color: '#fff',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    fontSize: '0.8rem', fontWeight: 600, textDecoration: 'none', flexShrink: 0,
   },
 };
+

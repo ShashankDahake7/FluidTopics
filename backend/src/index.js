@@ -19,6 +19,8 @@ const bookmarkRoutes = require('./routes/bookmarks');
 const userRoutes = require('./routes/user');
 const designerRoutes = require('./routes/designer');
 const portalRoutes = require('./routes/portal');
+const feedbackRoutes = require('./routes/feedback');
+const collectionsRoutes = require('./routes/collections');
 
 const app = express();
 
@@ -46,6 +48,8 @@ app.use('/api/bookmarks', bookmarkRoutes);
 app.use('/api/user', userRoutes);
 app.use('/api/designer', designerRoutes);
 app.use('/api/portal', portalRoutes);
+app.use('/api/feedback', feedbackRoutes);
+app.use('/api/collections', collectionsRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

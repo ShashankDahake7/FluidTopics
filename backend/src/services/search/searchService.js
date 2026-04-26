@@ -13,7 +13,7 @@ const INDEX = config.elasticsearch.index;
  * @param {string} params.sort - 'relevance' | 'date' | 'views'
  * @param {Object} params.boost - { tags: string[], products: string[] }
  */
-const search = async ({ query, filters = {}, page = 1, limit = 20, sort = 'relevance', boost = null }) => {
+const search = async ({ query, filters = {}, page = 1, limit = 20, sort = 'relevance', boost = null, titlesOnly = false }) => {
   const client = getElasticClient();
 
   const must = [];
@@ -21,10 +21,11 @@ const search = async ({ query, filters = {}, page = 1, limit = 20, sort = 'relev
 
   // Main query
   if (query && query.trim()) {
+    const fields = titlesOnly ? ['title^3'] : ['title^3', 'content', 'tags^2'];
     must.push({
       multi_match: {
         query: query.trim(),
-        fields: ['title^3', 'content', 'tags^2'],
+        fields,
         type: 'best_fields',
         fuzziness: 'AUTO',
       },
@@ -45,6 +46,14 @@ const search = async ({ query, filters = {}, page = 1, limit = 20, sort = 'relev
   }
   if (filters.language) {
     filter.push({ term: { language: filters.language } });
+  }
+  // Restrict to specific documents (Module filter in search preferences)
+  if (Array.isArray(filters.documentIds) && filters.documentIds.length > 0) {
+    filter.push({ terms: { documentId: filters.documentIds } });
+  }
+  // Restrict to specific topics (FT:TITLE filter in search preferences)
+  if (Array.isArray(filters.topicIds) && filters.topicIds.length > 0) {
+    filter.push({ terms: { topicId: filters.topicIds } });
   }
 
   // Sort
@@ -75,6 +84,26 @@ const search = async ({ query, filters = {}, page = 1, limit = 20, sort = 'relev
       functions.push({
         filter: { terms: { product: boost.products } },
         weight: 2.0,
+      });
+    }
+    // Priority documents / topics / Release Notes from search-preferences:
+    // matching docs surface to the top, but everything else still appears.
+    if (Array.isArray(boost.documentIds) && boost.documentIds.length > 0) {
+      functions.push({
+        filter: { terms: { documentId: boost.documentIds } },
+        weight: 3.0,
+      });
+    }
+    if (Array.isArray(boost.topicIds) && boost.topicIds.length > 0) {
+      functions.push({
+        filter: { terms: { topicId: boost.topicIds } },
+        weight: 5.0,
+      });
+    }
+    if (boost.releaseNotes) {
+      functions.push({
+        filter: { terms: { tags: ['Release Notes'] } },
+        weight: 2.5,
       });
     }
 
@@ -134,7 +163,9 @@ const search = async ({ query, filters = {}, page = 1, limit = 20, sort = 'relev
     highlight: hit.highlight || {},
   }));
 
-  const total = result.hits.total?.value || result.hits.total || 0;
+  const total = typeof result.hits.total === 'object'
+    ? (result.hits.total?.value ?? 0)
+    : (result.hits.total ?? 0);
 
   const facets = {
     tags: (result.aggregations?.tags?.buckets || []).map((b) => ({

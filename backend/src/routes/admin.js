@@ -3,6 +3,9 @@ const { auth, requireRole } = require('../middleware/auth');
 const Document = require('../models/Document');
 const Topic    = require('../models/Topic');
 const User     = require('../models/User');
+const { getElasticClient } = require('../config/elasticsearch');
+const { indexTopics } = require('../services/search/indexingService');
+const config = require('../config/env');
 
 const router = express.Router();
 
@@ -144,6 +147,38 @@ router.delete('/users/:id', auth, requireRole('admin'), async (req, res, next) =
     const user = await User.findByIdAndDelete(req.params.id);
     if (!user) return res.status(404).json({ error: 'User not found' });
     res.json({ message: 'User deleted' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// POST /api/admin/reindex — wipe + rebuild the Elasticsearch topics index
+router.post('/reindex', auth, requireRole('admin'), async (req, res, next) => {
+  try {
+    const client = getElasticClient();
+    await client.deleteByQuery({
+      index: config.elasticsearch.index,
+      body: { query: { match_all: {} } },
+      refresh: true,
+    });
+
+    const total = await Topic.countDocuments();
+    let processed = 0;
+    const cursor = Topic.find({}).lean().cursor();
+    let batch = [];
+    for await (const t of cursor) {
+      batch.push(t);
+      if (batch.length >= 250) {
+        await indexTopics(batch);
+        processed += batch.length;
+        batch = [];
+      }
+    }
+    if (batch.length) {
+      await indexTopics(batch);
+      processed += batch.length;
+    }
+    res.json({ message: 'Reindex complete', total, processed });
   } catch (error) {
     next(error);
   }
