@@ -105,15 +105,8 @@ router.delete('/:id', auth, requireRole('admin'), async (req, res, next) => {
     }
 
     const Topic = require('../models/Topic');
+    // Topic deletes propagate to the Atlas Search index automatically.
     await Topic.deleteMany({ documentId: doc._id });
-
-    // Remove from Elasticsearch
-    try {
-      const { removeDocumentFromIndex } = require('../services/search/indexingService');
-      await removeDocumentFromIndex(doc._id);
-    } catch (e) {
-      console.warn('ES cleanup warning:', e.message);
-    }
 
     await Document.findByIdAndDelete(doc._id);
 

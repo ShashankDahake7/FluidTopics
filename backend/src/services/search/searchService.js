@@ -1,230 +1,347 @@
-const { getElasticClient } = require('../../config/elasticsearch');
-const config = require('../../config/env');
+const mongoose = require('mongoose');
+const Topic = require('../../models/Topic');
 
-const INDEX = config.elasticsearch.index;
+const SEARCH_INDEX = process.env.ATLAS_SEARCH_INDEX || 'default';
+const AUTOCOMPLETE_INDEX = process.env.ATLAS_AUTOCOMPLETE_INDEX || 'autocomplete_title';
 
-/**
- * Full-text search with faceted filtering
- * @param {Object} params
- * @param {string} params.query - Search query
- * @param {Object} params.filters - { tags, product, version, language }
- * @param {number} params.page - Page number (1-based)
- * @param {number} params.limit - Results per page
- * @param {string} params.sort - 'relevance' | 'date' | 'views'
- * @param {Object} params.boost - { tags: string[], products: string[] }
- */
-const search = async ({ query, filters = {}, page = 1, limit = 20, sort = 'relevance', boost = null, titlesOnly = false }) => {
-  const client = getElasticClient();
+const toObjectId = (id) => {
+  try { return new mongoose.Types.ObjectId(String(id)); }
+  catch { return null; }
+};
+const toObjectIds = (ids) =>
+  (ids || []).map(toObjectId).filter(Boolean);
 
-  const must = [];
-  const filter = [];
+// Atlas Search returns highlights as:
+//   [{ path: 'title', score, texts: [{ value, type: 'hit'|'text' }] }, ...]
+// The frontend / RAG code expects the legacy ES shape:
+//   { title: ['<mark>foo</mark> bar'], content: ['…snippet…', '…snippet…'] }
+// Convert here so callers don't change.
+const toLegacyHighlight = (raw, query) => {
+  const out = {};
+  if (!Array.isArray(raw)) return out;
+  for (const h of raw) {
+    const fragment = (h.texts || [])
+      .map((t) => (t.type === 'hit' ? `<mark>${t.value}</mark>` : t.value))
+      .join('');
+    // Normalize content.text → content for parity with the old ES output.
+    const key = h.path === 'content.text' ? 'content' : h.path;
+    if (!out[key]) out[key] = [];
+    out[key].push(fragment);
+  }
+  return out;
+};
 
-  // Main query
-  if (query && query.trim()) {
-    const fields = titlesOnly ? ['title^3'] : ['title^3', 'content', 'tags^2'];
-    must.push({
-      multi_match: {
-        query: query.trim(),
-        fields,
-        type: 'best_fields',
-        fuzziness: 'AUTO',
-      },
-    });
+// Build the `compound` operator that powers /api/search.
+// `must` = required match (drives recall + score), `filter` = hard filters
+// (no score impact, drops non-matches), `should` = optional clauses that only
+// add score when they match — this is how we replicate ES function_score.
+const buildCompound = ({ query, filters, boost, titlesOnly, sort }) => {
+  const compound = { must: [], filter: [], should: [] };
+  const q = (query || '').trim();
+
+  if (q) {
+    if (titlesOnly) {
+      compound.must.push({
+        text: {
+          query: q,
+          path: 'title',
+          fuzzy: { maxEdits: 1 },
+          score: { boost: { value: 3 } },
+        },
+      });
+    } else {
+      compound.must.push({
+        compound: {
+          should: [
+            { text: { query: q, path: 'title',          fuzzy: { maxEdits: 1 }, score: { boost: { value: 3 } } } },
+            { text: { query: q, path: 'content.text',   fuzzy: { maxEdits: 1 } } },
+            { text: { query: q, path: 'metadata.tags',                            score: { boost: { value: 2 } } } },
+          ],
+          minimumShouldMatch: 1,
+        },
+      });
+    }
   } else {
-    must.push({ match_all: {} });
+    // Empty query → match-all. Atlas has no match_all op, but `exists` on _id
+    // is true for every document.
+    compound.must.push({ exists: { path: '_id' } });
   }
 
-  // Facet filters
-  if (filters.tags && filters.tags.length > 0) {
-    filter.push({ terms: { tags: filters.tags } });
+  // ---- hard filters ----
+  if (filters.tags?.length) {
+    compound.filter.push({ in: { path: 'metadata.tags', value: filters.tags } });
   }
   if (filters.product) {
-    filter.push({ term: { product: filters.product } });
+    compound.filter.push({ equals: { path: 'metadata.product', value: filters.product } });
   }
   if (filters.version) {
-    filter.push({ term: { version: filters.version } });
+    compound.filter.push({ equals: { path: 'metadata.version', value: filters.version } });
   }
   if (filters.language) {
-    filter.push({ term: { language: filters.language } });
+    compound.filter.push({ equals: { path: 'metadata.language', value: filters.language } });
   }
-  // Restrict to specific documents (Module filter in search preferences)
-  if (Array.isArray(filters.documentIds) && filters.documentIds.length > 0) {
-    filter.push({ terms: { documentId: filters.documentIds } });
+  if (Array.isArray(filters.documentIds) && filters.documentIds.length) {
+    const ids = toObjectIds(filters.documentIds);
+    if (ids.length) compound.filter.push({ in: { path: 'documentId', value: ids } });
   }
-  // Restrict to specific topics (FT:TITLE filter in search preferences)
-  if (Array.isArray(filters.topicIds) && filters.topicIds.length > 0) {
-    filter.push({ terms: { topicId: filters.topicIds } });
-  }
-
-  // Sort
-  const sortConfig = [];
-  switch (sort) {
-    case 'date':
-      sortConfig.push({ updatedAt: 'desc' });
-      break;
-    case 'views':
-      sortConfig.push({ viewCount: 'desc' });
-      break;
-    default:
-      sortConfig.push({ _score: 'desc' });
+  if (Array.isArray(filters.topicIds) && filters.topicIds.length) {
+    const ids = toObjectIds(filters.topicIds);
+    if (ids.length) compound.filter.push({ in: { path: '_id', value: ids } });
   }
 
-  // Apply User Profile Boosting
-  let finalQuery = { bool: { must, filter } };
-
+  // ---- personalization boosts (only on relevance sort) ----
   if (boost && sort === 'relevance') {
-    const functions = [];
-    if (boost.tags && boost.tags.length > 0) {
-      functions.push({
-        filter: { terms: { tags: boost.tags } },
-        weight: 1.5,
+    if (boost.tags?.length) {
+      compound.should.push({
+        in: { path: 'metadata.tags', value: boost.tags },
+        score: { constant: { value: 1.5 } },
       });
     }
-    if (boost.products && boost.products.length > 0) {
-      functions.push({
-        filter: { terms: { product: boost.products } },
-        weight: 2.0,
+    if (boost.products?.length) {
+      compound.should.push({
+        in: { path: 'metadata.product', value: boost.products },
+        score: { constant: { value: 2.0 } },
       });
     }
-    // Priority documents / topics / Release Notes from search-preferences:
-    // matching docs surface to the top, but everything else still appears.
-    if (Array.isArray(boost.documentIds) && boost.documentIds.length > 0) {
-      functions.push({
-        filter: { terms: { documentId: boost.documentIds } },
-        weight: 3.0,
+    if (boost.documentIds?.length) {
+      const ids = toObjectIds(boost.documentIds);
+      if (ids.length) compound.should.push({
+        in: { path: 'documentId', value: ids },
+        score: { constant: { value: 3.0 } },
       });
     }
-    if (Array.isArray(boost.topicIds) && boost.topicIds.length > 0) {
-      functions.push({
-        filter: { terms: { topicId: boost.topicIds } },
-        weight: 5.0,
+    if (boost.topicIds?.length) {
+      const ids = toObjectIds(boost.topicIds);
+      if (ids.length) compound.should.push({
+        in: { path: '_id', value: ids },
+        score: { constant: { value: 5.0 } },
       });
     }
     if (boost.releaseNotes) {
-      functions.push({
-        filter: { terms: { tags: ['Release Notes'] } },
-        weight: 2.5,
+      compound.should.push({
+        in: { path: 'metadata.tags', value: ['Release Notes'] },
+        score: { constant: { value: 2.5 } },
       });
-    }
-
-    if (functions.length > 0) {
-      finalQuery = {
-        function_score: {
-          query: finalQuery,
-          functions,
-          score_mode: 'sum',
-          boost_mode: 'multiply',
-        },
-      };
     }
   }
 
+  return compound;
+};
+
+// Project a Topic into the legacy ES `_source` shape so existing route /
+// frontend code keeps working unchanged.
+const PROJECTION = {
+  id: { $toString: '$_id' },
+  score: { $meta: 'searchScore' },
+  highlightRaw: { $meta: 'searchHighlights' },
+  title: 1,
+  slug: 1,
+  documentId: { $toString: '$documentId' },
+  topicId: { $toString: '$_id' },
+  // Keep `content` as the nested object (RAG endpoint reads `content.text`)
+  // and also expose flat fields the frontend expects.
+  content: { text: '$content.text' },
+  tags: '$metadata.tags',
+  product: '$metadata.product',
+  version: '$metadata.version',
+  language: '$metadata.language',
+  author: '$metadata.author',
+  hierarchyLevel: '$hierarchy.level',
+  viewCount: 1,
+  createdAt: 1,
+  updatedAt: 1,
+};
+
+const search = async ({ query, filters = {}, page = 1, limit = 20, sort = 'relevance', boost = null, titlesOnly = false }) => {
+  const compound = buildCompound({ query, filters, boost, titlesOnly, sort });
+
+  const $search = {
+    index: SEARCH_INDEX,
+    compound,
+    highlight: { path: ['title', 'content.text'] },
+    count: { type: 'total' },
+  };
+  if (sort === 'date')  $search.sort = { updatedAt: -1 };
+  if (sort === 'views') $search.sort = { viewCount: -1 };
+
   const from = (page - 1) * limit;
 
-  const result = await client.search({
-    index: INDEX,
-    body: {
-      query: finalQuery,
-      highlight: {
-        fields: {
-          title: { number_of_fragments: 0 },
-          content: {
-            fragment_size: 200,
-            number_of_fragments: 3,
+  // Run hits + facets/count in parallel. Splitting the meta call keeps the
+  // hits pipeline lean (no facet collector overhead for every query).
+  const [hits, meta] = await Promise.all([
+    Topic.aggregate([
+      { $search },
+      { $skip: from },
+      { $limit: limit },
+      { $project: PROJECTION },
+    ]),
+    Topic.aggregate([
+      { $searchMeta: {
+          index: SEARCH_INDEX,
+          facet: {
+            operator: { compound },
+            facets: {
+              tags:      { type: 'string', path: 'metadata.tags',     numBuckets: 20 },
+              products:  { type: 'string', path: 'metadata.product',  numBuckets: 10 },
+              versions:  { type: 'string', path: 'metadata.version',  numBuckets: 10 },
+              languages: { type: 'string', path: 'metadata.language', numBuckets: 10 },
+            },
           },
-        },
-        pre_tags: ['<mark>'],
-        post_tags: ['</mark>'],
-      },
-      sort: sortConfig,
-      from,
-      size: limit,
-      aggs: {
-        tags: {
-          terms: { field: 'tags', size: 20 },
-        },
-        products: {
-          terms: { field: 'product', size: 10 },
-        },
-        versions: {
-          terms: { field: 'version', size: 10 },
-        },
-        languages: {
-          terms: { field: 'language', size: 10 },
-        },
-      },
-    },
+          count: { type: 'total' },
+      } },
+    ]),
+  ]);
+
+  const metaDoc = meta?.[0] || {};
+  const total = metaDoc.count?.total ?? metaDoc.count?.lowerBound ?? 0;
+  const facetsRaw = metaDoc.facet || {};
+  const bucketsToFacet = (b = []) => b.map((x) => ({ value: x._id, count: x.count }));
+
+  const formattedHits = hits.map((h) => {
+    const { highlightRaw, ...rest } = h;
+    return {
+      ...rest,
+      highlight: toLegacyHighlight(highlightRaw, query),
+    };
   });
 
-  const hits = result.hits.hits.map((hit) => ({
-    id: hit._id,
-    score: hit._score,
-    ...hit._source,
-    highlight: hit.highlight || {},
-  }));
-
-  const total = typeof result.hits.total === 'object'
-    ? (result.hits.total?.value ?? 0)
-    : (result.hits.total ?? 0);
-
-  const facets = {
-    tags: (result.aggregations?.tags?.buckets || []).map((b) => ({
-      value: b.key,
-      count: b.doc_count,
-    })),
-    products: (result.aggregations?.products?.buckets || []).map((b) => ({
-      value: b.key,
-      count: b.doc_count,
-    })),
-    versions: (result.aggregations?.versions?.buckets || []).map((b) => ({
-      value: b.key,
-      count: b.doc_count,
-    })),
-    languages: (result.aggregations?.languages?.buckets || []).map((b) => ({
-      value: b.key,
-      count: b.doc_count,
-    })),
-  };
-
   return {
-    hits,
+    hits: formattedHits,
     total,
     page,
     limit,
     totalPages: Math.ceil(total / limit),
-    facets,
+    facets: {
+      tags:      bucketsToFacet(facetsRaw.tags?.buckets),
+      products:  bucketsToFacet(facetsRaw.products?.buckets),
+      versions:  bucketsToFacet(facetsRaw.versions?.buckets),
+      languages: bucketsToFacet(facetsRaw.languages?.buckets),
+    },
   };
 };
 
-/**
- * Auto-complete suggestions
- */
+// Auto-complete via a dedicated Atlas Search autocomplete index on `title`.
 const suggest = async (prefix) => {
-  const client = getElasticClient();
-
-  const result = await client.search({
-    index: INDEX,
-    body: {
-      suggest: {
-        topic_suggest: {
-          prefix: prefix,
-          completion: {
-            field: 'suggest',
-            size: 8,
-            fuzzy: { fuzziness: 'AUTO' },
-          },
+  const results = await Topic.aggregate([
+    { $search: {
+        index: AUTOCOMPLETE_INDEX,
+        autocomplete: {
+          query: prefix,
+          path: 'title',
+          fuzzy: { maxEdits: 1 },
         },
-      },
-    },
-  });
-
-  const suggestions = (result.suggest?.topic_suggest?.[0]?.options || []).map((opt) => ({
-    text: opt.text,
-    score: opt._score,
-    id: opt._id,
-  }));
-
-  return suggestions;
+    } },
+    { $limit: 8 },
+    { $project: {
+        _id: 0,
+        id: { $toString: '$_id' },
+        text: '$title',
+        score: { $meta: 'searchScore' },
+    } },
+  ]);
+  return results;
 };
 
-module.exports = { search, suggest };
+// "More like this" replacement for the /api/search/semantic endpoint.
+// Uses Atlas Search `moreLikeThis` against title + content.text.
+const semanticSearch = async ({ query, limit = 20 }) => {
+  const $search = {
+    index: SEARCH_INDEX,
+    moreLikeThis: {
+      like: [{ title: query, 'content.text': query }],
+    },
+    highlight: { path: ['title', 'content.text'] },
+    count: { type: 'total' },
+  };
+
+  const [hits, meta] = await Promise.all([
+    Topic.aggregate([
+      { $search },
+      { $limit: limit },
+      { $project: PROJECTION },
+    ]),
+    Topic.aggregate([
+      { $searchMeta: {
+          index: SEARCH_INDEX,
+          facet: {
+            operator: { moreLikeThis: { like: [{ title: query, 'content.text': query }] } },
+            facets: {
+              tags: { type: 'string', path: 'metadata.tags', numBuckets: 20 },
+            },
+          },
+          count: { type: 'total' },
+      } },
+    ]),
+  ]);
+
+  const metaDoc = meta?.[0] || {};
+  const total = metaDoc.count?.total ?? metaDoc.count?.lowerBound ?? 0;
+  const formattedHits = hits.map((h) => {
+    const { highlightRaw, ...rest } = h;
+    return { ...rest, highlight: toLegacyHighlight(highlightRaw, query) };
+  });
+
+  return {
+    hits: formattedHits,
+    total,
+    facets: {
+      tags: (metaDoc.facet?.tags?.buckets || []).map((b) => ({ value: b._id, count: b.count })),
+    },
+  };
+};
+
+// In-document search (powers /api/portal/documents/:id/search). Same shape
+// as the old ES call but returns plain {_id, title, titleHtml, snippet}.
+const inDocumentSearch = async ({ query, documentId, topicIds = null, releaseNotesOnly = false, limit = 50 }) => {
+  const docId = toObjectId(documentId);
+  if (!docId) return { total: 0, hits: [] };
+
+  const compound = {
+    must: [{
+      compound: {
+        should: [
+          { text: { query, path: 'title',        fuzzy: { maxEdits: 1 }, score: { boost: { value: 3 } } } },
+          { text: { query, path: 'content.text', fuzzy: { maxEdits: 1 } } },
+          { text: { query, path: 'metadata.tags',                          score: { boost: { value: 2 } } } },
+        ],
+        minimumShouldMatch: 1,
+      },
+    }],
+    filter: [{ equals: { path: 'documentId', value: docId } }],
+  };
+
+  if (Array.isArray(topicIds) && topicIds.length) {
+    const ids = toObjectIds(topicIds);
+    if (ids.length) compound.filter.push({ in: { path: '_id', value: ids } });
+  }
+  if (releaseNotesOnly) {
+    compound.filter.push({ in: { path: 'metadata.tags', value: ['Release Notes'] } });
+  }
+
+  const hits = await Topic.aggregate([
+    { $search: {
+        index: SEARCH_INDEX,
+        compound,
+        highlight: { path: ['title', 'content.text'] },
+    } },
+    { $limit: limit },
+    { $project: {
+        _id: 1,
+        title: 1,
+        score: { $meta: 'searchScore' },
+        highlightRaw: { $meta: 'searchHighlights' },
+    } },
+  ]);
+
+  return {
+    total: hits.length,
+    hits: hits.map((h) => ({
+      _id: String(h._id),
+      title: h.title,
+      score: h.score,
+      highlight: toLegacyHighlight(h.highlightRaw, query),
+    })),
+  };
+};
+
+module.exports = { search, suggest, semanticSearch, inDocumentSearch };

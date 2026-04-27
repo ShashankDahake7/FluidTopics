@@ -20,9 +20,12 @@ const config = {
   port: process.env.BACKEND_PORT || 4000,
   nodeEnv: process.env.NODE_ENV || 'development',
   mongodbUri: process.env.MONGODB_URI,
-  elasticsearch: {
-    url: process.env.ELASTICSEARCH_URL || 'http://localhost:9200',
-    index: process.env.ELASTICSEARCH_INDEX || 'topics',
+  atlasSearch: {
+    // Names of the Atlas Search indexes defined on the `topics` collection.
+    // See backend/ATLAS_SEARCH.md for the index JSON to paste into the
+    // Atlas UI / API.
+    index:             process.env.ATLAS_SEARCH_INDEX        || 'default',
+    autocompleteIndex: process.env.ATLAS_AUTOCOMPLETE_INDEX  || 'autocomplete_title',
   },
   jwt: {
     secret: process.env.JWT_SECRET || 'default_secret',

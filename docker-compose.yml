@@ -11,13 +11,10 @@ services:
     environment:
       - NODE_ENV=production
       - MONGODB_URI=${MONGODB_URI}
-      - ELASTICSEARCH_URL=http://elasticsearch:9200
-      - ELASTICSEARCH_INDEX=${ELASTICSEARCH_INDEX:-topics}
+      - ATLAS_SEARCH_INDEX=${ATLAS_SEARCH_INDEX:-default}
+      - ATLAS_AUTOCOMPLETE_INDEX=${ATLAS_AUTOCOMPLETE_INDEX:-autocomplete_title}
       - JWT_SECRET=${JWT_SECRET}
       - GROQ_API_KEY=${GROQ_API_KEY}
-    depends_on:
-      elasticsearch:
-        condition: service_healthy
 
   frontend:
     build:
@@ -30,27 +27,3 @@ services:
       - NEXT_PUBLIC_API_URL=http://backend:4000/api
     depends_on:
       - backend
-
-  elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.12.0
-    container_name: ft-elasticsearch
-    hostname: elasticsearch
-    environment:
-      - discovery.type=single-node
-      - xpack.security.enabled=false
-      - xpack.security.http.ssl.enabled=false
-      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
-    ports:
-      - "9200:9200"
-      - "9300:9300"
-    volumes:
-      - es_data:/usr/share/elasticsearch/data
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-
-volumes:
-  es_data:
-    driver: local

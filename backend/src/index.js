@@ -4,7 +4,7 @@ const morgan = require('morgan');
 const path = require('path');
 const config = require('./config/env');
 const connectDB = require('./config/db');
-const { initElasticsearch } = require('./config/elasticsearch');
+const { initAtlasSearch } = require('./config/atlasSearch');
 const errorHandler = require('./middleware/errorHandler');
 
 // Route imports
@@ -120,7 +120,7 @@ app.use(errorHandler);
 const start = async () => {
   try {
     await connectDB();
-    await initElasticsearch();
+    await initAtlasSearch();
 
     if (process.env.VERCEL) {
       console.log('✅ Server running in serverless mode (Vercel)');
@@ -128,7 +128,7 @@ const start = async () => {
       app.listen(config.port, () => {
         console.log(`\n🚀 Fluid Topics API server running on http://localhost:${config.port}`);
         console.log(`📚 Environment: ${config.nodeEnv}`);
-        console.log(`🔍 Elasticsearch: ${config.elasticsearch.url}`);
+        console.log(`🔍 Search: MongoDB Atlas Search (index: ${process.env.ATLAS_SEARCH_INDEX || 'default'})`);
         console.log(`💾 MongoDB: connected\n`);
       });
     }

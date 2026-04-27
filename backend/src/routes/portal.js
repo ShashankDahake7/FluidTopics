@@ -4,8 +4,8 @@ const fs       = require('fs');
 const Document = require('../models/Document');
 const Topic    = require('../models/Topic');
 const Attachment = require('../models/Attachment');
-const { getElasticClient } = require('../config/elasticsearch');
 const config   = require('../config/env');
+const { inDocumentSearch } = require('../services/search/searchService');
 const { optionalAuth } = require('../middleware/auth');
 
 const router = express.Router();
@@ -409,54 +409,23 @@ router.get('/documents/:id/search', optionalAuth, async (req, res, next) => {
     if (!q) return res.json({ total: 0, matches: [] });
 
     const filters = getUserFilters(req);
-    const esFilter = [{ term: { documentId: String(req.params.id) } }];
-    if (filters?.topicIds?.length) {
-      esFilter.push({ terms: { topicId: filters.topicIds } });
-    }
-    if (filters?.releaseNotesOnly) {
-      esFilter.push({ terms: { tags: ['Release Notes'] } });
-    }
 
-    const client = getElasticClient();
-
-    let esResult;
+    let atlasResult;
     try {
-      esResult = await client.search({
-        index: config.elasticsearch.index,
-        body: {
-          query: {
-            bool: {
-              must: [{
-                multi_match: {
-                  query: q,
-                  fields: ['title^3', 'content', 'tags^2'],
-                  type: 'best_fields',
-                  fuzziness: 'AUTO',
-                },
-              }],
-              filter: esFilter,
-            },
-          },
-          highlight: {
-            fields: {
-              title:   { number_of_fragments: 0 },
-              content: { fragment_size: 180, number_of_fragments: 2 },
-            },
-            pre_tags: ['<mark>'],
-            post_tags: ['</mark>'],
-          },
-          size: limit,
-        },
+      atlasResult = await inDocumentSearch({
+        query: q,
+        documentId: req.params.id,
+        topicIds: filters?.topicIds || null,
+        releaseNotesOnly: !!filters?.releaseNotesOnly,
+        limit,
       });
-    } catch (esErr) {
-      // Fall through to Mongo if ES is unreachable
-      console.warn('ES in-doc search failed, falling back to Mongo:', esErr.message);
+    } catch (err) {
+      // Atlas Search unavailable / index missing → fall through to Mongo regex.
+      console.warn('Atlas Search in-doc search failed, falling back to Mongo:', err.message);
     }
 
-    if (esResult && esResult.hits) {
-      const hits = esResult.hits.hits || [];
-      const totalRaw = esResult.hits.total;
-      const total = typeof totalRaw === 'object' ? (totalRaw?.value ?? 0) : (totalRaw ?? 0);
+    if (atlasResult && atlasResult.hits.length) {
+      const hits = atlasResult.hits;
 
       // Look up parent ancestry for breadcrumbs (single batched query)
       const ids = hits.map((h) => h._id);
@@ -490,20 +459,19 @@ router.get('/documents/:id/search', optionalAuth, async (req, res, next) => {
       };
 
       const matches = hits.map((h) => {
-        const src = h._source || {};
-        const hl  = h.highlight || {};
+        const hl = h.highlight || {};
         const snippet = (hl.content && hl.content[0]) || '';
-        const titleHtml = (hl.title && hl.title[0]) || src.title || '';
+        const titleHtml = (hl.title && hl.title[0]) || h.title || '';
         return {
           _id: h._id,
-          title: src.title || '',
+          title: h.title || '',
           titleHtml,
           snippet,
           path: breadcrumb(h._id),
         };
       });
 
-      return res.json({ total, matches });
+      return res.json({ total: atlasResult.total, matches });
     }
 
     // -------- Mongo fallback (regex on title + content.text) --------

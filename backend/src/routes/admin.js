@@ -3,8 +3,6 @@ const { auth, requireRole } = require('../middleware/auth');
 const Document = require('../models/Document');
 const Topic    = require('../models/Topic');
 const User     = require('../models/User');
-const { getElasticClient } = require('../config/elasticsearch');
-const { indexTopics } = require('../services/search/indexingService');
 const config = require('../config/env');
 const SiteConfig = require('../models/SiteConfig');
 
@@ -381,33 +379,20 @@ router.post('/users/:id/impersonate', auth, requireRole('superadmin'), async (re
   }
 });
 
-// POST /api/admin/reindex — wipe + rebuild the Elasticsearch topics index
+// POST /api/admin/reindex — no-op under MongoDB Atlas Search.
+// Atlas Search keeps its index in sync with the topics collection via change
+// streams, so there is nothing to rebuild. Kept as an endpoint for backward
+// compatibility with any UI / scripts that hit it; returns the current topic
+// count so callers can confirm the collection is healthy. To force a rebuild,
+// drop and recreate the Atlas Search index in the Atlas UI.
 router.post('/reindex', auth, requireRole('admin'), async (req, res, next) => {
   try {
-    const client = getElasticClient();
-    await client.deleteByQuery({
-      index: config.elasticsearch.index,
-      body: { query: { match_all: {} } },
-      refresh: true,
-    });
-
     const total = await Topic.countDocuments();
-    let processed = 0;
-    const cursor = Topic.find({}).lean().cursor();
-    let batch = [];
-    for await (const t of cursor) {
-      batch.push(t);
-      if (batch.length >= 250) {
-        await indexTopics(batch);
-        processed += batch.length;
-        batch = [];
-      }
-    }
-    if (batch.length) {
-      await indexTopics(batch);
-      processed += batch.length;
-    }
-    res.json({ message: 'Reindex complete', total, processed });
+    res.json({
+      message: 'Atlas Search auto-syncs; no rebuild needed. Recreate the search index in Atlas if you need a hard rebuild.',
+      total,
+      processed: total,
+    });
   } catch (error) {
     next(error);
   }

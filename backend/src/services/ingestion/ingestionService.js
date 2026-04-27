@@ -11,7 +11,6 @@ const { parseDOCX } = require('./parsers/docxParser');
 const { parseXML } = require('./parsers/xmlParser');
 const { handleZip } = require('./zipHandler');
 const { transformContent } = require('../transformation/transformationEngine');
-const { indexTopics } = require('../search/indexingService');
 const { detectFormat } = require('../../utils/helpers');
 const { detectPaligoRoot, parsePaligoZip } = require('./paligoParser');
 
@@ -99,7 +98,8 @@ const ingestFile = async (file, userId = null) => {
       };
     }
 
-    // Update document
+    // Update document. Atlas Search auto-syncs from the topics collection,
+    // so no explicit indexing step is needed here.
     doc.topicIds = allTopicIds;
     doc.status = 'completed';
     doc.ingestionLog.push({
@@ -107,21 +107,6 @@ const ingestFile = async (file, userId = null) => {
       level: 'info',
     });
     await doc.save();
-
-    // Index topics in Elasticsearch
-    try {
-      const topics = await Topic.find({ _id: { $in: allTopicIds } });
-      await indexTopics(topics);
-      doc.ingestionLog.push({ message: 'Topics indexed in Elasticsearch', level: 'info' });
-      await doc.save();
-    } catch (esError) {
-      console.error('Elasticsearch indexing error:', esError.message);
-      doc.ingestionLog.push({
-        message: `Search indexing warning: ${esError.message}`,
-        level: 'warn',
-      });
-      await doc.save();
-    }
 
     // Cleanup uploaded file
     try {

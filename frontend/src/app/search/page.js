@@ -317,10 +317,17 @@ function SearchContent() {
             </div>
           ) : results ? (
             <>
-              {results.hits?.map((hit) => (
+              {results.hits?.map((hit) => {
+                // The /dashboard/docs/[id] route expects a *document* id and
+                // reads ?topic=<topicId> to pre-select the matching topic
+                // inside that document. Search hits are topics, so build
+                // the link from the parent documentId + topicId pair.
+                const docId = hit.documentId || hit.id;
+                const topicId = hit.topicId || hit.id;
+                return (
                 <a
                   key={hit.id}
-                  href={`/dashboard/docs/${hit.topicId || hit.id}`}
+                  href={`/dashboard/docs/${docId}?topic=${topicId}`}
                   style={s.resultCard}
                 >
                   <h3
@@ -341,7 +348,8 @@ function SearchContent() {
                     </div>
                   )}
                 </a>
-              ))}
+                );
+              })}
 
               {results.totalPages > 1 && (
                 <div style={s.pager}>
