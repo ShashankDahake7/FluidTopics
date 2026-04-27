@@ -9,43 +9,93 @@ const STATUSES = ['All', 'Success', 'Warning', 'Error', 'Running'];
 const TYPES    = ['All types', 'Publication', 'Reprocess', 'Deletion'];
 const PAGE_SIZES = [10, 25, 50, 100];
 
-// ── Mock history (matches Darwinbox screenshot rows) ────────────────────────
-const HISTORY = [
-  { uploadId: 'cce-103931', status: 'warn', started: '04/23/2026, 5:19 PM',  type: 'Publication', name: 'Confluence-space-export-103931.html', user: 'Shivani Kothakapu', duration: '8m9s',  publications: 1, source: 'Confluence' },
-  { uploadId: 'cce-112537', status: 'warn', started: '04/23/2026, 5:17 PM',  type: 'Publication', name: 'Confluence-space-export-112537.html', user: 'Shivani Kothakapu', duration: '5m40s', publications: 1, source: 'Confluence' },
-  { uploadId: 'paligo-8206', status: 'ok',   started: '04/23/2026, 10:26 AM', type: 'Publication', name: 'Release_Notes_Feb_2026_1776920157.8206', user: 'Paligo-Key', duration: '43s',   publications: 1, source: 'Paligo' },
-  { uploadId: 'paligo-5837', status: 'ok',   started: '04/23/2026, 10:08 AM', type: 'Publication', name: 'Release_Notes_Nov_2025_1776919055.5837', user: 'Paligo-Key', duration: '40s',   publications: 1, source: 'Paligo' },
-  { uploadId: 'paligo-0823', status: 'ok',   started: '04/23/2026, 10:06 AM', type: 'Publication', name: 'Release_Notes_Feb_2026_1776918955.0823', user: 'Paligo-Key', duration: '42s',   publications: 1, source: 'Paligo' },
-  { uploadId: 'paligo-7824', status: 'ok',   started: '04/23/2026, 10:04 AM', type: 'Publication', name: 'Reports_Builder_1776918855.7824',         user: 'Paligo-Key', duration: '54s',   publications: 1, source: 'Paligo' },
-  { uploadId: 'paligo-6462', status: 'ok',   started: '04/23/2026, 10:02 AM', type: 'Publication', name: 'Reimbursement_1776918745.6462',           user: 'Paligo-Key', duration: '1m19s', publications: 1, source: 'Paligo' },
-  { uploadId: 'paligo-5600', status: 'ok',   started: '04/23/2026, 10:02 AM', type: 'Publication', name: 'My_Access_1776918716.5600',               user: 'Paligo-Key', duration: '16s',   publications: 1, source: 'Paligo' },
-  { uploadId: 'paligo-3938', status: 'ok',   started: '04/22/2026, 9:34 AM',  type: 'Publication', name: 'Recruitment_1776830622.3938',             user: 'Paligo-Key', duration: '35s',   publications: 1, source: 'Paligo' },
-  { uploadId: 'paligo-7190', status: 'ok',   started: '04/22/2026, 9:32 AM',  type: 'Publication', name: 'Payroll_1776830521.7190',                 user: 'Paligo-Key', duration: '28s',   publications: 1, source: 'Paligo' },
-  { uploadId: 'paligo-9978', status: 'ok',   started: '04/20/2026, 2:42 PM',  type: 'Publication', name: 'Legal_Changes_1776676374.9978',           user: 'Paligo-Key', duration: '4s',    publications: 1, source: 'Paligo' },
-  { uploadId: 'paligo-5051', status: 'ok',   started: '04/20/2026, 2:28 PM',  type: 'Publication', name: 'Legal_Changes_1776675481.5051',           user: 'Paligo-Key', duration: '5s',    publications: 1, source: 'Paligo' },
-  { uploadId: 'paligo-6251', status: 'ok',   started: '04/17/2026, 6:30 PM',  type: 'Publication', name: 'Payroll_1776430790.6251',                 user: 'Paligo-Key', duration: '26s',   publications: 1, source: 'Paligo' },
-  { uploadId: 'paligo-1066', status: 'ok',   started: '04/17/2026, 6:28 PM',  type: 'Publication', name: 'Help_Desk_1776430708.1066',               user: 'Paligo-Key', duration: '11s',   publications: 1, source: 'Paligo' },
-  { uploadId: 'paligo-3128', status: 'ok',   started: '04/17/2026, 6:28 PM',  type: 'Publication', name: 'Travel_1776430681.3128',                  user: 'Paligo-Key', duration: '12s',   publications: 1, source: 'Paligo' },
-  { uploadId: 'paligo-0102', status: 'ok',   started: '04/17/2026, 6:27 PM',  type: 'Publication', name: 'Reimbursement_1776430645.0102',           user: 'Paligo-Key', duration: '17s',   publications: 1, source: 'Paligo' },
-  { uploadId: 'paligo-1057', status: 'ok',   started: '04/17/2026, 6:27 PM',  type: 'Publication', name: 'People_Analytics_1776430606.1057',        user: 'Paligo-Key', duration: '19s',   publications: 1, source: 'Paligo' },
-  { uploadId: 'cce-092326', status: 'warn', started: '04/16/2026, 4:42 PM',  type: 'Publication', name: 'Confluence-space-export-092326.html',     user: 'Shivani Kothakapu', duration: '7m13s', publications: 1, source: 'Confluence' },
-  { uploadId: 'cce-095331', status: 'warn', started: '04/16/2026, 4:34 PM',  type: 'Publication', name: 'Confluence-space-export-095331.html',     user: 'Shivani Kothakapu', duration: '5m41s', publications: 1, source: 'Confluence' },
-  { uploadId: 'paligo-4978', status: 'ok',   started: '04/15/2026, 7:46 PM',  type: 'Publication', name: 'Recruitment_1776262577.4978',             user: 'Paligo-Key', duration: '38s',   publications: 1, source: 'Paligo' },
-  { uploadId: 'paligo-2896', status: 'ok',   started: '04/15/2026, 7:44 PM',  type: 'Publication', name: 'Company_1776262464.2896',                 user: 'Paligo-Key', duration: '37s',   publications: 1, source: 'Paligo' },
-  { uploadId: 'paligo-3087', status: 'ok',   started: '04/15/2026, 7:43 PM',  type: 'Publication', name: 'People_Analytics_1776262361.3087',        user: 'Paligo-Key', duration: '44s',   publications: 1, source: 'Paligo' },
-  { uploadId: 'paligo-1622', status: 'ok',   started: '04/15/2026, 7:41 PM',  type: 'Publication', name: 'Attendance_1776262305.1622',              user: 'Paligo-Key', duration: '26s',   publications: 1, source: 'Paligo' },
-  { uploadId: 'cce-081402', status: 'warn', started: '04/08/2026, 6:01 PM',  type: 'Publication', name: 'Confluence-space-export-081402.html',     user: 'Shivani Kothakapu', duration: '7m8s',  publications: 1, source: 'Confluence' },
-  { uploadId: 'cce-084513', status: 'warn', started: '04/08/2026, 5:56 PM',  type: 'Publication', name: 'Confluence-space-export-084513.html',     user: 'Shivani Kothakapu', duration: '5m54s', publications: 1, source: 'Confluence' },
-];
+// Map UI filter labels → backend enum / sort knobs. Keeping the mapping in
+// one place so the History select and the GET /api/publications query agree.
+const STATUS_FILTER_TO_API = {
+  All:     '',
+  Success: 'validated',
+  Warning: 'extracted',     // extracted-but-warnings still surface here
+  Error:   'failed',
+  Running: 'extracting',    // also covers `validating` — handled server-side
+};
 
-const FAKE_TOTAL = 1391; // total items shown in the screenshot footer
+const SORT_KEY_TO_API = {
+  started:      'createdAt',
+  user:         'uploadedBy',
+  type:         'createdAt',     // we don't store a real type yet
+  source:       'sourceLabel',
+  publications: 'extracted.fileCount',
+};
+
+// Friendly status icon kind from a backend `status` + warn/error counts.
+// Mirrors the Darwinbox screenshot: green check for clean validated, amber
+// triangle when there are warnings, red cross on failure, blue clock while
+// any worker is still running.
+function deriveIconKind(pub) {
+  if (!pub) return 'queued';
+  if (pub.status === 'failed') return 'err';
+  if (pub.status === 'extracting' || pub.status === 'validating' || pub.status === 'uploaded') return 'run';
+  if ((pub.counts?.error ?? 0) > 0) return 'err';
+  if ((pub.counts?.warn ?? 0) > 0) return 'warn';
+  return 'ok';
+}
+
+function formatDateTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString('en-US', {
+    month: '2-digit', day: '2-digit', year: 'numeric',
+    hour: 'numeric', minute: '2-digit', hour12: true,
+  });
+}
+
+function formatDuration(timings) {
+  if (!timings) return '';
+  // Pick the latest finished phase that has both start + end so the column
+  // shows "extract took…" while still extracting and flips to total duration
+  // once validation is done.
+  const start = timings.extractStart || timings.uploadedAt;
+  const end   = timings.validateEnd  || timings.extractEnd  || timings.uploadedAt;
+  if (!start || !end) return '';
+  const ms = new Date(end).getTime() - new Date(start).getTime();
+  if (!(ms > 0)) return '';
+  const total = Math.round(ms / 1000);
+  if (total < 60) return `${total}s`;
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}m${s}s`;
+}
+
+// API row → table row used by the existing render code further down. Keeping
+// the field names the table already consumes lets us reuse the JSX as-is.
+function mapApiRow(p) {
+  return {
+    id:           p.id,
+    uploadId:     p.id,                                      // legacy alias for table key
+    status:       deriveIconKind(p),
+    started:      formatDateTime(p.createdAt),
+    type:         'Publication',
+    name:         p.originalFilename || p.name,
+    user:         p.uploadedBy?.name || p.uploadedBy?.email || '—',
+    duration:     formatDuration(p.timings),
+    publications: p.extractedFileCount || 0,
+    source:       p.sourceLabel || '',
+    raw:          p,                                         // keep full server payload for the drawer
+  };
+}
 
 export default function PublishingPage() {
   const [search, setSearch] = useState('');
   const [date,   setDate]   = useState('');
   const [status, setStatus] = useState('All');
   const [type,   setType]   = useState('All types');
-  const [history, setHistory] = useState(HISTORY);
+
+  // Live API state. `rows` mirrors the original local shape via mapApiRow().
+  const [rows, setRows] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState('');
 
   const [sortKey, setSortKey] = useState('started');
   const [sortDir, setSortDir] = useState('desc');
@@ -59,41 +109,63 @@ export default function PublishingPage() {
   const [publishOpen, setPublishOpen] = useState(false);
   const [popoverOpen, setPopoverOpen] = useState(false);
 
-  // Filter + sort
-  const rows = useMemo(() => {
-    const filtered = history.filter((h) => {
-      if (search) {
-        const q = search.toLowerCase();
-        const hay = `${h.name} ${h.source} ${h.user}`.toLowerCase();
-        if (!hay.includes(q)) return false;
-      }
-      if (date && !h.started.startsWith(date)) return false;
-      if (status !== 'All') {
-        const map = { Success: 'ok', Warning: 'warn', Error: 'err', Running: 'run' };
-        if (h.status !== map[status]) return false;
-      }
-      if (type !== 'All types' && h.type !== type) return false;
-      return true;
-    });
-    if (!sortKey) return filtered;
-    const cmp = (a, b) => {
-      const av = a[sortKey] ?? '';
-      const bv = b[sortKey] ?? '';
-      if (typeof av === 'number' && typeof bv === 'number') return av - bv;
-      return String(av).localeCompare(String(bv));
-    };
-    const sorted = [...filtered].sort(cmp);
-    if (sortDir === 'desc') sorted.reverse();
-    return sorted;
-  }, [history, search, date, status, type, sortKey, sortDir]);
+  // Bumped on every action (extract/validate/delete) so the page re-fetches
+  // without us having to thread an "onUpdated" callback through every drawer.
+  const [refreshKey, setRefreshKey] = useState(0);
+  const refresh = () => setRefreshKey((n) => n + 1);
 
-  const total = Math.max(rows.length, FAKE_TOTAL); // mimic the long list count
+  // Fetch from /api/publications whenever filters / sort / paging change.
+  useEffect(() => {
+    let cancelled = false;
+    const params = new URLSearchParams();
+    if (search) params.set('search', search);
+    if (date) {
+      // The HTML date input gives us "YYYY-MM-DD"; widen it to a full day so
+      // the server-side $gte/$lte range matches every record from that date.
+      params.set('from', `${date}T00:00:00.000Z`);
+      params.set('to',   `${date}T23:59:59.999Z`);
+    }
+    const apiStatus = STATUS_FILTER_TO_API[status] ?? '';
+    if (apiStatus) params.set('status', apiStatus);
+    params.set('page',  String(page));
+    params.set('limit', String(pageSize));
+    params.set('sortKey', SORT_KEY_TO_API[sortKey] || 'createdAt');
+    params.set('sortDir', sortDir);
+
+    setLoading(true);
+    setLoadError('');
+    api.get(`/publications?${params.toString()}`)
+      .then((data) => {
+        if (cancelled) return;
+        const items = Array.isArray(data?.items) ? data.items.map(mapApiRow) : [];
+        setRows(items);
+        setTotal(typeof data?.total === 'number' ? data.total : items.length);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setRows([]);
+        setTotal(0);
+        // Surface a single readable error in place of the table; auth/expired
+        // sessions show the generic copy from api.js.
+        setLoadError(err?.message || 'Failed to load publications');
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+
+    return () => { cancelled = true; };
+  }, [search, date, status, page, pageSize, sortKey, sortDir, refreshKey]);
+
+  // Type column is purely cosmetic right now (everything is "Publication");
+  // applying the filter client-side avoids a server-side enum that doesn't
+  // exist yet.
+  const visibleRows = useMemo(() => (
+    type === 'All types' ? rows : rows.filter((r) => r.type === type)
+  ), [rows, type]);
+
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const safePage = Math.min(page, totalPages);
-  const pageStart = (safePage - 1) * pageSize;
-  const pageRows  = rows.slice(pageStart, pageStart + pageSize);
-  const visibleStart = pageRows.length ? pageStart + 1 : 0;
-  const visibleEnd   = pageStart + pageRows.length;
+  const pageRows  = visibleRows;
+  const visibleStart = pageRows.length ? (safePage - 1) * pageSize + 1 : 0;
+  const visibleEnd   = (safePage - 1) * pageSize + pageRows.length;
 
   const onSort = (key, sortable) => {
     if (!sortable) return;
@@ -102,7 +174,7 @@ export default function PublishingPage() {
   };
 
   return (
-    <AdminShell active="khub-publishing" allowedRoles={['superadmin']}>
+    <AdminShell active="khub-publishing" allowedRoles={['superadmin']} fullWidth>
       <div style={S.headerRow}>
         <div>
           <h1 style={S.h1}>
@@ -214,20 +286,22 @@ export default function PublishingPage() {
               style={S.input}
             />
           </div>
-          <div style={S.selectField}>
-            <span style={S.floatLabel}>Filter by Status</span>
-            <select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }} style={S.select}>
-              {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
-            <span aria-hidden="true" style={S.chevron}>▾</span>
-          </div>
-          <div style={S.selectField}>
-            <span style={S.floatLabel}>Filter by Type</span>
-            <select value={type} onChange={(e) => { setType(e.target.value); setPage(1); }} style={S.select}>
-              {TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-            </select>
-            <span aria-hidden="true" style={S.chevron}>▾</span>
-          </div>
+          <FilterSelect
+            label="Status"
+            value={status}
+            onChange={(v) => { setStatus(v); setPage(1); }}
+            options={STATUSES}
+            isActive={status !== 'All'}
+            onClear={() => { setStatus('All'); setPage(1); }}
+          />
+          <FilterSelect
+            label="Type"
+            value={type}
+            onChange={(v) => { setType(v); setPage(1); }}
+            options={TYPES}
+            isActive={type !== 'All types'}
+            onClear={() => { setType('All types'); setPage(1); }}
+          />
         </div>
 
         <div style={S.tableWrap}>
@@ -245,10 +319,14 @@ export default function PublishingPage() {
               </tr>
             </thead>
             <tbody>
-              {pageRows.length === 0 ? (
+              {loadError ? (
+                <tr><td colSpan={8} style={{ ...S.emptyTableCell, color: '#991b1b' }}>{loadError}</td></tr>
+              ) : loading && pageRows.length === 0 ? (
+                <tr><td colSpan={8} style={S.emptyTableCell}>Loading publications…</td></tr>
+              ) : pageRows.length === 0 ? (
                 <tr><td colSpan={8} style={S.emptyTableCell}>No publishing history matches your filters.</td></tr>
               ) : pageRows.map((r) => (
-                <tr key={r.uploadId} style={S.tr} onClick={() => setSelectedJob(r)}>
+                <tr key={r.id || r.uploadId} style={S.tr} onClick={() => setSelectedJob(r)}>
                   <td style={S.td}><StatusIcon kind={r.status} /></td>
                   <td style={S.td}>{r.started}</td>
                   <td style={S.td}>{r.type}</td>
@@ -290,7 +368,11 @@ export default function PublishingPage() {
       </section>
 
       {/* Drawers + modals */}
-      <JobDetailDrawer job={selectedJob} onClose={() => setSelectedJob(null)} />
+      <JobDetailDrawer
+        job={selectedJob}
+        onClose={() => setSelectedJob(null)}
+        onChanged={refresh}
+      />
       <ScheduleReprocessDrawer open={scheduleOpen} onClose={() => setScheduleOpen(false)} />
 
       <ConfirmModal
@@ -299,39 +381,15 @@ export default function PublishingPage() {
         body="All reports will be deleted. This action cannot be undone. This will not cancel jobs in progress or scheduled."
         confirmLabel="Clean"
         onCancel={() => setCleanOpen(false)}
-        onConfirm={() => { setHistory([]); setCleanOpen(false); }}
+        onConfirm={() => { setCleanOpen(false); refresh(); }}
       />
 
       <PublishContentModal
         open={publishOpen}
         onCancel={() => setPublishOpen(false)}
-        onPublished={({ file, source, doc, durationMs }) => {
-          // Map backend doc.status → the local status badge kinds.
-          // ingestFile returns "completed" on success, "failed" on parser
-          // errors, and "processing" while still running.
-          const STATUS_MAP = { completed: 'ok', failed: 'err', processing: 'run' };
-          const formatDuration = (ms) => {
-            const total = Math.max(1, Math.round(ms / 1000));
-            if (total < 60) return `${total}s`;
-            const m = Math.floor(total / 60);
-            const s = total % 60;
-            return `${m}m${s}s`;
-          };
-          setHistory((h) => [{
-            uploadId: doc?.id ? `upl-${String(doc.id).slice(-6)}` : `upl-${Date.now()}`,
-            status: STATUS_MAP[doc?.status] || 'ok',
-            started: new Date().toLocaleString('en-US', {
-              month: '2-digit', day: '2-digit', year: 'numeric',
-              hour: 'numeric', minute: '2-digit', hour12: true,
-            }),
-            type: 'Publication',
-            name: doc?.title || file.name,
-            user: 'Super Admin',
-            duration: formatDuration(durationMs ?? 0),
-            publications: doc?.topicCount ? 1 : 1,
-            source,
-          }, ...h]);
+        onPublished={() => {
           setPublishOpen(false);
+          refresh();
         }}
       />
     </AdminShell>
@@ -339,6 +397,53 @@ export default function PublishingPage() {
 }
 
 // ── Sortable column header ─────────────────────────────────────────────────
+// Outlined-select filter used in the History toolbar. The label sits as a
+// "notch" on the top border (Material Outlined style) so the field height
+// matches the search/date inputs next to it. When `isActive` is true (i.e.
+// the user has narrowed the filter away from "All") we tint the border and
+// expose a small × clear button so it's obvious a filter is on.
+function FilterSelect({ label, value, onChange, options, optionLabel, isActive, onClear }) {
+  const [focused, setFocused] = useState(false);
+  const accent = '#a21caf';
+  const borderColor = focused || isActive ? accent : '#e2e8f0';
+  const labelColor  = focused || isActive ? accent : '#64748b';
+  const labelFor = (o) => (typeof optionLabel === 'function' ? optionLabel(o) : (o || ''));
+
+  return (
+    <div style={{ ...S.selectField, borderColor }}>
+      <span style={{ ...S.floatLabel, color: labelColor }}>{label}</span>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        style={{ ...S.select, fontWeight: isActive ? 600 : 500, color: isActive ? accent : '#0f172a' }}
+      >
+        {options.map((o) => <option key={String(o)} value={o}>{labelFor(o)}</option>)}
+      </select>
+      {isActive && onClear ? (
+        <button
+          type="button"
+          aria-label={`Clear ${label} filter`}
+          onClick={onClear}
+          onMouseDown={(e) => e.preventDefault()}
+          style={S.selectClear}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6"  y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      ) : null}
+      <span aria-hidden="true" style={S.selectChevron}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </span>
+    </div>
+  );
+}
+
 function Th({ label, width, sortable, sortKey, cur, dir, onSort }) {
   const active = sortable && cur === sortKey;
   return (
@@ -476,10 +581,11 @@ const SOURCE_OPTIONS = [
   { value: 'Docebo_help',  label: 'docebo — Docebo Help' },
 ];
 
-// File extensions accepted by the ingest endpoint (mirrors the portal
-// Upload-document dialog so admins get parity between flows).
-const PUBLISH_ACCEPT = '.html,.htm,.md,.markdown,.docx,.xml,.zip,.txt';
-const PUBLISH_ACCEPT_DESCRIPTION = 'Supports HTML, Markdown, DOCX, XML, ZIP, TXT';
+// Only .zip uploads flow through /api/publications — single-file ingest still
+// goes through the legacy /api/ingest/upload endpoint via the portal Upload-
+// document dialog, so we don't allow ad-hoc HTML/DOCX here.
+const PUBLISH_ACCEPT = '.zip';
+const PUBLISH_ACCEPT_DESCRIPTION = 'Drop a .zip export from your authoring tool';
 
 function PublishContentModal({ open, onCancel, onPublished }) {
   const router = useRouter();
@@ -508,35 +614,34 @@ function PublishContentModal({ open, onCancel, onPublished }) {
 
   const valid = !!file && !!source && !uploading;
 
-  // Validate against the same extension list the backend accepts.
-  const ACCEPT_RX = /\.(html?|md|markdown|docx|xml|zip|txt)$/i;
+  // /api/publications only accepts .zip — anything else gets rejected by
+  // the backend with a 400, but we surface a friendlier error up-front.
+  const ACCEPT_RX = /\.zip$/i;
   const pickFile = (f) => {
     if (!f) return;
     if (!ACCEPT_RX.test(f.name)) {
-      setError('Unsupported file type. ' + PUBLISH_ACCEPT_DESCRIPTION + '.');
+      setError('Only .zip uploads are supported. ' + PUBLISH_ACCEPT_DESCRIPTION + '.');
       return;
     }
     setError('');
     setFile(f);
   };
 
-  // Real upload — same endpoint the portal Upload-document dialog uses.
-  // ingestFile parses topics server-side and creates a Document.
+  // Upload to the raw S3 bucket via /api/publications. Extraction is a
+  // separate step the user kicks off from the drawer; this just persists the
+  // zip + creates the Publication row so the History list shows it as
+  // "Running" immediately.
   const handlePublish = async () => {
     if (!valid) return;
     setUploading(true);
     setError('');
     setAuthExpired(false);
-    const startedAt = Date.now();
     try {
       const fd = new FormData();
       fd.append('file', file);
-      // Source is informational on the FT side; the backend ignores
-      // unknown fields, but we forward it so server logs can correlate.
       fd.append('source', source);
-      const data = await api.upload('/ingest/upload', fd);
-      const durationMs = Date.now() - startedAt;
-      onPublished?.({ file, source, doc: data?.document, durationMs });
+      const data = await api.upload('/publications', fd);
+      onPublished?.({ file, source, publication: data?.publication });
     } catch (e) {
       // 401 means the bearer token / session was rejected. The frontend
       // already attempted a refresh once inside fetchWithOptionalRefresh, so
@@ -741,43 +846,249 @@ function RightDrawer({ open, title, width = 540, onClose, children }) {
 }
 
 // ── Job detail drawer ───────────────────────────────────────────────────────
-function JobDetailDrawer({ job, onClose }) {
+// Pulls full publication detail + paginated logs from the API every time the
+// drawer opens or `refreshKey` bumps. Surfaces Extract / Validate / Retry
+// actions that hit the backend worker pipeline, plus Download archive +
+// Download logs which use presigned S3 URLs.
+function JobDetailDrawer({ job, onClose, onChanged }) {
   const [cancelOpen, setCancelOpen] = useState(false);
   const [pubFilter, setPubFilter] = useState('');
-  if (!job && !cancelOpen) {
-    // ensure modal closes alongside drawer
-  }
+
+  const [pub, setPub]       = useState(null);
+  const [logs, setLogs]     = useState([]);
+  const [logTotal, setLogTotal] = useState(0);
+  const [drawerLoading, setDrawerLoading] = useState(false);
+  const [drawerError, setDrawerError] = useState('');
+  const [busyAction, setBusyAction] = useState('');     // '' | 'extract' | 'validate' | 'delete'
+  const [tick, setTick] = useState(0);                  // local refresh counter
+
+  const open = !!job;
+  const id   = job?.id || job?.uploadId;
+
+  // Fetch detail + first page of logs whenever the drawer opens for a new
+  // publication, or when the user kicks off another action that mutates state.
+  useEffect(() => {
+    if (!open || !id) return undefined;
+    let cancelled = false;
+    setDrawerLoading(true);
+    setDrawerError('');
+    Promise.all([
+      api.get(`/publications/${id}`),
+      api.get(`/publications/${id}/logs?limit=200`),
+    ])
+      .then(([detailRes, logsRes]) => {
+        if (cancelled) return;
+        setPub(detailRes?.publication || null);
+        setLogs(Array.isArray(logsRes?.items) ? logsRes.items : []);
+        setLogTotal(typeof logsRes?.total === 'number' ? logsRes.total : 0);
+      })
+      .catch((e) => { if (!cancelled) setDrawerError(e?.message || 'Failed to load publication'); })
+      .finally(() => { if (!cancelled) setDrawerLoading(false); });
+
+    return () => { cancelled = true; };
+  }, [open, id, tick]);
+
+  // Poll while a worker is still in flight so the user sees logs stream in
+  // without having to manually refresh. 4s feels right — the worker emits a
+  // progress message every ~25 entries so 4s gives a steady drip-feed.
+  useEffect(() => {
+    if (!open) return undefined;
+    const inflight = pub?.status === 'extracting' || pub?.status === 'validating' || pub?.status === 'uploaded';
+    if (!inflight) return undefined;
+    const t = setInterval(() => setTick((n) => n + 1), 4000);
+    return () => clearInterval(t);
+  }, [open, pub?.status]);
+
+  const reload = () => setTick((n) => n + 1);
+
+  const triggerExtract = async () => {
+    if (!id) return;
+    setBusyAction('extract');
+    try {
+      await api.post(`/publications/${id}/extract`);
+      onChanged?.();
+      reload();
+    } catch (e) {
+      setDrawerError(e?.message || 'Extraction failed');
+    } finally { setBusyAction(''); }
+  };
+
+  const triggerValidate = async () => {
+    if (!id) return;
+    setBusyAction('validate');
+    try {
+      await api.post(`/publications/${id}/validate`);
+      onChanged?.();
+      reload();
+    } catch (e) {
+      setDrawerError(e?.message || 'Validation failed');
+    } finally { setBusyAction(''); }
+  };
+
+  const triggerDelete = async () => {
+    if (!id) return;
+    setBusyAction('delete');
+    try {
+      await api.delete(`/publications/${id}`);
+      setCancelOpen(false);
+      onChanged?.();
+      onClose?.();
+    } catch (e) {
+      setDrawerError(e?.message || 'Delete failed');
+    } finally { setBusyAction(''); }
+  };
+
+  const downloadArchive = async () => {
+    if (!id) return;
+    try {
+      const res = await api.get(`/publications/${id}/archive`);
+      if (res?.url) window.open(res.url, '_blank', 'noopener');
+    } catch (e) {
+      setDrawerError(e?.message || 'Could not generate archive URL');
+    }
+  };
+
+  const downloadLogs = () => {
+    if (!id) return;
+    // Same-origin via the Next rewrite proxy, plus the auth header — easiest
+    // is a fetch + blob since we can't add Authorization to a plain <a>.
+    const token = (typeof window !== 'undefined')
+      ? (sessionStorage.getItem('ft_token') || localStorage.getItem('ft_token'))
+      : null;
+    fetch(`/api/publications/${id}/logs.txt`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+      .then((r) => r.blob().then((blob) => ({ blob, ok: r.ok })))
+      .then(({ blob, ok }) => {
+        if (!ok) throw new Error('Could not download logs');
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `publication-${id}-logs.txt`;
+        document.body.appendChild(a); a.click(); a.remove();
+        URL.revokeObjectURL(url);
+      })
+      .catch((e) => setDrawerError(e?.message || 'Could not download logs'));
+  };
+
+  // Filter the logs table by level if the user picked a status from the
+  // Publications row's per-status filter. Mapping mirrors the page-level one.
+  const visibleLogs = useMemo(() => {
+    if (!pubFilter) return logs;
+    const map = { Success: 'info', Warning: 'warn', Error: 'error' };
+    const want = map[pubFilter];
+    return want ? logs.filter((l) => l.level === want) : logs;
+  }, [logs, pubFilter]);
+
+  // Status badge text — distinct from the small icon kind used in the table.
+  const statusBadge = (() => {
+    if (!pub) return { text: 'PENDING', color: '#475569', kind: 'queued' };
+    if (pub.status === 'failed')      return { text: 'FAILED',   color: '#dc2626', kind: 'err'  };
+    if (pub.status === 'extracting')  return { text: 'EXTRACTING', color: '#1d4ed8', kind: 'run' };
+    if (pub.status === 'validating')  return { text: 'VALIDATING', color: '#1d4ed8', kind: 'run' };
+    if (pub.status === 'uploaded')    return { text: 'UPLOADED',   color: '#475569', kind: 'queued' };
+    if ((pub.counts?.error ?? 0) > 0) return { text: 'ERROR',    color: '#dc2626', kind: 'err'  };
+    if ((pub.counts?.warn  ?? 0) > 0) return { text: 'WARNING',  color: '#b45309', kind: 'warn' };
+    return { text: 'DONE', color: '#16a34a', kind: 'ok' };
+  })();
+
+  const canExtract  = pub && (pub.status === 'uploaded' || pub.status === 'failed' || pub.status === 'extracted' || pub.status === 'validated');
+  const canValidate = pub && (pub.status === 'extracted' || pub.status === 'validated' || pub.status === 'failed');
+
   return (
     <>
-      <RightDrawer open={!!job} title={job?.name || ''} width={640} onClose={onClose}>
-        {job && (
+      <RightDrawer open={open} title={job?.name || pub?.originalFilename || ''} width={640} onClose={onClose}>
+        {open && (
           <>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '20px' }}>
+            {drawerError && (
+              <div role="alert" style={{
+                padding: '10px 12px',
+                background: '#fef2f2', color: '#991b1b',
+                border: '1px solid #fecaca', borderRadius: '6px',
+                fontSize: '0.85rem', marginBottom: '16px',
+              }}>
+                {drawerError}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '20px', flexWrap: 'wrap' }}>
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
-                <StatusIcon kind={job.status} />
-                <span style={{ textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.05em', fontSize: '0.8rem', color: '#475569' }}>
-                  {job.status === 'ok' ? 'Done' : job.status === 'warn' ? 'Warning' : job.status === 'err' ? 'Error' : 'Pending'}
+                <StatusIcon kind={statusBadge.kind} />
+                <span style={{ textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.05em', fontSize: '0.8rem', color: statusBadge.color }}>
+                  {statusBadge.text}
                 </span>
               </span>
-              <button type="button" style={{ ...S.primaryBtn, padding: '6px 12px', fontSize: '0.85rem' }} onClick={() => setCancelOpen(true)}>Cancel</button>
+
+              {canExtract && (
+                <button type="button" disabled={!!busyAction}
+                  onClick={triggerExtract}
+                  style={{ ...S.primaryBtn, padding: '6px 12px', fontSize: '0.85rem', opacity: busyAction ? 0.6 : 1 }}>
+                  {busyAction === 'extract' ? 'Extracting…' : (pub?.status === 'uploaded' ? 'Extract' : 'Re-extract')}
+                </button>
+              )}
+
+              {canValidate && (
+                <button type="button" disabled={!!busyAction}
+                  onClick={triggerValidate}
+                  style={{ ...S.linkBtn, padding: '6px 12px', fontSize: '0.85rem', border: '1px solid #cbd5e1', opacity: busyAction ? 0.6 : 1 }}>
+                  {busyAction === 'validate' ? 'Validating…' : (pub?.status === 'validated' ? 'Re-validate' : 'Validate')}
+                </button>
+              )}
+
+              <button type="button" style={{ ...S.linkBtn, padding: '6px 12px', fontSize: '0.85rem', color: '#dc2626' }}
+                onClick={() => setCancelOpen(true)}>
+                Delete
+              </button>
+
+              {pub?.documentId && (
+                <a
+                  href={`/dashboard/docs/${pub.documentId}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ ...S.linkBtn, padding: '6px 12px', fontSize: '0.85rem', marginLeft: 'auto', textDecoration: 'none' }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                    <polyline points="15 3 21 3 21 9" />
+                    <line x1="10" y1="14" x2="21" y2="3" />
+                  </svg>
+                  <span>Open in portal</span>
+                </a>
+              )}
+
+              <button type="button" style={{ ...S.linkBtn, padding: '6px 12px', fontSize: '0.85rem', marginLeft: pub?.documentId ? undefined : 'auto' }}
+                onClick={downloadArchive}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+                <span>Download archive</span>
+              </button>
             </div>
 
             <div style={S.infoGrid}>
-              <InfoCell label="UploadID:" value={job.uploadId} copyable />
-              <InfoCell label="Duration:" value={`${job.duration} (${job.duration} total)`} />
-              <InfoCell label="Uploaded by:" value={job.user} />
+              <InfoCell label="UploadID:"   value={id} copyable />
+              <InfoCell label="Duration:"   value={pub?.timings ? formatDuration(pub.timings) || '—' : '—'} />
+              <InfoCell label="Uploaded by:" value={pub?.uploadedBy?.name || pub?.uploadedBy?.email || job?.user || '—'} />
+              <InfoCell label="Source:"     value={pub?.sourceLabel || job?.source || '—'} />
+              <InfoCell label="Files:"      value={String(pub?.extracted?.fileCount ?? job?.publications ?? 0)} />
+              <InfoCell label="Size:"       value={formatBytes(pub?.sizeBytes)} />
             </div>
 
             <div style={{ marginTop: '24px' }}>
               <div style={S.drawerSectionHeader}>
                 <h3 style={S.drawerSectionTitle}>Publications</h3>
-                <div style={{ ...S.selectField, minWidth: '220px' }}>
-                  <span style={S.floatLabel}>Filter publications by Status</span>
-                  <select value={pubFilter} onChange={(e) => setPubFilter(e.target.value)} style={S.select}>
-                    <option value="">Any</option>
-                    {STATUSES.filter((s) => s !== 'All').map((s) => <option key={s} value={s}>{s}</option>)}
-                  </select>
-                  <span aria-hidden="true" style={S.chevron}>▾</span>
+                <div style={{ minWidth: '240px' }}>
+                  <FilterSelect
+                    label="Filter logs by Status"
+                    value={pubFilter}
+                    onChange={(v) => setPubFilter(v)}
+                    options={['', ...STATUSES.filter((s) => s !== 'All' && s !== 'Running')]}
+                    optionLabel={(v) => (v === '' ? 'Any' : v)}
+                    isActive={!!pubFilter}
+                    onClear={() => setPubFilter('')}
+                  />
                 </div>
               </div>
 
@@ -791,7 +1102,15 @@ function JobDetailDrawer({ job, onClose }) {
                     </tr>
                   </thead>
                   <tbody>
-                    <tr><td colSpan={3} style={S.emptyTableCell}>No logs for this publication</td></tr>
+                    {pub ? (
+                      <tr style={S.tr}>
+                        <td style={S.td}><StatusIcon kind={statusBadge.kind} /></td>
+                        <td style={{ ...S.td, color: '#0f172a' }}>{pub.name || pub.originalFilename}</td>
+                        <td style={S.td}>{String(pub.id || id).slice(-12).toUpperCase()}</td>
+                      </tr>
+                    ) : (
+                      <tr><td colSpan={3} style={S.emptyTableCell}>{drawerLoading ? 'Loading…' : 'No publication detail'}</td></tr>
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -800,8 +1119,10 @@ function JobDetailDrawer({ job, onClose }) {
             <div style={{ marginTop: '24px' }}>
               <h3 style={S.drawerSectionTitle}>General logs</h3>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '14px', margin: '8px 0 12px' }}>
-                <span style={{ fontSize: '0.88rem', color: '#475569' }}>To access specific publication logs, use the table above.</span>
-                <button type="button" style={S.linkBtn}>
+                <span style={{ fontSize: '0.88rem', color: '#475569' }}>
+                  To access specific publication logs, use the table above. {logTotal ? `(${logTotal} entries)` : ''}
+                </span>
+                <button type="button" style={S.linkBtn} onClick={downloadLogs}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
                     <polyline points="7 10 12 15 17 10" />
@@ -819,7 +1140,31 @@ function JobDetailDrawer({ job, onClose }) {
                     </tr>
                   </thead>
                   <tbody>
-                    <tr><td colSpan={2} style={S.emptyTableCell}>No logs for this report</td></tr>
+                    {visibleLogs.length === 0 ? (
+                      <tr><td colSpan={2} style={S.emptyTableCell}>{drawerLoading ? 'Loading…' : 'No logs for this report'}</td></tr>
+                    ) : visibleLogs.map((l) => (
+                      <tr key={l._id || `${l.timestamp}-${l.message}`} style={{
+                        ...S.tr,
+                        background: l.level === 'error' ? '#fef2f2' : l.level === 'warn' ? '#fefce8' : '#fff',
+                      }}>
+                        <td style={{ ...S.td, color: '#475569', fontFamily: 'monospace', fontSize: '0.78rem' }}>
+                          {new Date(l.timestamp).toLocaleTimeString('en-US', { hour12: false })}
+                          <span style={{ marginLeft: '6px', fontSize: '0.65rem', color: '#94a3b8', textTransform: 'uppercase' }}>
+                            .{String(new Date(l.timestamp).getMilliseconds()).padStart(3, '0')}
+                          </span>
+                        </td>
+                        <td style={{
+                          ...S.td,
+                          color: l.level === 'error' ? '#991b1b' : l.level === 'warn' ? '#92400e' : '#475569',
+                          whiteSpace: 'normal',
+                        }}>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                            <LevelDot level={l.level} />
+                            <span>{l.message}</span>
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
@@ -830,15 +1175,34 @@ function JobDetailDrawer({ job, onClose }) {
 
       <ConfirmModal
         open={cancelOpen}
-        title="Cancel this job?"
-        body="All unfinished tasks will be canceled. New configurations will not be applied to non-processed publications."
-        cancelLabel="Keep in queue"
-        confirmLabel="Cancel job"
+        title="Delete this publication?"
+        body="The original archive, all extracted files, and every log entry will be removed. This cannot be undone."
+        cancelLabel="Keep"
+        confirmLabel={busyAction === 'delete' ? 'Deleting…' : 'Delete'}
         onCancel={() => setCancelOpen(false)}
-        onConfirm={() => { setCancelOpen(false); onClose(); }}
+        onConfirm={triggerDelete}
       />
     </>
   );
+}
+
+function LevelDot({ level }) {
+  const color = level === 'error' ? '#dc2626' : level === 'warn' ? '#d97706' : '#94a3b8';
+  return (
+    <span aria-hidden="true" style={{
+      display: 'inline-block', width: '8px', height: '8px',
+      borderRadius: '50%', background: color, flexShrink: 0,
+    }} />
+  );
+}
+
+function formatBytes(n) {
+  if (!n || !Number.isFinite(n)) return '—';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0;
+  let v = n;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i += 1; }
+  return `${v.toFixed(v < 10 && i > 0 ? 1 : 0)} ${units[i]}`;
 }
 
 function InfoCell({ label, value, copyable }) {
@@ -1044,23 +1408,68 @@ const S = {
     fontFamily: 'var(--font-sans)',
   },
   select: {
-    flex: 1, padding: '14px 22px 6px 4px', border: 'none', outline: 'none',
-    background: 'transparent', fontSize: '0.85rem', color: '#0f172a',
-    fontFamily: 'var(--font-sans)', appearance: 'none', cursor: 'pointer',
+    flex: 1,
+    padding: '8px 44px 8px 4px',
+    border: 'none', outline: 'none',
+    background: 'transparent',
+    fontSize: '0.85rem', color: '#0f172a',
+    fontFamily: 'var(--font-sans)',
+    appearance: 'none',
+    cursor: 'pointer',
+    fontWeight: 500,
   },
   selectField: {
     position: 'relative', display: 'flex', alignItems: 'center',
-    background: '#fff', border: '1px solid #e2e8f0', borderRadius: '4px',
+    background: '#fff',
+    border: '1px solid #e2e8f0',
+    borderRadius: '4px',
     padding: '0 10px',
+    transition: 'border-color 120ms ease',
   },
+  // "Notched" outlined label: sits across the top border so the field
+  // height stays the same as Search/Date inputs alongside it. The bg
+  // colour matches the surrounding card so the border looks broken
+  // exactly where the label is.
   floatLabel: {
-    position: 'absolute', top: '4px', left: '12px',
-    fontSize: '0.65rem', color: '#94a3b8', pointerEvents: 'none',
+    position: 'absolute',
+    top: '-7px', left: '8px',
+    padding: '0 6px',
+    background: '#fff',
+    fontSize: '0.7rem',
+    fontWeight: 600,
+    letterSpacing: '0.02em',
+    color: '#64748b',
+    pointerEvents: 'none',
+    lineHeight: 1,
   },
-  chevron: {
-    position: 'absolute', right: '10px', top: '50%',
+  selectChevron: {
+    position: 'absolute',
+    right: '10px',
+    top: '50%',
     transform: 'translateY(-50%)',
-    color: '#94a3b8', fontSize: '0.85rem', pointerEvents: 'none',
+    color: '#64748b',
+    pointerEvents: 'none',
+    display: 'inline-flex',
+    alignItems: 'center',
+  },
+  // Inline × button shown when an "active" filter is set. Sits to the
+  // left of the chevron so the user can clear without having to open
+  // the menu and re-pick "All".
+  selectClear: {
+    position: 'absolute',
+    right: '32px',
+    top: '50%',
+    transform: 'translateY(-50%)',
+    width: '18px', height: '18px',
+    background: 'transparent',
+    border: 'none',
+    padding: 0,
+    color: '#a21caf',
+    cursor: 'pointer',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: '50%',
   },
   tableWrap: {
     background: '#fff', border: '1px solid #e2e8f0', borderRadius: '4px',

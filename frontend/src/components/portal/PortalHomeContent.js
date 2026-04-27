@@ -4,7 +4,6 @@ import Link from 'next/link';
 import api, { getStoredUser } from '@/lib/api';
 import PortalSearch from '@/components/portal/PortalSearch';
 import PortalFooter from '@/components/portal/PortalFooter';
-import UploadDialog from '@/components/portal/UploadDialog';
 import { customTemplates, GenericDocIcon } from '@/customTemplates';
 import { useTranslation } from '@/lib/i18n';
 
@@ -162,7 +161,6 @@ function DocTile({ doc, canDelete, onRequestDelete }) {
 export default function PortalHomeContent() {
   const [docs, setDocs] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [uploadOpen, setUploadOpen] = useState(false);
   const [user, setUser] = useState(null);
   const [mounted, setMounted] = useState(false);
   const [hiddenTemplates, setHiddenTemplates] = useState(() => new Set());
@@ -263,7 +261,6 @@ export default function PortalHomeContent() {
           </div>
         ) : (
           <div style={styles.grid}>
-            {isSuperadmin && <UploadTile onClick={() => setUploadOpen(true)} />}
             {filteredTemplates.map((tpl) => (
               <TemplateTile
                 key={tpl.slug}
@@ -283,13 +280,6 @@ export default function PortalHomeContent() {
           </div>
         )}
       </div>
-      {isSuperadmin && (
-        <UploadDialog
-          open={uploadOpen}
-          onClose={() => setUploadOpen(false)}
-          onUploaded={() => { loadDocs(); }}
-        />
-      )}
       {pendingDelete && (
         <DeleteConfirmDialog
           pending={pendingDelete}
@@ -306,24 +296,6 @@ export default function PortalHomeContent() {
       </section>
       <PortalFooter />
     </div>
-  );
-}
-
-function UploadTile({ onClick }) {
-  const { t } = useTranslation();
-  return (
-    <button type="button" onClick={onClick} style={{ ...styles.tile, background: 'transparent', border: 'none', cursor: 'pointer', padding: 0 }} aria-label={t('uploadDocument')}>
-      <div style={styles.tileBox}>
-        <div style={{ ...styles.tileIconBox, color: '#1d4ed8' }}>
-          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-            <polyline points="17 8 12 3 7 8" />
-            <line x1="12" y1="3" x2="12" y2="15" />
-          </svg>
-        </div>
-      </div>
-      <div style={styles.tileLabel}>{t('uploadDocument')}</div>
-    </button>
   );
 }
 

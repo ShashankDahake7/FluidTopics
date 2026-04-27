@@ -1,5 +1,14 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Next 16 buffers proxied request bodies (rewrites → backend) and caps the
+  // buffer at 10MB by default, which truncates large publication ZIPs and
+  // hangs the upstream upload with ECONNRESET. Raise the cap to match the
+  // backend's MAX_FILE_SIZE so the proxy never silently chops a body.
+  // Lives under `experimental` in Next 16.x — see
+  // https://nextjs.org/docs/app/api-reference/config/next-config-js/middlewareClientMaxBodySize
+  experimental: {
+    proxyClientMaxBodySize: '500mb',
+  },
   async rewrites() {
     return [
       {

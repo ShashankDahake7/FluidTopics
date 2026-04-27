@@ -264,7 +264,17 @@ export default function DocReaderPage() {
   useEffect(() => {
     if (!id) return;
     api.get(`/portal/documents/${id}`)
+      .catch((err) => {
+        // 404 here means the doc was deleted (e.g. via the publishing
+        // page's Delete cascade) but a stale link/bookmark/history entry
+        // is still pointing at it. Swallow so the empty-doc branch below
+        // can render the "Document not found" page instead of leaking an
+        // unhandled rejection to the console.
+        if (err?.status === 404) return null;
+        throw err;
+      })
       .then((data) => {
+        if (!data) return;
         setDoc(data.document);
         const sorted = [...(data.topics || [])].sort(
           (a, b) => (a.hierarchy?.order ?? 0) - (b.hierarchy?.order ?? 0)

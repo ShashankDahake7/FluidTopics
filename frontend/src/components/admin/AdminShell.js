@@ -106,6 +106,10 @@ export default function AdminShell({
   children,
   footer,
   allowedRoles = ['superadmin', 'admin', 'editor'],
+  // Most admin screens look best capped at the default 1280px content width.
+  // A few data-heavy ones (Publishing history table) want to use the full
+  // viewport instead — they pass `fullWidth` to opt in.
+  fullWidth = false,
 }) {
   const router = useRouter();
   const [authChecked, setAuthChecked] = useState(false);
@@ -237,7 +241,7 @@ export default function AdminShell({
       </aside>
 
       <div style={S.content}>
-        <div style={S.contentInner}>{children}</div>
+        <div style={fullWidth ? S.contentInnerFull : S.contentInner}>{children}</div>
         {footer && <div style={S.footer}>{footer}</div>}
       </div>
     </div>
@@ -343,6 +347,14 @@ const S = {
     flex: 1,
     padding: '24px 36px 24px',
     maxWidth: '1280px',
+    width: '100%',
+  },
+  // Full-bleed variant used by data-heavy pages (e.g. Publishing). Same
+  // padding so the page chrome lines up with the constrained pages, but no
+  // max-width cap so wide tables and drawers can breathe on large monitors.
+  contentInnerFull: {
+    flex: 1,
+    padding: '24px 36px 24px',
     width: '100%',
   },
   footer: {

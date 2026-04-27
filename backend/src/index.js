@@ -33,6 +33,7 @@ const personalBooksRoutes = require('./routes/personalBooks');
 const languagesRoutes = require('./routes/languages');
 const aiRoutes = require('./routes/ai');
 const portalAssetsRoutes = require('./routes/portalAssets');
+const publicationsRoutes = require('./routes/publications');
 
 const app = express();
 
@@ -87,6 +88,7 @@ app.use('/api/sections',         sectionsRoutes);
 app.use('/api/groups',           groupsRoutes);
 app.use('/api/saved-searches',   savedSearchesRoutes);
 app.use('/api/personal-books',   personalBooksRoutes);
+app.use('/api/publications',     publicationsRoutes);
 
 // OpenSearch descriptor at the root so browsers can autodiscover.
 app.get('/opensearch.xml', (req, res) => {
