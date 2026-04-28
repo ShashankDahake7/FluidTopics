@@ -154,6 +154,34 @@ const topicSchema = new mongoose.Schema(
   }
 );
 
+// Workaround for a Mongoose 8.23.x bug with `Map` schema fields whose
+// values are array-typed (e.g. `of: [String]`): instead of leaving a
+// field with `default: undefined` actually unset, Mongoose leaks its
+// internal wildcard sub-schema marker `{ '$*': [] }` as the field's
+// value on freshly constructed documents. That bare object then trips
+// `_getPathsToValidate` (which calls `val.keys()`) and crashes the
+// process with `TypeError: val.keys is not a function`. The
+// `metadata.customRaw` field below is the only one in this schema with
+// the offending shape (`of: [String]` + non-Map default), but we strip
+// the leak from all three Map metadata paths defensively so a future
+// schema tweak can't reintroduce the same bug.
+topicSchema.pre('validate', function stripLeakedMapMarker() {
+  const meta = this && this.metadata;
+  if (!meta) return;
+  for (const key of ['custom', 'customRaw', 'dateValues']) {
+    const v = meta[key];
+    if (
+      v &&
+      !(v instanceof Map) &&
+      typeof v === 'object' &&
+      Object.keys(v).length === 1 &&
+      Object.prototype.hasOwnProperty.call(v, '$*')
+    ) {
+      meta[key] = undefined;
+    }
+  }
+});
+
 topicSchema.index({ 'metadata.tags': 1 });
 topicSchema.index({ 'metadata.product': 1 });
 topicSchema.index({ 'metadata.indexedValues': 1 });

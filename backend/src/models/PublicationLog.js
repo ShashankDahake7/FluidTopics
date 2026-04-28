@@ -17,6 +17,7 @@ const PUBLICATION_LOG_CODES = [
   'extract_entry_too_large',
   'extract_complete',
   'extract_failed',
+  'extract_skipped',
   'validate_started',
   'validate_progress',
   'topic_file_not_found',
@@ -29,10 +30,13 @@ const PUBLICATION_LOG_CODES = [
   'no_parseable_content',
   'validate_complete',
   'validate_failed',
+  'validate_skipped',
+  'validate_cached',
   'publish_started',
   'publish_complete',
   'publish_failed',
   'publish_skipped',
+  'publish_locked',
   'unknown',
 ];
 
