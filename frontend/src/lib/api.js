@@ -194,6 +194,11 @@ const api = {
     if (!res.ok) await failResponse('POST', path, res);
     return res.json();
   },
+  async uploadPatch(path, formData) {
+    const res = await fetchWithOptionalRefresh(path, { method: 'PATCH', body: formData });
+    if (!res.ok) await failResponse('PATCH', path, res);
+    return res.json();
+  },
   async delete(path) {
     const res = await fetchWithOptionalRefresh(path, { method: 'DELETE' });
     if (!res.ok) await failResponse('DELETE', path, res);

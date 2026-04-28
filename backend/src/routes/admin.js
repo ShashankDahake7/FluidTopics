@@ -8,18 +8,6 @@ const SiteConfig = require('../models/SiteConfig');
 
 const router = express.Router();
 
-const VALID_PERMISSIONS = [
-  'PRINT_USER', 'RATING_USER', 'FEEDBACK_USER',
-  'GENERATIVE_AI_USER', 'GENERATIVE_AI_EXPORT_USER',
-  'PERSONAL_BOOK_USER', 'PERSONAL_BOOK_SHARE_USER',
-  'HTML_EXPORT_USER', 'PDF_EXPORT_USER',
-  'SAVED_SEARCH_USER', 'COLLECTION_USER',
-  'OFFLINE_USER', 'ANALYTICS_USER',
-  'BETA_USER', 'DEBUG_USER',
-];
-
-const ASSIGNABLE_ROLES = ['viewer', 'editor', 'admin', 'superadmin'];
-
 // GET /api/admin/stats
 router.get('/stats', auth, requireRole('admin'), async (req, res, next) => {
   try {
@@ -53,283 +41,9 @@ router.get('/stats', auth, requireRole('admin'), async (req, res, next) => {
   }
 });
 
-// GET /api/admin/users — paginated, filterable list.
-//   ?q= matches name or email (regex)
-//   ?role=admin|editor|viewer
-//   ?isActive=true|false
-//   ?group=<groupId>
-//   ?tag=<tag>
-//   ?page= ?limit=
-router.get('/users', auth, requireRole('superadmin'), async (req, res, next) => {
-  try {
-    const { q, role, isActive, group, tag, page = 1, limit = 50 } = req.query;
-    const filter = {};
-    if (q) {
-      const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const rx = new RegExp(escaped, 'i');
-      filter.$or = [{ name: rx }, { email: rx }];
-    }
-    if (role)     filter.role = role;
-    if (isActive !== undefined) filter.isActive = isActive === 'true' || isActive === '1';
-    if (group)    filter.groups = group;
-    if (tag)      filter.tags = tag;
-
-    const skip = (parseInt(page, 10) - 1) * parseInt(limit, 10);
-    const [users, total] = await Promise.all([
-      User.find(filter)
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(parseInt(limit, 10))
-        .select('name email role permissions isActive lastLogin emailVerified groups tags createdAt')
-        .populate('groups', 'name')
-        .lean(),
-      User.countDocuments(filter),
-    ]);
-
-    res.json({ users, total, page: parseInt(page, 10), limit: parseInt(limit, 10) });
-  } catch (error) {
-    next(error);
-  }
-});
-
-// GET /api/admin/users/:id — single user (incl. groups + tags).
-router.get('/users/:id', auth, requireRole('superadmin'), async (req, res, next) => {
-  try {
-    const mongoose = require('mongoose');
-    if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: 'Invalid id' });
-    const user = await User.findById(req.params.id)
-      .select('name email role permissions isActive lastLogin emailVerified groups tags createdAt updatedAt avatar preferences')
-      .populate('groups', 'name description')
-      .lean();
-    if (!user) return res.status(404).json({ error: 'User not found' });
-    res.json({ user });
-  } catch (error) {
-    next(error);
-  }
-});
-
-// POST /api/admin/users — create a user directly
-router.post('/users', auth, requireRole('superadmin'), async (req, res, next) => {
-  try {
-    const { name, email, password, role, permissions } = req.body;
-    if (!name || !email || !password) {
-      return res.status(400).json({ error: 'name, email and password are required' });
-    }
-
-    const exists = await User.findOne({ email: email.toLowerCase().trim() });
-    if (exists) return res.status(409).json({ error: 'Email already registered' });
-
-    if (role === 'superadmin' && req.user.role !== 'superadmin') {
-      return res.status(403).json({ error: 'Only a super administrator can assign that role.' });
-    }
-    const perms = (permissions || []).filter((p) => VALID_PERMISSIONS.includes(p));
-    const user = await User.create({
-      name,
-      email,
-      password,
-      role:        ASSIGNABLE_ROLES.includes(role) ? role : 'viewer',
-      permissions: perms,
-    });
-
-    res.status(201).json({ user: user.toJSON() });
-  } catch (error) {
-    next(error);
-  }
-});
-
-// PATCH /api/admin/users/:id — update user (role, permissions, isActive, name)
-router.patch('/users/:id', auth, requireRole('superadmin'), async (req, res, next) => {
-  try {
-    // Guard: cannot demote yourself below your current privilege tier
-    if (req.user._id.toString() === req.params.id && req.body.role) {
-      const next = req.body.role;
-      if (req.user.role === 'admin' && next !== 'admin') {
-        return res.status(400).json({ error: 'Cannot change your own role' });
-      }
-      if (req.user.role === 'superadmin' && !['superadmin', 'admin'].includes(next)) {
-        return res.status(400).json({ error: 'Cannot change your own role below admin' });
-      }
-    }
-
-    const updates = {};
-    if (req.body.name        !== undefined) updates.name        = req.body.name;
-    if (req.body.email       !== undefined) updates.email       = req.body.email;
-    if (req.body.isActive    !== undefined) updates.isActive    = req.body.isActive;
-    if (req.body.role        !== undefined) {
-      if (!ASSIGNABLE_ROLES.includes(req.body.role)) {
-        return res.status(400).json({ error: 'Invalid role' });
-      }
-      if (req.body.role === 'superadmin' && req.user.role !== 'superadmin') {
-        return res.status(403).json({ error: 'Only a super administrator can assign that role.' });
-      }
-      updates.role = req.body.role;
-    }
-    if (req.body.permissions !== undefined) {
-      updates.permissions = (req.body.permissions || []).filter((p) => VALID_PERMISSIONS.includes(p));
-    }
-
-    const user = await User.findByIdAndUpdate(req.params.id, updates, { new: true, runValidators: true });
-    if (!user) return res.status(404).json({ error: 'User not found' });
-
-    res.json({ user: user.toJSON() });
-  } catch (error) {
-    next(error);
-  }
-});
-
-// PATCH /api/admin/users/:id/role — legacy single-field role update
-router.patch('/users/:id/role', auth, requireRole('superadmin'), async (req, res, next) => {
-  try {
-    const { role } = req.body;
-    if (!ASSIGNABLE_ROLES.includes(role)) {
-      return res.status(400).json({ error: 'Invalid role' });
-    }
-    if (role === 'superadmin' && req.user.role !== 'superadmin') {
-      return res.status(403).json({ error: 'Only a super administrator can assign that role.' });
-    }
-    const user = await User.findByIdAndUpdate(req.params.id, { role }, { new: true });
-    if (!user) return res.status(404).json({ error: 'User not found' });
-    res.json({ user });
-  } catch (error) {
-    next(error);
-  }
-});
-
-// DELETE /api/admin/users/:id — remove a user
-router.delete('/users/:id', auth, requireRole('superadmin'), async (req, res, next) => {
-  try {
-    if (req.user._id.toString() === req.params.id) {
-      return res.status(400).json({ error: 'Cannot delete your own account' });
-    }
-    const user = await User.findByIdAndDelete(req.params.id);
-    if (!user) return res.status(404).json({ error: 'User not found' });
-    res.json({ message: 'User deleted' });
-  } catch (error) {
-    next(error);
-  }
-});
-
-// POST /api/admin/users/:id/password — admin sets another user's password.
-router.post('/users/:id/password', auth, requireRole('superadmin'), async (req, res, next) => {
-  try {
-    const { newPassword } = req.body || {};
-    if (!newPassword || newPassword.length < 6) {
-      return res.status(400).json({ error: 'newPassword (≥ 6 chars) is required' });
-    }
-    const user = await User.findById(req.params.id).select('+password');
-    if (!user) return res.status(404).json({ error: 'User not found' });
-    user.password = newPassword; // pre-save hook hashes
-    user.passwordResetToken = null;
-    user.passwordResetExpires = null;
-    await user.save();
-    res.json({ message: 'Password updated' });
-  } catch (error) {
-    next(error);
-  }
-});
-
-// POST /api/admin/users/:id/activate
-router.post('/users/:id/activate', auth, requireRole('superadmin'), async (req, res, next) => {
-  try {
-    const user = await User.findByIdAndUpdate(req.params.id, { isActive: true }, { new: true });
-    if (!user) return res.status(404).json({ error: 'User not found' });
-    res.json({ user });
-  } catch (error) { next(error); }
-});
-
-// POST /api/admin/users/:id/deactivate
-router.post('/users/:id/deactivate', auth, requireRole('superadmin'), async (req, res, next) => {
-  try {
-    if (req.user._id.toString() === req.params.id) {
-      return res.status(400).json({ error: 'Cannot deactivate your own account' });
-    }
-    const user = await User.findByIdAndUpdate(req.params.id, { isActive: false }, { new: true });
-    if (!user) return res.status(404).json({ error: 'User not found' });
-    res.json({ user });
-  } catch (error) { next(error); }
-});
-
-// GET / PUT /api/admin/users/:id/groups — get and replace group memberships.
-router.get('/users/:id/groups', auth, requireRole('superadmin'), async (req, res, next) => {
-  try {
-    const user = await User.findById(req.params.id).populate('groups').lean();
-    if (!user) return res.status(404).json({ error: 'User not found' });
-    res.json({ groups: user.groups || [] });
-  } catch (error) { next(error); }
-});
-
-router.put('/users/:id/groups', auth, requireRole('superadmin'), async (req, res, next) => {
-  try {
-    const { groupIds } = req.body || {};
-    if (!Array.isArray(groupIds)) return res.status(400).json({ error: 'groupIds[] required' });
-    const user = await User.findByIdAndUpdate(req.params.id, { groups: groupIds }, { new: true })
-      .populate('groups').lean();
-    if (!user) return res.status(404).json({ error: 'User not found' });
-    res.json({ groups: user.groups });
-  } catch (error) { next(error); }
-});
-
-// GET / PUT /api/admin/users/:id/tags
-router.get('/users/:id/tags', auth, requireRole('superadmin'), async (req, res, next) => {
-  try {
-    const user = await User.findById(req.params.id).select('tags').lean();
-    if (!user) return res.status(404).json({ error: 'User not found' });
-    res.json({ tags: user.tags || [] });
-  } catch (error) { next(error); }
-});
-
-router.put('/users/:id/tags', auth, requireRole('superadmin'), async (req, res, next) => {
-  try {
-    const { tags } = req.body || {};
-    if (!Array.isArray(tags)) return res.status(400).json({ error: 'tags[] required' });
-    const cleaned = tags.map((t) => String(t).trim()).filter(Boolean);
-    const user = await User.findByIdAndUpdate(req.params.id, { tags: cleaned }, { new: true });
-    if (!user) return res.status(404).json({ error: 'User not found' });
-    res.json({ tags: user.tags });
-  } catch (error) { next(error); }
-});
-
-// POST /api/admin/users/bulk — bulk-create from a JSON array.
-//   body: { users: [{ name, email, password, role, permissions, tags, groups }] }
-router.post('/users/bulk', auth, requireRole('superadmin'), async (req, res, next) => {
-  try {
-    const { users } = req.body || {};
-    if (!Array.isArray(users) || users.length === 0) {
-      return res.status(400).json({ error: 'users[] required' });
-    }
-    const created = [];
-    const skipped = [];
-    for (const row of users) {
-      const { name, email, password, role, permissions, tags, groups } = row || {};
-      if (!name || !email || !password) {
-        skipped.push({ email: email || '(missing)', reason: 'missing required fields' });
-        continue;
-      }
-      const exists = await User.findOne({ email: email.toLowerCase().trim() });
-      if (exists) {
-        skipped.push({ email, reason: 'already exists' });
-        continue;
-      }
-      try {
-        if (role === 'superadmin' && req.user.role !== 'superadmin') {
-          skipped.push({ email, reason: 'only superadmin may assign superadmin' });
-          continue;
-        }
-        const u = await User.create({
-          name, email, password,
-          role: ASSIGNABLE_ROLES.includes(role) ? role : 'viewer',
-          permissions: (permissions || []).filter((p) => VALID_PERMISSIONS.includes(p)),
-          tags:   (tags || []).map((t) => String(t).trim()).filter(Boolean),
-          groups: Array.isArray(groups) ? groups : [],
-        });
-        created.push({ _id: u._id, email: u.email });
-      } catch (e) {
-        skipped.push({ email, reason: e.message });
-      }
-    }
-    res.status(201).json({ created, skipped, createdCount: created.length, skippedCount: skipped.length });
-  } catch (error) { next(error); }
-});
+// User CRUD lives in routes/adminUsers.js (mounted at /api/admin in index.js).
+// The impersonate endpoint stays here because it depends on the auth/Session
+// machinery rather than the user-management plumbing.
 
 // POST /api/admin/users/:id/impersonate — issue a short-lived access token
 // that authenticates as the target user but carries the admin's id in the
@@ -437,6 +151,23 @@ router.post('/translation-profiles', auth, requireRole('admin'), async (req, res
 // Legal terms (Fluid Topics–style admin)
 // ---------------------------------------------------------------------------
 
+// `superadmin` / `admin` tier OR holders of the `PORTAL_ADMIN` administrative
+// role may edit the portal's legal terms. `editor` retains read-only access so
+// the existing legal-terms page stays browseable.
+function requireLegalTermsAdmin({ allowEditor = false } = {}) {
+  return (req, res, next) => {
+    if (!req.user) return res.status(401).json({ error: 'Authentication required.' });
+    if (req.user.role === 'superadmin' || req.user.role === 'admin') return next();
+    if (allowEditor && req.user.role === 'editor')                   return next();
+    if ((req.user.adminRoles || []).includes('PORTAL_ADMIN'))        return next();
+    return res.status(403).json({ error: 'Insufficient permissions.' });
+  };
+}
+
+let writeAuditLT = () => {};
+try { writeAuditLT = require('../services/users/auditService').writeAudit; }
+catch { /* audit helper optional in some test envs */ }
+
 function normalizeLegalMessages(raw, defaultLocale) {
   const fb = (defaultLocale || 'en').toLowerCase().split('-')[0];
   let list = Array.isArray(raw) ? raw.map((m) => ({
@@ -458,7 +189,7 @@ function normalizeLegalMessages(raw, defaultLocale) {
   return { list, fallbackLocale: fb };
 }
 
-router.get('/legal-terms', auth, requireRole('admin', 'editor'), async (req, res, next) => {
+router.get('/legal-terms', auth, requireLegalTermsAdmin({ allowEditor: true }), async (req, res, next) => {
   try {
     const cfg = await SiteConfig.getSingleton();
     const defaultLocale = (cfg.defaultLocale || 'en').toLowerCase().split('-')[0];
@@ -475,7 +206,7 @@ router.get('/legal-terms', auth, requireRole('admin', 'editor'), async (req, res
   }
 });
 
-router.put('/legal-terms', auth, requireRole('admin'), async (req, res, next) => {
+router.put('/legal-terms', auth, requireLegalTermsAdmin(), async (req, res, next) => {
   try {
     const cfg = await SiteConfig.getSingleton();
     const defaultLocale = (cfg.defaultLocale || 'en').toLowerCase().split('-')[0];
@@ -496,9 +227,27 @@ router.put('/legal-terms', auth, requireRole('admin'), async (req, res, next) =>
       }
     }
 
+    const before = {
+      enabled: !!cfg.legalTermsEnabled,
+      messages: (cfg.legalTermsMessages || []).map((m) => ({ ...(m.toObject ? m.toObject() : m) })),
+    };
+
     cfg.legalTermsEnabled = enabled;
     cfg.legalTermsMessages = list;
     await cfg.save();
+
+    try {
+      await writeAuditLT(req, {
+        action: 'legal-terms.update',
+        summary: `Legal terms ${enabled ? 'enabled' : 'disabled'} (v${cfg.legalTermsPolicyVersion || 0})`,
+        context: {
+          version: cfg.legalTermsPolicyVersion || 0,
+          before,
+          after: { enabled, messages: list },
+        },
+      });
+    } catch { /* fire-and-forget */ }
+
     res.json({
       defaultLocale,
       enabled: cfg.legalTermsEnabled,
@@ -511,15 +260,28 @@ router.put('/legal-terms', auth, requireRole('admin'), async (req, res, next) =>
   }
 });
 
-router.post('/legal-terms/new-version', auth, requireRole('admin'), async (req, res, next) => {
+router.post('/legal-terms/new-version', auth, requireLegalTermsAdmin(), async (req, res, next) => {
   try {
     const cfg = await SiteConfig.getSingleton();
     if (!cfg.legalTermsEnabled) {
       return res.status(400).json({ error: 'Enable legal terms before creating a new version.' });
     }
-    cfg.legalTermsPolicyVersion = (cfg.legalTermsPolicyVersion || 0) + 1;
+    const previousVersion = cfg.legalTermsPolicyVersion || 0;
+    cfg.legalTermsPolicyVersion = previousVersion + 1;
     cfg.legalTermsLastPolicyUpdateAt = new Date();
     await cfg.save();
+
+    try {
+      await writeAuditLT(req, {
+        action: 'legal-terms.new-version',
+        summary: `Bumped legal terms policy v${previousVersion} -> v${cfg.legalTermsPolicyVersion}; all users will be re-prompted`,
+        context: {
+          previousVersion,
+          newVersion: cfg.legalTermsPolicyVersion,
+        },
+      });
+    } catch { /* fire-and-forget */ }
+
     res.json({
       policyVersion: cfg.legalTermsPolicyVersion,
       lastPolicyUpdateAt: cfg.legalTermsLastPolicyUpdateAt,

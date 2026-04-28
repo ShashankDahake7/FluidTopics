@@ -1,65 +1,184 @@
 'use client';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import AdminShell from '@/components/admin/AdminShell';
+import api from '@/lib/api';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 
-// ── Initial saved configuration ────────────────────────────────────────────
-const SAVED = {
-  documents: [{ id: 'd1', template: '{ft:title}', requirements: [] }],
-  topics:    [{ id: 't1', template: '{document.ft:title}/{ft:title}', requirements: [] }],
-  removeAccents: true,
-  lowerCase:     false,
-};
-
-const HISTORY = {
-  lastDraft:    'Last draft by Guillaume OUDIN on Jan 27, 2023, 3:24:52 PM',
-  lastActivate: 'Last activation by Guillaume OUDIN on Jan 27, 2023, 3:24:52 PM',
-  lastApplyAll: 'Last application for all document by Prem GARUDADRI on Mar 11, 2026, 3:19:18 PM',
-};
-
+// ─── Helpers ───────────────────────────────────────────────────────────────
 const newId = () => `r${Math.random().toString(36).slice(2, 8)}`;
 
+// Pull the editable working set from the API response. Drafts win when
+// they exist; otherwise we clone the active rows so the editor always
+// has something to manipulate.
+function bucketsToWorkingSet(payload) {
+  const fromBucket = (b) => {
+    if (!b) return [];
+    const src = b.draft?.length ? b.draft : (b.active || []);
+    return src.map((r) => ({
+      id: r.id,
+      persisted: true,
+      state: r.state,
+      template: r.template || '',
+      requirements: (r.requirements || []).map((rq) => ({ ...rq })),
+      priority: r.priority || 0,
+      _source: r,
+    }));
+  };
+  return {
+    documents: fromBucket(payload?.documents),
+    topics: fromBucket(payload?.topics),
+  };
+}
+
+// Compare current working set against last-saved snapshot to flag dirty.
+function isDirty(working, baseline, configWorking, configBaseline) {
+  if (configWorking.removeAccents !== configBaseline.removeAccents) return true;
+  if (configWorking.lowercase !== configBaseline.lowercase) return true;
+  for (const scope of ['documents', 'topics']) {
+    if (working[scope].length !== baseline[scope].length) return true;
+    for (let i = 0; i < working[scope].length; i += 1) {
+      const a = working[scope][i];
+      const b = baseline[scope][i];
+      if (!b || a.id !== b.id) return true;
+      if ((a.template || '') !== (b.template || '')) return true;
+      const ar = JSON.stringify(a.requirements || []);
+      const br = JSON.stringify(b.requirements || []);
+      if (ar !== br) return true;
+    }
+  }
+  return false;
+}
+
+function formatDate(value) {
+  if (!value) return null;
+  try {
+    return new Date(value).toLocaleString();
+  } catch {
+    return null;
+  }
+}
+
+// ─── Main page ─────────────────────────────────────────────────────────────
 export default function PrettyUrlPage() {
-  const [config, setConfig]       = useState(SAVED);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [serverPayload, setServerPayload] = useState(null);
+  const [working, setWorking] = useState({ documents: [], topics: [] });
+  const [baseline, setBaseline] = useState({ documents: [], topics: [] });
+  const [config, setConfig] = useState({ removeAccents: true, lowercase: false });
+  const [configBaseline, setConfigBaseline] = useState({ removeAccents: true, lowercase: false });
   const [reqOpenFor, setReqOpenFor] = useState(null); // { section, ruleId }
-  const [confirm, setConfirm]     = useState(null);
-  const [viewOpen, setViewOpen]   = useState(false);
+  const [confirm, setConfirm] = useState(null);
+  const [viewOpen, setViewOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [toast, setToast] = useState(null);
+  const [reprocessJob, setReprocessJob] = useState(null);
+
+  const showToast = useCallback((kind, text) => {
+    setToast({ kind, text });
+    window.setTimeout(() => setToast(null), 3500);
+  }, []);
+
+  const reload = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const payload = await api.get('/pretty-urls/');
+      setServerPayload(payload);
+      const ws = bucketsToWorkingSet(payload);
+      setWorking(ws);
+      setBaseline(JSON.parse(JSON.stringify(ws)));
+      const cfg = {
+        removeAccents: !!payload?.config?.removeAccents,
+        lowercase: !!payload?.config?.lowercase,
+      };
+      setConfig(cfg);
+      setConfigBaseline(cfg);
+      setReprocessJob(payload?.runningJob || null);
+    } catch (err) {
+      setError(err?.message || 'Failed to load configuration');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { reload(); }, [reload]);
+
+  // Poll the running job until it terminates so the admin sees live
+  // progress without manually refreshing.
+  useEffect(() => {
+    if (!reprocessJob?.id) return undefined;
+    if (reprocessJob.status !== 'queued' && reprocessJob.status !== 'running') return undefined;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const { job } = await api.get(`/pretty-urls/jobs/${reprocessJob.id}`);
+        if (cancelled) return;
+        setReprocessJob(job);
+        if (job.status === 'queued' || job.status === 'running') {
+          window.setTimeout(poll, 1500);
+        } else {
+          // Refetch the global payload — config.pendingReprocess clears
+          // when the worker is done, and we want the action bar updated.
+          reload();
+        }
+      } catch {
+        if (!cancelled) window.setTimeout(poll, 3000);
+      }
+    };
+    const t = window.setTimeout(poll, 1500);
+    return () => { cancelled = true; window.clearTimeout(t); };
+  }, [reprocessJob?.id, reprocessJob?.status, reload]);
 
   const dirty = useMemo(
-    () => JSON.stringify(config) !== JSON.stringify(SAVED),
-    [config],
+    () => isDirty(working, baseline, config, configBaseline),
+    [working, baseline, config, configBaseline]
   );
+  const pendingReprocess = !!serverPayload?.config?.pendingReprocess;
 
-  // ── List helpers ────────────────────────────────────────────────────────
+  // ── List mutators ────────────────────────────────────────────────────
   const updateRule = (section, id, patch) => {
-    setConfig((prev) => ({
+    setWorking((prev) => ({
       ...prev,
       [section]: prev[section].map((r) => (r.id === id ? { ...r, ...patch } : r)),
     }));
   };
-  const moveRule = (section, id, dir) => {
-    setConfig((prev) => {
-      const list = [...prev[section]];
-      const idx = list.findIndex((r) => r.id === id);
-      const swap = idx + dir;
-      if (idx < 0 || swap < 0 || swap >= list.length) return prev;
-      [list[idx], list[swap]] = [list[swap], list[idx]];
-      return { ...prev, [section]: list };
-    });
-  };
   const removeRule = (section, id) => {
-    setConfig((prev) => ({
+    setWorking((prev) => ({
       ...prev,
       [section]: prev[section].filter((r) => r.id !== id),
     }));
   };
   const addRule = (section) => {
-    setConfig((prev) => ({
+    setWorking((prev) => ({
       ...prev,
-      [section]: [...prev[section], { id: newId(), template: '', requirements: [] }],
+      [section]: [...prev[section], {
+        id: newId(),
+        persisted: false,
+        state: 'draft',
+        template: '',
+        requirements: [],
+        priority: prev[section].length,
+      }],
     }));
   };
   const addRequirement = (section, id, requirement) => {
-    setConfig((prev) => ({
+    setWorking((prev) => ({
       ...prev,
       [section]: prev[section].map((r) => (
         r.id === id ? { ...r, requirements: [...r.requirements, requirement] } : r
@@ -67,22 +186,154 @@ export default function PrettyUrlPage() {
     }));
   };
   const removeRequirement = (section, id, idx) => {
-    setConfig((prev) => ({
+    setWorking((prev) => ({
       ...prev,
       [section]: prev[section].map((r) => (
         r.id === id ? { ...r, requirements: r.requirements.filter((_, i) => i !== idx) } : r
       )),
     }));
   };
+  const reorderSection = (section, fromId, toId) => {
+    if (fromId === toId) return;
+    setWorking((prev) => {
+      const list = prev[section];
+      const fromIdx = list.findIndex((r) => r.id === fromId);
+      const toIdx = list.findIndex((r) => r.id === toId);
+      if (fromIdx < 0 || toIdx < 0) return prev;
+      return { ...prev, [section]: arrayMove(list, fromIdx, toIdx) };
+    });
+  };
 
-  const onCancel    = () => setConfig(SAVED);
-  const onSaveDraft = () => alert('Draft saved.\n(Demo only)');
-  const onSaveAndActivate = () => alert('Pretty URL configuration saved and activated.\n(Demo only)');
+  // ── Reset working set back to the server's last load ─────────────────
+  const onCancel = () => {
+    setWorking(JSON.parse(JSON.stringify(baseline)));
+    setConfig({ ...configBaseline });
+  };
+
+  // Reset draft on the server (drops drafts, copies actives back).
+  const onResetDraft = async () => {
+    setBusy(true);
+    try {
+      await api.post('/pretty-urls/reset-draft', {});
+      await reload();
+      showToast('success', 'Draft reset to currently active configuration');
+    } catch (err) {
+      showToast('error', err?.message || 'Reset failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Persist the working set as drafts (server keeps actives untouched).
+  const onSaveDraft = async () => {
+    setBusy(true);
+    try {
+      // Wipe existing drafts
+      const oldDrafts = [
+        ...(serverPayload?.documents?.draft || []),
+        ...(serverPayload?.topics?.draft || []),
+      ];
+      for (const d of oldDrafts) {
+        try { await api.delete(`/pretty-urls/${d.id}`); }
+        catch (_) { /* ignore — best-effort */ }
+      }
+
+      // Insert new drafts in priority order so the server-side priority
+      // matches the on-screen order.
+      for (const [scope, key] of [['document', 'documents'], ['topic', 'topics']]) {
+        const list = working[key];
+        for (let i = 0; i < list.length; i += 1) {
+          const r = list[i];
+          if (!r.template?.trim()) continue;
+          await api.post('/pretty-urls', {
+            scope,
+            state: 'draft',
+            template: r.template,
+            requirements: r.requirements,
+            priority: i,
+          });
+        }
+      }
+
+      // Push normalization updates if they changed.
+      if (config.removeAccents !== configBaseline.removeAccents
+          || config.lowercase !== configBaseline.lowercase) {
+        await api.patch('/pretty-urls/config', config);
+      }
+
+      await reload();
+      showToast('success', 'Draft saved');
+    } catch (err) {
+      showToast('error', err?.message || 'Save failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Save the working set as the live active configuration and queue a
+  // reprocess job.
+  const onSaveAndActivate = async () => {
+    setBusy(true);
+    try {
+      const documents = working.documents
+        .filter((r) => r.template?.trim())
+        .map((r, i) => ({ template: r.template.trim(), requirements: r.requirements, priority: i }));
+      const topics = working.topics
+        .filter((r) => r.template?.trim())
+        .map((r, i) => ({ template: r.template.trim(), requirements: r.requirements, priority: i }));
+      const { job } = await api.post('/pretty-urls/save-and-activate', {
+        documents,
+        topics,
+        config,
+      });
+      setReprocessJob(job);
+      showToast('success', 'Saved and activated. Reprocess queued.');
+      await reload();
+    } catch (err) {
+      showToast('error', err?.message || 'Save & activate failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Queue a reprocess job without changing templates.
+  const onActivateForAll = async () => {
+    setBusy(true);
+    try {
+      const { job } = await api.post('/pretty-urls/reprocess', {});
+      setReprocessJob(job);
+      showToast('success', 'Reprocess queued for all documents.');
+      await reload();
+    } catch (err) {
+      showToast('error', err?.message || 'Reprocess failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <AdminShell active="khub-pretty-url" allowedRoles={['superadmin']}>
+        <div style={S.page}>
+          <div style={{ padding: 24, color: '#475569' }}>Loading Pretty URL configuration…</div>
+        </div>
+      </AdminShell>
+    );
+  }
+
+  const lastActivatedDisplay = formatDate(serverPayload?.config?.lastActivatedAt);
+  const lastJob = serverPayload?.lastJob;
+  const lastApplyAllDisplay = lastJob?.finishedAt ? formatDate(lastJob.finishedAt) : null;
 
   return (
     <AdminShell active="khub-pretty-url" allowedRoles={['superadmin']}>
       <div style={S.page}>
-        {/* Header */}
+        {error && (
+          <Notice variant="warning">
+            <strong>Failed to load:</strong> {error}
+          </Notice>
+        )}
+
         <header style={S.headerRow}>
           <div>
             <h1 style={S.h1}>Pretty URL</h1>
@@ -91,7 +342,6 @@ export default function PrettyUrlPage() {
           <button type="button" style={S.linkBtnPink} onClick={() => setViewOpen(true)}>View current configuration</button>
         </header>
 
-        {/* Top notices */}
         <Notice variant="info">
           <span style={{ fontWeight: 500 }}>See documentation:&nbsp;</span>
           <a href="https://doc.fluidtopics.com/r/Fluid-Topics-Configuration-and-Administration-Guide/Configure-a-Fluid-Topics-tenant/Knowledge-Hub/Pretty-URL"
@@ -101,36 +351,54 @@ export default function PrettyUrlPage() {
         </Notice>
 
         <Notice variant="info">
-          <div>{HISTORY.lastDraft}</div>
-          <div>{HISTORY.lastActivate}</div>
-          <div>{HISTORY.lastApplyAll}</div>
+          {lastActivatedDisplay && <div>Last activation: {lastActivatedDisplay}</div>}
+          {lastApplyAllDisplay && <div>Last application for all documents: {lastApplyAllDisplay}</div>}
+          {!lastActivatedDisplay && !lastApplyAllDisplay && (
+            <div>No activation has been recorded yet.</div>
+          )}
         </Notice>
+
+        {pendingReprocess && (
+          <Notice variant="warning">
+            You have unsaved changes. Save and activate to apply them, or reset draft to discard.
+          </Notice>
+        )}
+
+        {reprocessJob && (reprocessJob.status === 'queued' || reprocessJob.status === 'running') && (
+          <Notice variant="info">
+            Reprocessing in progress — {reprocessJob.processed || 0}/{reprocessJob.total || '?'} documents
+            {reprocessJob.errorCount ? ` (${reprocessJob.errorCount} errors)` : ''}.
+          </Notice>
+        )}
+        {reprocessJob && reprocessJob.status === 'failed' && (
+          <Notice variant="warning">
+            Last reprocess failed: {reprocessJob.lastError || 'Unknown error'}
+          </Notice>
+        )}
 
         <Notice variant="warning">
           Use metadata with a single value in Pretty URLs. For metadata with multiple values, the value used cannot be predicted.
         </Notice>
 
-        {/* ── Pretty URLs for documents ─────────────────────────────────── */}
         <Section
           title="Pretty URLs for documents"
           description="Defines pretty URLs for documents. Templates apply in the order listed."
         >
           <RulesList
-            rules={config.documents}
+            section="documents"
+            rules={working.documents}
             placeholder="example/{ft:title}"
             onChangeTemplate={(id, val) => updateRule('documents', id, { template: val })}
-            onMoveUp={(id) => moveRule('documents', id, -1)}
-            onMoveDown={(id) => moveRule('documents', id, +1)}
             onRemove={(id) => removeRule('documents', id)}
             onAddRequirement={(id) => setReqOpenFor({ section: 'documents', ruleId: id })}
             onRemoveRequirement={(id, idx) => removeRequirement('documents', id, idx)}
+            onReorder={(fromId, toId) => reorderSection('documents', fromId, toId)}
           />
           <button type="button" style={S.addBtn} onClick={() => addRule('documents')}>
             <PlusIcon /> Add template
           </button>
         </Section>
 
-        {/* ── Pretty URLs for topics ────────────────────────────────────── */}
         <Section
           title="Pretty URLs for topics"
           description="Defines pretty URLs for topics. Templates apply in the order listed."
@@ -138,24 +406,23 @@ export default function PrettyUrlPage() {
           <Notice variant="info">
             <div>Reference document’s metadata with <code style={S.code}>{`{document.metadata}`}</code>.</div>
             <div>Concatenate metadata of all parent topics and current topic with <code style={S.code}>{`{parents-and-self.metadata}`}</code>.</div>
-            <div>Reference document&apos;s generated URL with <code style={S.code}>{`{document.ft:prettyUrl}`}</code></div>
+            <div>Reference document&apos;s generated URL with <code style={S.code}>{`{document.ft:prettyUrl}`}</code>.</div>
           </Notice>
           <RulesList
-            rules={config.topics}
+            section="topics"
+            rules={working.topics}
             placeholder="example/{document.ft:title}/{ft:title}"
             onChangeTemplate={(id, val) => updateRule('topics', id, { template: val })}
-            onMoveUp={(id) => moveRule('topics', id, -1)}
-            onMoveDown={(id) => moveRule('topics', id, +1)}
             onRemove={(id) => removeRule('topics', id)}
             onAddRequirement={(id) => setReqOpenFor({ section: 'topics', ruleId: id })}
             onRemoveRequirement={(id, idx) => removeRequirement('topics', id, idx)}
+            onReorder={(fromId, toId) => reorderSection('topics', fromId, toId)}
           />
           <button type="button" style={S.addBtn} onClick={() => addRule('topics')}>
             <PlusIcon /> Add template
           </button>
         </Section>
 
-        {/* ── Normalization ─────────────────────────────────────────────── */}
         <Section
           title="Normalization"
           description="These operations are applied to all generated pretty URLs."
@@ -175,59 +442,60 @@ export default function PrettyUrlPage() {
           <label style={S.normalizationLine}>
             <input
               type="checkbox"
-              checked={config.lowerCase}
-              onChange={(e) => setConfig((p) => ({ ...p, lowerCase: e.target.checked }))}
+              checked={config.lowercase}
+              onChange={(e) => setConfig((p) => ({ ...p, lowercase: e.target.checked }))}
               style={S.checkboxInput}
             />
             <span>Transform to lower case</span>
           </label>
         </Section>
 
-        {/* ── Sticky bottom action bar ──────────────────────────────────── */}
         <footer style={S.actionsBar}>
           <div style={{ display: 'flex', gap: '8px' }}>
-            <button type="button" disabled={!dirty} onClick={onCancel}
-                    style={{ ...S.secondaryBtn, opacity: dirty ? 1 : 0.55, cursor: dirty ? 'pointer' : 'not-allowed' }}>
+            <button type="button" disabled={busy} onClick={() => setConfirm({ kind: 'resetDraft' })}
+                    style={{ ...S.secondaryBtn, opacity: busy ? 0.55 : 1, cursor: busy ? 'not-allowed' : 'pointer' }}>
               Reset draft
             </button>
-            <button type="button" onClick={() => setConfirm({ kind: 'activateAll' })}
-                    style={S.secondaryBtn}>
+            <button type="button" disabled={busy} onClick={() => setConfirm({ kind: 'activateAll' })}
+                    style={{ ...S.secondaryBtn, opacity: busy ? 0.55 : 1, cursor: busy ? 'not-allowed' : 'pointer' }}>
               Activate for all documents
             </button>
           </div>
           <div style={{ display: 'flex', gap: '8px', marginLeft: 'auto' }}>
-            <button type="button" disabled={!dirty} onClick={onCancel}
-                    style={{ ...S.cancelBtn, opacity: dirty ? 1 : 0.55, cursor: dirty ? 'pointer' : 'not-allowed' }}>
+            <button type="button" disabled={busy || !dirty} onClick={onCancel}
+                    style={{ ...S.cancelBtn, opacity: busy || !dirty ? 0.55 : 1, cursor: busy || !dirty ? 'not-allowed' : 'pointer' }}>
               <CrossIcon /> Cancel
             </button>
-            <button type="submit" disabled={!dirty} onClick={onSaveDraft}
-                    style={{ ...S.confirmBtn, opacity: dirty ? 1 : 0.55, cursor: dirty ? 'pointer' : 'not-allowed' }}>
+            <button type="button" disabled={busy || !dirty} onClick={onSaveDraft}
+                    style={{ ...S.confirmBtn, opacity: busy || !dirty ? 0.55 : 1, cursor: busy || !dirty ? 'not-allowed' : 'pointer' }}>
               <CheckIcon /> Save Draft
             </button>
-            <button type="submit" disabled={!dirty} onClick={onSaveAndActivate}
-                    style={{ ...S.confirmBtn, opacity: dirty ? 1 : 0.55, cursor: dirty ? 'pointer' : 'not-allowed' }}>
+            <button type="button" disabled={busy || !dirty} onClick={() => setConfirm({ kind: 'saveAndActivate' })}
+                    style={{ ...S.confirmBtn, opacity: busy || !dirty ? 0.55 : 1, cursor: busy || !dirty ? 'not-allowed' : 'pointer' }}>
               <CheckIcon /> Save and activate
             </button>
           </div>
         </footer>
       </div>
 
-      {/* View current configuration drawer */}
+      {toast && (
+        <div style={{ ...S.toast, ...(toast.kind === 'error' ? S.toastError : S.toastSuccess) }}>
+          {toast.text}
+        </div>
+      )}
+
       <CurrentConfigDrawer
         open={viewOpen}
-        config={SAVED}
-        history={HISTORY}
+        payload={serverPayload}
         onClose={() => setViewOpen(false)}
       />
 
-      {/* Add metadata requirement drawer */}
       <RequirementModal
         open={!!reqOpenFor}
         onCancel={() => setReqOpenFor(null)}
         onSave={(req) => { if (reqOpenFor) addRequirement(reqOpenFor.section, reqOpenFor.ruleId, req); setReqOpenFor(null); }}
       />
 
-      {/* Activate-for-all confirmation */}
       <ConfirmModal
         open={confirm?.kind === 'activateAll'}
         title="Activate for all documents?"
@@ -240,13 +508,37 @@ export default function PrettyUrlPage() {
         }
         confirmLabel="Activate"
         onCancel={() => setConfirm(null)}
-        onConfirm={() => { setConfirm(null); alert('Activation queued for all documents.\n(Demo only)'); }}
+        onConfirm={() => { setConfirm(null); onActivateForAll(); }}
+      />
+
+      <ConfirmModal
+        open={confirm?.kind === 'saveAndActivate'}
+        title="Save and activate?"
+        body={
+          <>
+            This will <strong>replace the active Pretty URL configuration</strong> with the current draft and queue a reprocess job for the entire corpus.
+            <br /><br />
+            Existing links may change.
+          </>
+        }
+        confirmLabel="Save and activate"
+        onCancel={() => setConfirm(null)}
+        onConfirm={() => { setConfirm(null); onSaveAndActivate(); }}
+      />
+
+      <ConfirmModal
+        open={confirm?.kind === 'resetDraft'}
+        title="Reset draft?"
+        body="The draft will be discarded and replaced with a fresh copy of the currently active configuration."
+        confirmLabel="Reset draft"
+        onCancel={() => setConfirm(null)}
+        onConfirm={() => { setConfirm(null); onResetDraft(); }}
       />
     </AdminShell>
   );
 }
 
-// ── Section wrapper ────────────────────────────────────────────────────────
+// ─── Section wrapper ───────────────────────────────────────────────────────
 function Section({ title, description, children }) {
   return (
     <section style={S.section}>
@@ -261,34 +553,63 @@ function Section({ title, description, children }) {
   );
 }
 
-// ── Rule list ──────────────────────────────────────────────────────────────
-function RulesList({ rules, placeholder, onChangeTemplate, onMoveUp, onMoveDown, onRemove, onAddRequirement, onRemoveRequirement }) {
+// ─── Sortable rule list (dnd-kit) ──────────────────────────────────────────
+function RulesList({ section, rules, placeholder, onChangeTemplate, onRemove, onAddRequirement, onRemoveRequirement, onReorder }) {
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  const handleDragEnd = (event) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    onReorder(active.id, over.id);
+  };
+
   return (
-    <div style={S.rulesWrap}>
-      {rules.map((r, idx) => (
-        <RuleCard
-          key={r.id}
-          number={idx + 1}
-          rule={r}
-          placeholder={placeholder}
-          isFirst={idx === 0}
-          isLast={idx === rules.length - 1}
-          onChangeTemplate={(val) => onChangeTemplate(r.id, val)}
-          onMoveUp={() => onMoveUp(r.id)}
-          onMoveDown={() => onMoveDown(r.id)}
-          onRemove={() => onRemove(r.id)}
-          onAddRequirement={() => onAddRequirement(r.id)}
-          onRemoveRequirement={(i) => onRemoveRequirement(r.id, i)}
-        />
-      ))}
-    </div>
+    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+      <SortableContext items={rules.map((r) => r.id)} strategy={verticalListSortingStrategy}>
+        <div style={S.rulesWrap}>
+          {rules.map((r, idx) => (
+            <SortableRuleCard
+              key={r.id}
+              section={section}
+              rule={r}
+              number={idx + 1}
+              placeholder={placeholder}
+              onChangeTemplate={(val) => onChangeTemplate(r.id, val)}
+              onRemove={() => onRemove(r.id)}
+              onAddRequirement={() => onAddRequirement(r.id)}
+              onRemoveRequirement={(i) => onRemoveRequirement(r.id, i)}
+            />
+          ))}
+        </div>
+      </SortableContext>
+    </DndContext>
   );
 }
 
-// ── Single rule card with material-style outlined input ────────────────────
-function RuleCard({ number, rule, placeholder, isFirst, isLast, onChangeTemplate, onMoveUp, onMoveDown, onRemove, onAddRequirement, onRemoveRequirement }) {
+function SortableRuleCard({ rule, number, placeholder, onChangeTemplate, onRemove, onAddRequirement, onRemoveRequirement }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: rule.id });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.6 : 1,
+    boxShadow: isDragging ? '0 4px 12px rgba(15,23,42,0.15)' : 'none',
+  };
+
   return (
-    <div style={S.ruleCard}>
+    <div ref={setNodeRef} style={{ ...S.ruleCard, ...style }}>
+      <button
+        type="button"
+        title="Drag to reorder"
+        aria-label="Drag to reorder"
+        {...attributes}
+        {...listeners}
+        style={S.dragHandle}
+      >
+        <DragIcon />
+      </button>
       <span style={S.ruleNumber}>{number}</span>
 
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -301,7 +622,11 @@ function RuleCard({ number, rule, placeholder, isFirst, isLast, onChangeTemplate
         <ul style={S.requirementsList}>
           {rule.requirements.map((req, i) => (
             <li key={i} style={S.requirementChip}>
-              <span><strong>{req.key}</strong>{req.value ? <> = {req.value}</> : null}</span>
+              <span>
+                <strong>{req.key}</strong>
+                {req.required === false ? <span style={S.optionalTag}>(optional)</span> : null}
+                {req.topicSource ? <span style={S.topicSourceTag}>topic source</span> : null}
+              </span>
               <button type="button" aria-label="Remove" onClick={() => onRemoveRequirement(i)} style={S.requirementRemove}>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
                   <line x1="18" y1="6" x2="6" y2="18" />
@@ -319,16 +644,6 @@ function RuleCard({ number, rule, placeholder, isFirst, isLast, onChangeTemplate
       </div>
 
       <div style={S.ruleActions}>
-        <IconBtn title="Move up"   disabled={isFirst} onClick={onMoveUp}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <polyline points="18 15 12 9 6 15" />
-          </svg>
-        </IconBtn>
-        <IconBtn title="Move down" disabled={isLast}  onClick={onMoveDown}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <polyline points="6 9 12 15 18 9" />
-          </svg>
-        </IconBtn>
         <IconBtn title="Remove template" onClick={onRemove} danger>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
             <line x1="18" y1="6" x2="6" y2="18" />
@@ -340,7 +655,7 @@ function RuleCard({ number, rule, placeholder, isFirst, isLast, onChangeTemplate
   );
 }
 
-// ── Material outlined input with floating "Template" label ─────────────────
+// ─── Material outlined input ───────────────────────────────────────────────
 function MaterialInput({ label, placeholder, value, onChange }) {
   const [focused, setFocused] = useState(false);
   const inputRef = useRef(null);
@@ -423,7 +738,7 @@ function MaterialInput({ label, placeholder, value, onChange }) {
   );
 }
 
-// ── Notice (info / warning) ────────────────────────────────────────────────
+// ─── Notice (info / warning) ───────────────────────────────────────────────
 function Notice({ variant = 'info', children }) {
   const palette = variant === 'warning'
     ? { bg: '#fef3c7', border: '#fde68a', icon: '#b45309', text: '#78350f' }
@@ -455,7 +770,6 @@ function Notice({ variant = 'info', children }) {
   );
 }
 
-// ── Icon button (square actions on rule card) ──────────────────────────────
 function IconBtn({ title, danger, disabled, onClick, children }) {
   return (
     <button
@@ -497,15 +811,28 @@ const CrossIcon = () => (
     <line x1="6" y1="6" x2="18" y2="18" />
   </svg>
 );
+const DragIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <circle cx="9" cy="6" r="1" />
+    <circle cx="9" cy="12" r="1" />
+    <circle cx="9" cy="18" r="1" />
+    <circle cx="15" cy="6" r="1" />
+    <circle cx="15" cy="12" r="1" />
+    <circle cx="15" cy="18" r="1" />
+  </svg>
+);
 
-// ── Add metadata requirement modal ─────────────────────────────────────────
+// ─── Add metadata requirement modal ────────────────────────────────────────
 function RequirementModal({ open, onCancel, onSave }) {
-  const [keyVal, setKeyVal]     = useState('');
-  const [valueVal, setValueVal] = useState('');
+  const [keyVal, setKeyVal] = useState('');
+  const [requiredVal, setRequiredVal] = useState(true);
+  const [topicSourceVal, setTopicSourceVal] = useState(false);
 
   useEffect(() => {
     if (!open) return undefined;
-    setKeyVal(''); setValueVal('');
+    setKeyVal('');
+    setRequiredVal(true);
+    setTopicSourceVal(false);
     const onKey = (e) => { if (e.key === 'Escape') onCancel?.(); };
     window.addEventListener('keydown', onKey);
     const prev = document.body.style.overflow;
@@ -525,14 +852,32 @@ function RequirementModal({ open, onCancel, onSave }) {
         </header>
         <div style={{ padding: '20px 22px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
           <p style={{ margin: 0, fontSize: '0.86rem', color: '#475569' }}>
-            The template will only apply to documents that match this metadata requirement.
+            The template will only apply when this metadata key resolves successfully.
           </p>
-          <MaterialInput label="Metadata key" placeholder="ft:sourceType"  value={keyVal}   onChange={setKeyVal} />
-          <MaterialInput label="Required value (optional)" placeholder="any value" value={valueVal} onChange={setValueVal} />
+          <MaterialInput label="Metadata key" placeholder="ft:sourceType" value={keyVal} onChange={setKeyVal} />
+          <label style={S.normalizationLine}>
+            <input
+              type="checkbox"
+              checked={requiredVal}
+              onChange={(e) => setRequiredVal(e.target.checked)}
+              style={S.checkboxInput}
+            />
+            <span>Required (template only matches when this key has a value)</span>
+          </label>
+          <label style={S.normalizationLine}>
+            <input
+              type="checkbox"
+              checked={topicSourceVal}
+              onChange={(e) => setTopicSourceVal(e.target.checked)}
+              style={S.checkboxInput}
+            />
+            <span>Resolve from the topic itself (only valid for topic templates)</span>
+          </label>
         </div>
         <div style={S.modalFooter}>
           <button type="button" onClick={onCancel} style={S.linkBtn}>Cancel</button>
-          <button type="button" disabled={!valid} onClick={() => valid && onSave({ key: keyVal.trim(), value: valueVal.trim() })}
+          <button type="button" disabled={!valid}
+                  onClick={() => valid && onSave({ key: keyVal.trim(), required: requiredVal, topicSource: topicSourceVal })}
                   style={{ ...S.confirmBtn, opacity: valid ? 1 : 0.55, cursor: valid ? 'pointer' : 'not-allowed' }}>
             <CheckIcon /> Add requirement
           </button>
@@ -542,8 +887,8 @@ function RequirementModal({ open, onCancel, onSave }) {
   );
 }
 
-// ── Current Pretty URL configuration drawer (read-only) ───────────────────
-function CurrentConfigDrawer({ open, config, history, onClose }) {
+// ─── Current configuration drawer (read-only view of *active* set) ─────────
+function CurrentConfigDrawer({ open, payload, onClose }) {
   useEffect(() => {
     if (!open) return undefined;
     const onKey = (e) => { if (e.key === 'Escape') onClose?.(); };
@@ -554,6 +899,9 @@ function CurrentConfigDrawer({ open, config, history, onClose }) {
   }, [open, onClose]);
 
   if (!open) return null;
+
+  const cfg = payload?.config || {};
+  const lastActivatedDisplay = formatDate(cfg.lastActivatedAt);
 
   return (
     <div role="presentation" onClick={onClose} style={S.drawerScrim}>
@@ -572,22 +920,24 @@ function CurrentConfigDrawer({ open, config, history, onClose }) {
         </header>
 
         <div style={S.drawerBody}>
-          <Notice variant="info">{history.lastActivate}</Notice>
+          {lastActivatedDisplay && (
+            <Notice variant="info">Last activated: {lastActivatedDisplay}</Notice>
+          )}
 
           <section>
             <h3 style={S.drawerSection}>Normalization</h3>
-            <ReadOnlyCheck checked={config.removeAccents} label="Remove accents and other UTF-8 combining characters" />
-            <ReadOnlyCheck checked={config.lowerCase}     label="Transform to lower case" />
+            <ReadOnlyCheck checked={!!cfg.removeAccents} label="Remove accents and other UTF-8 combining characters" />
+            <ReadOnlyCheck checked={!!cfg.lowercase} label="Transform to lower case" />
           </section>
 
           <section>
             <h3 style={S.drawerSection}>Pretty URLs for documents</h3>
-            <ReadOnlyRules rules={config.documents} />
+            <ReadOnlyRules rules={payload?.documents?.active || []} />
           </section>
 
           <section>
             <h3 style={S.drawerSection}>Pretty URLs for topics</h3>
-            <ReadOnlyRules rules={config.topics} />
+            <ReadOnlyRules rules={payload?.topics?.active || []} />
           </section>
         </div>
       </aside>
@@ -609,7 +959,9 @@ function ReadOnlyRules({ rules }) {
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginLeft: '8px' }}>
               {r.requirements.map((req, i) => (
                 <span key={i} style={S.requirementChip}>
-                  <strong>{req.key}</strong>{req.value ? <> = {req.value}</> : null}
+                  <strong>{req.key}</strong>
+                  {req.required === false ? <span style={S.optionalTag}>(optional)</span> : null}
+                  {req.topicSource ? <span style={S.topicSourceTag}>topic source</span> : null}
                 </span>
               ))}
             </div>
@@ -675,7 +1027,7 @@ function ConfirmModal({ open, title, body, confirmLabel = 'Confirm', onCancel, o
   );
 }
 
-// ── Styles ─────────────────────────────────────────────────────────────────
+// ─── Styles ────────────────────────────────────────────────────────────────
 const S = {
   page: { display: 'flex', flexDirection: 'column', gap: '14px', paddingBottom: '64px' },
   headerRow: {
@@ -700,6 +1052,18 @@ const S = {
     background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px',
     padding: '12px 14px',
   },
+  dragHandle: {
+    background: 'transparent',
+    border: 'none',
+    padding: '6px',
+    cursor: 'grab',
+    color: '#94a3b8',
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    borderRadius: '4px',
+    flexShrink: 0,
+    marginTop: '6px',
+    touchAction: 'none',
+  },
   ruleNumber: {
     width: '24px', height: '24px', borderRadius: '999px',
     background: '#fdf2f8', color: '#a21caf', fontWeight: 600, fontSize: '0.78rem',
@@ -718,6 +1082,22 @@ const S = {
     padding: '4px 8px', borderRadius: '999px',
     background: '#fdf2f8', border: '1px solid #f5d0fe', color: '#a21caf',
     fontSize: '0.74rem', fontWeight: 500,
+  },
+  optionalTag: {
+    fontSize: '0.7rem',
+    color: '#64748b',
+    fontWeight: 400,
+    marginLeft: '4px',
+  },
+  topicSourceTag: {
+    fontSize: '0.7rem',
+    color: '#1e3a8a',
+    background: '#dbeafe',
+    border: '1px solid #bfdbfe',
+    borderRadius: '999px',
+    padding: '0 6px',
+    fontWeight: 500,
+    marginLeft: '4px',
   },
   requirementRemove: {
     background: 'transparent', border: 'none', cursor: 'pointer',
@@ -868,5 +1248,28 @@ const S = {
     background: '#fff', border: '1px solid #e2e8f0', borderRadius: '3px',
     padding: '6px 10px', fontFamily: 'var(--font-mono, monospace)',
     fontSize: '0.85rem', color: '#0f172a',
+  },
+  toast: {
+    position: 'fixed',
+    bottom: '24px',
+    right: '24px',
+    padding: '12px 16px',
+    borderRadius: '6px',
+    fontFamily: 'var(--font-sans)',
+    fontSize: '0.86rem',
+    fontWeight: 500,
+    boxShadow: '0 8px 24px rgba(15,23,42,0.18)',
+    zIndex: 10002,
+    maxWidth: '420px',
+  },
+  toastSuccess: {
+    background: '#dcfce7',
+    border: '1px solid #86efac',
+    color: '#166534',
+  },
+  toastError: {
+    background: '#fee2e2',
+    border: '1px solid #fca5a5',
+    color: '#991b1b',
   },
 };

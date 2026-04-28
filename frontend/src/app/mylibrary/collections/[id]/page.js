@@ -4,6 +4,7 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import api from '@/lib/api';
 import { useTranslation } from '@/lib/i18n';
+import { hrefForTopic } from '@/lib/prettyUrl';
 import MyLibrarySidebar from '@/components/mylibrary/MyLibrarySidebar';
 import { myLibraryStyles as s } from '../../mylibraryStyles';
 
@@ -52,7 +53,12 @@ function portalHref(topic) {
   const docId = topic.documentId != null ? String(topic.documentId) : '';
   const tid = topic._id != null ? String(topic._id) : '';
   if (!docId || !tid) return null;
-  return `/dashboard/docs/${docId}?topic=${encodeURIComponent(tid)}`;
+  // Server enriches collection topics with `documentPrettyUrl` and the
+  // topic's own `prettyUrl`, so hrefForTopic resolves to /r/<...> when
+  // a template matched and falls back to /dashboard/docs/<id>?topic=…
+  // when nothing matched.
+  const parentDoc = { _id: docId, prettyUrl: topic.documentPrettyUrl || '' };
+  return hrefForTopic({ ...topic, _id: tid }, parentDoc);
 }
 
 export default function CollectionDetailPage() {

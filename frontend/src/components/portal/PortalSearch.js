@@ -50,6 +50,20 @@ export default function PortalSearch() {
     router.push(`/search?q=${encodeURIComponent(term)}`);
   };
 
+  // Custom-template suggestions carry { kind: 'template', href } so a
+  // click on Release Notes goes straight to /dashboard/templates/release-notes
+  // rather than re-running the query through /search?q=. Other suggestions
+  // (topic-title autocomplete) keep the legacy search-rerun behaviour.
+  const goToSuggestion = (suggestion) => {
+    if (!suggestion) return;
+    setOpen(false);
+    if (suggestion.kind === 'template' && suggestion.href) {
+      router.push(suggestion.href);
+      return;
+    }
+    goToResults(suggestion.text);
+  };
+
   const onKeyDown = (e) => {
     if (!open || suggestions.length === 0) {
       if (e.key === 'Enter') { e.preventDefault(); goToResults(); }
@@ -63,7 +77,7 @@ export default function PortalSearch() {
       setActive((i) => (i <= 0 ? suggestions.length - 1 : i - 1));
     } else if (e.key === 'Enter') {
       e.preventDefault();
-      if (active >= 0) goToResults(suggestions[active].text);
+      if (active >= 0) goToSuggestion(suggestions[active]);
       else goToResults();
     } else if (e.key === 'Escape') {
       setOpen(false);
@@ -105,24 +119,52 @@ export default function PortalSearch() {
 
       {open && suggestions.length > 0 && (
         <ul id="portal-search-suggest" className="portal-search-suggest" role="listbox">
-          {suggestions.map((s, i) => (
-            <li key={`${s.id}-${i}`} role="option" aria-selected={i === active}>
-              <button
-                type="button"
-                className={`portal-search-suggest-item${i === active ? ' is-active' : ''}`}
-                onMouseEnter={() => setActive(i)}
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => goToResults(s.text)}
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
-                  stroke="#94a3b8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="11" cy="11" r="8" />
-                  <path d="m21 21-4.3-4.3" />
-                </svg>
-                <span>{s.text}</span>
-              </button>
-            </li>
-          ))}
+          {suggestions.map((s, i) => {
+            const isTemplate = s.kind === 'template';
+            return (
+              <li key={`${s.id}-${i}`} role="option" aria-selected={i === active}>
+                <button
+                  type="button"
+                  className={`portal-search-suggest-item${i === active ? ' is-active' : ''}`}
+                  onMouseEnter={() => setActive(i)}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => goToSuggestion(s)}
+                >
+                  {isTemplate ? (
+                    // Document-style icon flags this as a static page,
+                    // not a topic-title autocomplete.
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                      stroke="#1d4ed8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                      <polyline points="14 2 14 8 20 8" />
+                    </svg>
+                  ) : (
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                      stroke="#94a3b8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="11" cy="11" r="8" />
+                      <path d="m21 21-4.3-4.3" />
+                    </svg>
+                  )}
+                  <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {s.text}
+                  </span>
+                  {isTemplate && (
+                    <span
+                      style={{
+                        background: '#eef4ff', color: '#1d4ed8',
+                        padding: '2px 6px', borderRadius: '4px',
+                        fontSize: '0.65rem', fontWeight: 700,
+                        letterSpacing: '0.06em', textTransform: 'uppercase',
+                        marginLeft: '8px', flexShrink: 0,
+                      }}
+                    >
+                      Page
+                    </span>
+                  )}
+                </button>
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>

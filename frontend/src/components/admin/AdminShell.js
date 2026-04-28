@@ -15,7 +15,8 @@ const SECTIONS = [
   {
     key: 'khub',
     title: 'Knowledge Hub',
-    allowedRoles: ['superadmin'],
+    allowedRoles: ['superadmin', 'admin'],
+    allowedAdminRoles: ['KHUB_ADMIN'],
     icon: (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <line x1="22" y1="2" x2="11" y2="13" />
@@ -29,7 +30,13 @@ const SECTIONS = [
       { key: 'khub-vocab',      label: 'Vocabularies',           href: '/admin/khub/vocabularies', allowedRoles: ['superadmin'] },
       { key: 'khub-metadata',   label: 'Metadata configuration', href: '/admin/khub/metadata',     allowedRoles: ['superadmin'] },
       { key: 'khub-pretty-url', label: 'Pretty URL',             href: '/admin/khub/pretty-url',   allowedRoles: ['superadmin'] },
-      { key: 'khub-access',     label: 'Access rules',           href: '/admin/khub/access-rules', allowedRoles: ['superadmin'] },
+      {
+        key: 'khub-access',
+        label: 'Access rules',
+        href: '/admin/khub/access-rules',
+        allowedRoles: ['superadmin', 'admin'],
+        allowedAdminRoles: ['KHUB_ADMIN'],
+      },
     ],
   },
   {
@@ -44,9 +51,27 @@ const SECTIONS = [
       </svg>
     ),
     items: [
-      { key: 'manage-users-list', label: 'Manage users',    href: '/admin/users',           allowedRoles: ['superadmin'] },
-      { key: 'legal-terms',       label: 'Legal terms',     href: '/admin/legal-terms' },
-      { key: 'authentication',    label: 'Authentication',  href: '/admin/authentication' },
+      {
+        key: 'manage-users-list',
+        label: 'Manage users',
+        href: '/admin/users',
+        allowedRoles: ['superadmin', 'admin'],
+        allowedAdminRoles: ['USERS_ADMIN'],
+      },
+      {
+        key: 'legal-terms',
+        label: 'Legal terms',
+        href: '/admin/legal-terms',
+        allowedRoles: ['superadmin', 'admin', 'editor'],
+        allowedAdminRoles: ['PORTAL_ADMIN'],
+      },
+      {
+        key: 'authentication',
+        label: 'Authentication',
+        href: '/admin/authentication',
+        allowedRoles: ['superadmin', 'admin'],
+        allowedAdminRoles: ['PORTAL_ADMIN'],
+      },
     ],
   },
   {
@@ -59,8 +84,20 @@ const SECTIONS = [
       </svg>
     ),
     items: [
-      { key: 'notif-email',    label: 'Email',    href: '/admin/notifications/email' },
-      { key: 'notif-feedback', label: 'Feedback', href: '/admin/notifications/feedback' },
+      {
+        key: 'notif-email',
+        label: 'Email',
+        href: '/admin/notifications/email',
+        allowedRoles: ['superadmin', 'admin'],
+        allowedAdminRoles: ['PORTAL_ADMIN'],
+      },
+      {
+        key: 'notif-feedback',
+        label: 'Feedback',
+        href: '/admin/notifications/feedback',
+        allowedRoles: ['superadmin', 'admin'],
+        allowedAdminRoles: ['PORTAL_ADMIN'],
+      },
       { key: 'notif-rating',   label: 'Rating',   href: '/admin/notifications/rating' },
       { key: 'notif-alerts',   label: 'Alerts',   href: '/admin/notifications/alerts' },
     ],
@@ -106,6 +143,9 @@ export default function AdminShell({
   children,
   footer,
   allowedRoles = ['superadmin', 'admin', 'editor'],
+  // Pages may additionally admit users that hold one of these `adminRoles`
+  // (administrative roles, e.g. USERS_ADMIN), bypassing the tier check above.
+  allowedAdminRoles = [],
   // Most admin screens look best capped at the default 1280px content width.
   // A few data-heavy ones (Publishing history table) want to use the full
   // viewport instead — they pass `fullWidth` to opt in.
@@ -114,6 +154,7 @@ export default function AdminShell({
   const router = useRouter();
   const [authChecked, setAuthChecked] = useState(false);
   const [userRole, setUserRole] = useState(null);
+  const [userAdminRoles, setUserAdminRoles] = useState([]);
   const [openSections, setOpenSections] = useState(() => {
     const init = {};
     SECTIONS.forEach((s) => {
@@ -131,27 +172,43 @@ export default function AdminShell({
     }
     try {
       const u = getStoredUser();
-      if (!u || !['superadmin', 'admin', 'editor'].includes(u.role)) {
+      const tierOk     = u && ['superadmin', 'admin', 'editor'].includes(u.role);
+      const adminRoleOk = u && Array.isArray(u.adminRoles)
+        && allowedAdminRoles.length > 0
+        && u.adminRoles.some((r) => allowedAdminRoles.includes(r));
+      if (!tierOk && !adminRoleOk) {
         router.replace('/dashboard');
         return;
       }
       // Per-page restriction (e.g. superadmin-only screens). The /admin landing
       // dashboard no longer exists, so admins/editors who hit a screen they are
-      // not entitled to are bounced to the user-facing dashboard.
-      if (allowedRoles && !allowedRoles.includes(u.role)) {
+      // not entitled to are bounced to the user-facing dashboard. The
+      // `allowedAdminRoles` escape hatch lets an admin-role grantee in even if
+      // their tier role would otherwise be too low.
+      if (allowedRoles && !allowedRoles.includes(u.role) && !adminRoleOk) {
         router.replace('/dashboard');
         return;
       }
       setUserRole(u.role);
+      setUserAdminRoles(Array.isArray(u.adminRoles) ? u.adminRoles : []);
     } catch { router.replace('/login'); return; }
     setAuthChecked(true);
   }, []);
 
+  // A section/item is visible when the tier role matches *or* an explicitly
+  // listed administrative role is held by the user.
+  const matchEntry = (entry) => {
+    if (!entry.allowedRoles && !entry.allowedAdminRoles) return true;
+    if (entry.allowedRoles && entry.allowedRoles.includes(userRole)) return true;
+    if (entry.allowedAdminRoles && userAdminRoles.some((r) => entry.allowedAdminRoles.includes(r))) return true;
+    return false;
+  };
+
   const visibleSections = SECTIONS
-    .filter((sec) => !sec.allowedRoles || sec.allowedRoles.includes(userRole))
+    .filter(matchEntry)
     .map((sec) => ({
       ...sec,
-      items: sec.items.filter((it) => !it.allowedRoles || it.allowedRoles.includes(userRole)),
+      items: sec.items.filter(matchEntry),
     }))
     .filter((sec) => sec.items.length > 0);
 

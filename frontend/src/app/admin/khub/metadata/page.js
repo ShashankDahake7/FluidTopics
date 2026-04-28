@@ -1,97 +1,47 @@
 'use client';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AdminShell from '@/components/admin/AdminShell';
+import api from '@/lib/api';
 
-// ── Mock data ──────────────────────────────────────────────────────────────
-// `system` rows mirror Darwinbox's built-in metadata (no edit/delete control).
-// `dateLocked` means the "Set as date" checkbox is rendered disabled because
-// the platform owns that flag for `ft:*` keys.
-const SEED = [
-  { key: 'audience',                       values: [],                                                                                                                          indexed: true,  isDate: false, system: false, dateLocked: false },
-  { key: 'author_personname',              values: ['Darwinbox','Debapriya Hajara','Lenin Elvira','Nilanjan Guha','Payal Tikait','Praseeda Udaykumar','Rashmi Menon','Shikha Gheyee','Shivani Kothakapu','Srilakshmi TVN'], indexed: true,  isDate: false, system: true,  dateLocked: false },
-  { key: 'authorgroup_author_personname',  values: ['Prem Garudadri'],                                                                                                          indexed: false, isDate: false, system: true,  dateLocked: false },
-  { key: 'category',                       values: [],                                                                                                                          indexed: false, isDate: false, system: false, dateLocked: false },
-  { key: 'copyright',                      values: ['Holder','Shivani Kothakapu'],                                                                                              indexed: false, isDate: false, system: true,  dateLocked: false },
-  { key: 'Created_by',                     values: ['633198969b32cfef932661c2 (Aug 05, 2024)','633198969b32cfef932661c2 (Feb 01, 2023)','633198969b32cfef932661c2 (Jun 05, 2024)','712020:2206c7be-c4c2-423e-8fe8-9bfb6b235ba3 (Sep 04, 2024)'], indexed: false, isDate: false, system: true, dateLocked: false },
-  { key: 'creationDate',                   values: ['2022-04-01','2022-04-04','2022-04-05','2022-04-06','2022-04-07','2022-04-11','2022-04-12','2022-04-19','2022-05-11','2022-05-16'],  indexed: false, isDate: false, system: true,  dateLocked: false },
-  { key: 'data_origin_id',                 values: ['UUID-0005f267-43e7-9dac-97e1-12193c4e45ef','UUID-00086742-2877-5551-5f5c-d70d98185b14','UUID-00119b36-e6ba-64bc-4d31-28acbddd4659','UUID-001279ac-8e3d-e151-140c-62c09cdade11','UUID-001f610d-9c65-0e0a-423b-56af5ed8f3aa','UUID-0021adf2-3f2b-5ab2-326e-99385c889067','UUID-00238349-786a-ecd2-b304-d2d0783b08d4','UUID-0037fed5-0567-a6f1-e50a-92072392bc16','UUID-00424af7-6080-b74c-81f2-0f6f35b15ad7','UUID-004b3ea7-0b7e-f158-d3fc-fcab1c43173d'], indexed: false, isDate: false, system: true, dateLocked: false },
-  { key: 'data_time_modified',             values: [],                                                                                                                          indexed: false, isDate: false, system: false, dateLocked: false },
-  { key: 'datatimemodified',               values: [],                                                                                                                          indexed: false, isDate: false, system: false, dateLocked: false },
-  { key: 'ft:alertTimestamp',              values: ['1667433600','1667520000','1667779200','1668643200','1668729600','1669248000','1670457600','1673395200','1673827200','1674777600'], indexed: false, isDate: false, system: true,  dateLocked: true  },
-  { key: 'ft:attachmentsSize',             values: ['0'],                                                                                                                       indexed: false, isDate: false, system: true,  dateLocked: true  },
-  { key: 'ft:baseId',                      values: ["'Click-Here'-option-in-Emails-Not-Working_4415356964.html",'#Alabama-Absence&LeaveManagement','#Alabama-Attendance','#Alabama-Overtime','#Alaska-Absence&LeaveManagement','#Alaska-Attendance','#Alaska-HolidayCalendar','#Alaska-Overtime','#Arizona-Absence&LeaveManagement','#Arizona-Attendance'], indexed: false, isDate: false, system: true, dateLocked: true },
-  { key: 'ft:clusterId',                   values: ["'Click-Here'-option-in-Emails-Not-Working_4415356964.html",'#Alabama-Absence&LeaveManagement','#Alabama-Attendance','#Alabama-Overtime','#Alaska-Absence&LeaveManagement','#Alaska-Attendance','#Alaska-HolidayCalendar','#Alaska-Overtime','#Arizona-Absence&LeaveManagement','#Arizona-Attendance'], indexed: false, isDate: false, system: true, dateLocked: true },
-  { key: 'ft:container',                   values: ['book'],                                                                                                                    indexed: false, isDate: false, system: true,  dateLocked: true  },
-  { key: 'ft:contentSize',                 values: ['0','100151','10051284','1118795','118626','12801950','13496505','142331','144219','14492757'],                              indexed: false, isDate: false, system: true,  dateLocked: true  },
-  { key: 'ft:document_type',               values: ['document','map','topic'],                                                                                                  indexed: false, isDate: false, system: true,  dateLocked: true  },
-  { key: 'ft:editorialType',               values: ['book'],                                                                                                                    indexed: false, isDate: false, system: true,  dateLocked: true  },
-  { key: 'ft:filename',                    values: ['AI Accelerator Pack + Knowledge Management Platform .pdf','Ask Darwin Sense AI.pdf','Carry forward communication_FAQs.pdf','ClearTax_file_ITR.pdf','Darwinbox AI Accelerator Pack.pdf','Darwinbox Workflows Okta.pdf','Darwinbox_AI_Pack-en.pdf','Darwinbox_Entra_Fields_Mapping.xlsx','Darwinbox_Entra_Permissions_Mapping 1.xlsx','Darwinbox_Entra_SCIM_Domain_Mapping 2.xlsx'], indexed: false, isDate: false, system: true, dateLocked: true },
-  { key: 'ft:isArticle',                   values: ['false'],                                                                                                                   indexed: false, isDate: false, system: true,  dateLocked: true  },
-  { key: 'ft:isAttachment',                values: ['false'],                                                                                                                   indexed: false, isDate: false, system: true,  dateLocked: true  },
-  { key: 'ft:isBook',                      values: ['false','true'],                                                                                                            indexed: false, isDate: false, system: true,  dateLocked: true  },
-  { key: 'ft:isHtmlPackage',               values: ['false'],                                                                                                                   indexed: false, isDate: false, system: true,  dateLocked: true  },
-  { key: 'ft:isPublication',               values: ['false','true'],                                                                                                            indexed: false, isDate: false, system: true,  dateLocked: true  },
-  { key: 'ft:isSynchronousAttachment',     values: ['false'],                                                                                                                   indexed: false, isDate: false, system: true,  dateLocked: true  },
-  { key: 'ft:isUnstructured',              values: ['false','true'],                                                                                                            indexed: false, isDate: false, system: true,  dateLocked: true  },
-  { key: 'ft:khubVersion',                 values: ['5.0.214','5.0.218','5.0.219','5.1.0','5.1.3','5.1.4','5.1.5','5.1.6'],                                                     indexed: false, isDate: false, system: true,  dateLocked: true  },
-  { key: 'ft:lastEdition',                 values: ['2022-11-03','2022-11-04','2022-11-07','2022-11-17','2022-11-18','2022-11-24','2022-12-08','2023-01-11','2023-01-16','2023-01-27'], indexed: true,  isDate: false, system: true,  dateLocked: true  },
-  { key: 'ft:lastPublication',             values: ['2023-05-24 13:18','2023-07-24 10:25','2023-11-09 09:39','2024-01-23 07:45','2024-02-19 13:31','2024-03-19 07:22','2024-06-26 14:24','2024-09-26 13:08','2024-09-26 13:56','2024-09-26 14:16'], indexed: true, isDate: false, system: true, dateLocked: true },
-  { key: 'ft:lastTechChange',              values: ['2026-03-11','2026-03-16','2026-03-18','2026-03-23','2026-03-24','2026-03-25','2026-04-01','2026-04-02','2026-04-03','2026-04-06'], indexed: true,  isDate: false, system: true,  dateLocked: true  },
-  { key: 'ft:lastTechChangeTimestamp',     values: ['1773222558712','1773222558759','1773222558793','1773222558829','1773222558870','1773222558905','1773222558947','1773222558982','1773222559018','1773222559051'], indexed: false, isDate: false, system: true, dateLocked: true },
-  { key: 'ft:locale',                      values: ['en-US'],                                                                                                                   indexed: false, isDate: false, system: true,  dateLocked: true  },
-  { key: 'ft:mimeType',                    values: ['application/pdf','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],                                     indexed: true,  isDate: false, system: true,  dateLocked: true  },
-  { key: 'ft:openMode',                    values: ['fluidtopics'],                                                                                                             indexed: false, isDate: false, system: true,  dateLocked: true  },
-  { key: 'ft:originId',                    values: ["'Click-Here'-option-in-Emails-Not-Working_4415356964.html",'#Alabama-Absence&LeaveManagement','#Alabama-Attendance','#Alabama-Overtime','#Alaska-Absence&LeaveManagement','#Alaska-Attendance','#Alaska-HolidayCalendar','#Alaska-Overtime','#Arizona-Absence&LeaveManagement','#Arizona-Attendance'], indexed: false, isDate: false, system: true, dateLocked: true },
-  { key: 'ft:prettyUrl',                   values: ['100-Features','100-Features/1.-Unlocking-seamless-collaboration-with-customized-Universal-Search.','100-Features/10.-Navigating-change-seamlessly-Position-migration-during-organizational-restructuring','100-Features/100.-Availability-of-statutory-and-regular-payroll-reports','100-Features/11.-Delegation-of-tasks','100-Features/12.-Custom-Workflow-Suite-Elevating-Efficiency-and-Empowering-Experiences','100-Features/13.-Streamlining-Onboarding-Assigning-Employee-IDs-Before-Joining-Date','100-Features/14.-Reordering-Employee-Profile-Fields','100-Features/15.-Manage-compensation-positioning.','100-Features/16.-Hybrid-logins'], indexed: false, isDate: false, system: true, dateLocked: true },
-  { key: 'ft:publication_title',           values: ['100 Features','AI Accelerator Pack + Knowledge Management Platform .pdf','Ask Darwin Sense AI.pdf','Attendance','Best Practices','Carry forward communication_FAQs.pdf','ClearTax_file_ITR.pdf','Company','Continuous Feedback','Country Guide'], indexed: false, isDate: false, system: true, dateLocked: true },
-  { key: 'ft:publicationId',               values: ['~GvS~aKyKXQFTE7WaN818w','~Vgvaejvg7ZwpSWk5f5Ibg','~WSvlIYi1q4bVa5Eh8NBJQ','0h5nz0Mm01DxhH8Lbz8ikA','0ikz~uOJDmeHDM~rMrGl7Q','1l_x7vq~Y6n71rEAo_hnxw','2lZ_zVdHVzPZeGDHYcC3hg','37ogNuIqeVRCQ6wrpYoY1Q','3R6qRJ6LbB_yHkHCTN~1AA','6tl8vtrCWC2trQQoHSo9Gg'], indexed: false, isDate: false, system: true, dateLocked: true },
-  { key: 'ft:publishStatus',               values: ['visible'],                                                                                                                 indexed: false, isDate: false, system: true,  dateLocked: true  },
-  { key: 'ft:publishUploadId',             values: ['02f1cc4b-01a3-4c69-aca3-6eededd8d09a','092a617c-2dc1-45b5-b89e-68c5a7314585','0a5da719-0234-4c8b-975f-858a05505bdc','11abdd9e-337b-4c42-b974-8b18b1cdd646','1aec9a36-7c6f-46d2-a4f5-f05881aad93c','1b478103-16e3-4627-a05b-130c8c85765a','22e6b47e-9a9d-4932-82cb-1ec53c6dbe1c','24b6ea4e-b243-43ed-bf34-244fb3a3645b','288e0d6d-638a-4ede-b4c3-4ce952846ac8','2933a0fc-da01-472f-a6a7-ce6987878f2f'], indexed: false, isDate: false, system: true, dateLocked: true },
-  { key: 'ft:searchableFromInt',           values: ['0'],                                                                                                                       indexed: false, isDate: false, system: true,  dateLocked: true  },
-  { key: 'ft:sourceCategory',              values: ['Confluence'],                                                                                                              indexed: false, isDate: false, system: true,  dateLocked: true  },
-  { key: 'ft:sourceId',                    values: ['Confluence','Paligo','ud'],                                                                                                indexed: false, isDate: false, system: true,  dateLocked: true  },
-  { key: 'ft:sourceName',                  values: ['Confluence','Paligo','UD'],                                                                                                indexed: false, isDate: false, system: true,  dateLocked: true  },
-  { key: 'ft:sourceType',                  values: ['Confluence','Paligo','UnstructuredDocuments'],                                                                              indexed: true,  isDate: false, system: true,  dateLocked: true  },
-  { key: 'ft:structure',                   values: ['structured','unstructured'],                                                                                                indexed: false, isDate: false, system: true,  dateLocked: true  },
-  { key: 'ft:title',                       values: ['.csv UTF-8 in Export to handle MLF Inputs',"'Click Here' option in Emails Not Working",'"Limit Exceeded" Error in the API Response','"New probation period cannot be less than current probation period" Error.','"Not Allowed to Use This API"','"Other Reason" Option Displayed in Separation Forms','"Policy Not Assigned" Error in Reimbursement Module','"Replacement employee found at requisition ___" - Error while raising requisition','01 — Login API','02 — Check Token API'], indexed: false, isDate: false, system: true, dateLocked: true },
-  { key: 'ft:tocPosition',                 values: ['1','2','3','4','5','6','7','8','9','10'],                                                                                  indexed: false, isDate: false, system: true,  dateLocked: true  },
-  { key: 'ft:topicTitle',                  values: ['.csv UTF-8 in Export to handle MLF Inputs',"'Click Here' option in Emails Not Working",'"Limit Exceeded" Error in the API Response','"New probation period cannot be less than current probation period" Error.','"Not Allowed to Use This API"','"Other Reason" Option Displayed in Separation Forms','"Policy Not Assigned" Error in Reimbursement Module','"Replacement employee found at requisition ___" - Error while raising requisition','01 — Login API','02 — Check Token API'], indexed: false, isDate: false, system: true, dateLocked: true },
-  { key: 'ft:wordCount',                   values: ['1','2','3','4','5','6','7','8','9','10'],                                                                                  indexed: false, isDate: false, system: true,  dateLocked: true  },
-  { key: 'generator',                      values: ['Paligo'],                                                                                                                  indexed: false, isDate: false, system: true,  dateLocked: false },
-  { key: 'Key',                            values: ['CG','CS','DFA','RA1'],                                                                                                     indexed: false, isDate: false, system: true,  dateLocked: false },
-  { key: 'lastmodifiedby',                 values: [],                                                                                                                          indexed: true,  isDate: false, system: false, dateLocked: false },
-  { key: 'Modified',                       values: [],                                                                                                                          indexed: true,  isDate: false, system: false, dateLocked: false },
-  { key: 'Module',                         values: ['Attendance','Company','Continous Feedback','Custom Field','Darwinbox Studio','Employees','Engagement','FaaS','Flows','Form builder'],   indexed: false, isDate: false, system: true, dateLocked: false },
-  { key: 'Name',                           values: ['100 Features','Country Guide','Darwinbox FAQs Articles','Darwinbox Troubleshooting Articles'],                              indexed: false, isDate: false, system: true,  dateLocked: false },
-  { key: 'paligo:resourceTitle',           values: ['.csv UTF-8 in Export to Handle MLF Inputs','401 Error While Logging into Darwinbox','Aadhaar Number Masking',"Ability for Admin to 'Proxy User' using Same Login",'Ability for Permission Role Holders to Share Reports','Ability to Add Custom Dates as SLA duration','Ability to Add Functional Area Head as an Approver or Assignee','Ability to Add Reason when Archiving Positions','Ability to Add SLA Level Name in the SLA Settings','Ability to Add Standard Flows as Subflows'], indexed: false, isDate: false, system: true, dateLocked: false },
-  { key: 'paligo:resourceTitleLabel',      values: ['JFM24'],                                                                                                                   indexed: false, isDate: false, system: true,  dateLocked: false },
-  { key: 'publicationDate',                values: ['2024-09-26','2025-03-21','2025-04-23','2025-05-05','2025-06-03','2025-08-09','2025-10-16','2025-10-21','2025-11-19','2025-12-17'], indexed: false, isDate: false, system: true,  dateLocked: false },
-  { key: 'Release_Notes',                  values: ['Release Notes'],                                                                                                           indexed: false, isDate: false, system: true,  dateLocked: false },
-  { key: 'role',                           values: [],                                                                                                                          indexed: false, isDate: false, system: false, dateLocked: false },
-  { key: 'subtitle',                       values: ['User Manual'],                                                                                                             indexed: false, isDate: false, system: true,  dateLocked: false },
-  { key: 'Taxonomy',                       values: ['Module > Attendance','Module > Company','Module > Continous Feedback','Module > Custom Field','Module > Darwinbox Studio','Module > Employees','Module > Engagement','Module > FaaS','Module > Flows','Module > Form builder'], indexed: true, isDate: false, system: true, dateLocked: false },
-  { key: 'title',                          values: [],                                                                                                                          indexed: true,  isDate: false, system: false, dateLocked: false },
-  { key: 'ud:id',                          values: ['AI Accelerator Pack + Knowledge Management Platform .pdf','Ask Darwin Sense AI.pdf','Carry forward communication_FAQs.pdf','ClearTax_file_ITR.pdf','Darwinbox AI Accelerator Pack.pdf','Darwinbox Workflows Okta.pdf','Darwinbox_AI_Pack-en.pdf','Darwinbox_Entra_Fields_Mapping.xlsx','Darwinbox_Entra_Permissions_Mapping 1.xlsx','Darwinbox_Entra_SCIM_Domain_Mapping 2.xlsx'], indexed: false, isDate: false, system: true, dateLocked: false },
-  { key: 'xinfo:branched_topic_id',        values: ['51383','56843','8484'],                                                                                                    indexed: false, isDate: false, system: true,  dateLocked: false },
-  { key: 'xinfo:branched_topic_uuid',      values: ['UUID-cbe9b300-4627-0e43-63b2-d8859271b936','UUID-d68ce587-47d5-a369-0842-aa225139a062','UUID-dac9ca29-36d8-bed0-5a71-54059df438cc'], indexed: false, isDate: false, system: true, dateLocked: false },
-  { key: 'xinfo:contribution_editable',    values: ['true'],                                                                                                                    indexed: false, isDate: false, system: true,  dateLocked: false },
-  { key: 'xinfo:document_id',              values: ['12144','12706','12708','12710','13594','15827','15835','15867','15870'],                                                   indexed: false, isDate: false, system: true,  dateLocked: false },
-  { key: 'xinfo:linktype',                 values: ['ResourceLink'],                                                                                                            indexed: false, isDate: false, system: true,  dateLocked: false },
-  { key: 'xinfo:origin',                   values: ['UUID-0005f267-43e7-9dac-97e1-12193c4e45ef','UUID-00086742-2877-5551-5f5c-d70d98185b14','UUID-00119b36-e6ba-64bc-4d31-28acbddd4659','UUID-001279ac-8e3d-e151-140c-62c09cdade11','UUID-001f610d-9c65-0e0a-423b-56af5ed8f3aa','UUID-0021adf2-3f2b-5ab2-326e-99385c889067','UUID-00238349-786a-ecd2-b304-d2d0783b08d4','UUID-0037fed5-0567-a6f1-e50a-92072392bc16','UUID-00424af7-6080-b74c-81f2-0f6f35b15ad7','UUID-004b3ea7-0b7e-f158-d3fc-fcab1c43173d'], indexed: false, isDate: false, system: true, dateLocked: false },
-  { key: 'xinfo:origin_id',                values: ['100018','1000308','1000314','100075','1000785','1000791','1000971','100133','10015','100163'],                              indexed: false, isDate: false, system: true,  dateLocked: false },
-  { key: 'xinfo:pagebreak',                values: ['after','before'],                                                                                                          indexed: false, isDate: false, system: true,  dateLocked: false },
-  { key: 'xinfo:taxonomy',                 values: ['selected-categories-770106','taxonomy_module_attendance_lvl0 selected-categories-764401','taxonomy_module_attendance_lvl0 taxonomy_module_company_lvl0 taxonomy_module_custom-field_lvl0 …','taxonomy_module_company_lvl0 selected-categories-764402','taxonomy_module_company_lvl0 taxonomy_module_employees_lvl0 selected-categories-764402-770035','taxonomy_module_company_lvl0 taxonomy_module_employees_lvl0 taxonomy_module_flows_lvl0 selected-categories-764402-770035-770037','taxonomy_module_continous-feedback_lvl0 selected-categories-770054','taxonomy_module_custom-field_lvl0 selected-categories-770052','taxonomy_module_darwinbox-studio_lvl0 selected-categories-770058','taxonomy_module_employees_lvl0 selected-categories-770035'], indexed: false, isDate: false, system: true, dateLocked: false },
-  { key: 'xinfo:version_major',            values: ['1'],                                                                                                                       indexed: false, isDate: false, system: true,  dateLocked: false },
-  { key: 'xinfo:version_minor',            values: ['0'],                                                                                                                       indexed: false, isDate: false, system: true,  dateLocked: false },
-];
+// Adapter from API row → UI row. The original mockup used `key/values/
+// indexed/system/dateLocked`; the API persists `displayName/valuesSample/
+// isIndexed/manual/...`. Translating once at the boundary keeps the rest
+// of the component close to the proven UX.
+function toUiRow(api) {
+  return {
+    id: api.id,
+    key: api.displayName || api.name,
+    nameLower: api.name,
+    values: api.valuesSample || [],
+    valuesCount: api.valuesCount || 0,
+    invalidDateCount: api.invalidDateCount || 0,
+    indexed: !!api.isIndexed,
+    isDate: !!api.isDate,
+    // `system` in the original mockup blocks edit/delete. For us that
+    // maps to "auto-discovered (non-manual) OR has values" — those rows
+    // are still toggleable but cannot be renamed/removed.
+    system: !api.manual || (api.valuesCount || 0) > 0,
+    // The Set-as-date checkbox stays clickable; the backend enforces
+    // built-in rejection. We never render dateLocked=true here because
+    // built-ins are filtered out at extraction time and never reach the
+    // registry.
+    dateLocked: false,
+    manual: !!api.manual,
+  };
+}
 
 export default function MetadataConfigPage() {
-  const [savedRows, setSavedRows] = useState(SEED);
-  const [rows,      setRows]      = useState(SEED);
-  const [query,     setQuery]     = useState('');
-  const [sortDir,   setSortDir]   = useState('asc');
-  const [editing,   setEditing]   = useState(null);
-  const [confirm,   setConfirm]   = useState(null);
+  const [savedRows, setSavedRows] = useState([]);
+  const [rows, setRows] = useState([]);
+  const [query, setQuery] = useState('');
+  const [sortDir, setSortDir] = useState('asc');
+  const [editing, setEditing] = useState(null);
+  const [confirm, setConfirm] = useState(null);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [job, setJob] = useState(null);
+  const pollRef = useRef(null);
 
   const dirty = useMemo(
     () => JSON.stringify(rows) !== JSON.stringify(savedRows),
@@ -106,27 +56,129 @@ export default function MetadataConfigPage() {
     return list;
   }, [rows, query, sortDir]);
 
-  const toggleField = (key, field) => {
-    setRows((prev) => prev.map((r) => (r.key === key ? { ...r, [field]: !r[field] } : r)));
-  };
+  // ── data loading ────────────────────────────────────────────────────────
+  const refetch = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const res = await api.get('/metadata-keys');
+      const items = (res?.items || []).map(toUiRow);
+      setRows(items);
+      setSavedRows(items);
+      // If a job was already running when the page opened, resume polling.
+      if (res?.runningJob) setJob(res.runningJob);
+    } catch (e) {
+      setError(e?.message || 'Failed to load metadata keys');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-  const upsertRow = (draft) => {
-    setRows((prev) => {
-      const idx = prev.findIndex((r) => r.key === draft.key);
-      if (idx >= 0) {
-        const copy = [...prev]; copy[idx] = { ...copy[idx], ...draft }; return copy;
+  useEffect(() => {
+    refetch();
+  }, [refetch]);
+
+  // ── reprocess job polling ───────────────────────────────────────────────
+  useEffect(() => {
+    if (!job?.id) return undefined;
+    if (job.status === 'done' || job.status === 'failed') {
+      // Refetch the table once the worker is done so valuesSample /
+      // invalidDateCount reflect the latest state.
+      refetch();
+      return undefined;
+    }
+    pollRef.current = setInterval(async () => {
+      try {
+        const res = await api.get(`/metadata-keys/jobs/${job.id}`);
+        if (res?.job) setJob(res.job);
+      } catch (_) {
+        /* keep polling — transient errors are fine */
       }
-      return [...prev, { ...draft, values: [], system: false, dateLocked: false }];
-    });
-    setEditing(null);
-  };
-  const deleteRow = (row) => setRows((prev) => prev.filter((r) => r.key !== row.key));
+    }, 1000);
+    return () => clearInterval(pollRef.current);
+  }, [job?.id, job?.status, refetch]);
 
-  const onSaveAndReprocess = () => {
-    setSavedRows(rows);
-    // In production this would also kick off a reprocess job.
+  // ── row mutations ───────────────────────────────────────────────────────
+  const toggleField = (rowId, field) => {
+    setRows((prev) => prev.map((r) => (r.id === rowId ? { ...r, [field]: !r[field] } : r)));
   };
+
+  const upsertRow = async (draft) => {
+    setBusy(true);
+    setError('');
+    try {
+      if (draft.id) {
+        // Edit (rename only — toggles flow through Save and reprocess)
+        await api.patch(`/metadata-keys/${draft.id}`, {
+          name: draft.key,
+          isIndexed: draft.indexed,
+          isDate: draft.isDate,
+        });
+      } else {
+        await api.post('/metadata-keys', {
+          name: draft.key,
+          isIndexed: draft.indexed,
+          isDate: draft.isDate,
+        });
+      }
+      setEditing(null);
+      await refetch();
+    } catch (e) {
+      setError(e?.message || 'Save failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deleteRow = async (row) => {
+    setBusy(true);
+    setError('');
+    try {
+      await api.delete(`/metadata-keys/${row.id}`);
+      await refetch();
+    } catch (e) {
+      setError(e?.message || 'Delete failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // ── save and reprocess ──────────────────────────────────────────────────
+  const onSaveAndReprocess = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      // Build a diff: toggles whose isIndexed/isDate differ from the saved
+      // snapshot. Server will persist them inside the same call.
+      const savedById = new Map(savedRows.map((r) => [r.id, r]));
+      const changes = rows
+        .map((r) => {
+          const prev = savedById.get(r.id);
+          if (!prev) return null;
+          const out = { id: r.id };
+          if (r.indexed !== prev.indexed) out.isIndexed = r.indexed;
+          if (r.isDate !== prev.isDate) out.isDate = r.isDate;
+          if (Object.keys(out).length === 1) return null;
+          return out;
+        })
+        .filter(Boolean);
+      const res = await api.post('/metadata-keys/save-and-reprocess', { changes });
+      if (res?.job) setJob(res.job);
+      await refetch();
+    } catch (e) {
+      setError(e?.message || 'Reprocess failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const onCancel = () => setRows(savedRows);
+
+  // ── progress strip helpers ──────────────────────────────────────────────
+  const showProgress = job && (job.status === 'queued' || job.status === 'running');
+  const progressLabel = job && job.total
+    ? `Reprocessing ${job.processed.toLocaleString()} / ${job.total.toLocaleString()} topics${job.errorCount ? ` — ${job.errorCount} error${job.errorCount === 1 ? '' : 's'}` : ''}`
+    : 'Reprocessing started…';
 
   return (
     <AdminShell active="khub-metadata" allowedRoles={['superadmin']}>
@@ -136,7 +188,7 @@ export default function MetadataConfigPage() {
             <h1 style={S.h1}>Metadata configuration</h1>
             <p style={S.subtitle}>Choose which metadata should be indexed and define metadata to be set as dates.</p>
           </div>
-          <button type="button" style={S.primaryBtn} onClick={() => setEditing('new')}>
+          <button type="button" style={S.primaryBtn} onClick={() => setEditing('new')} disabled={busy}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <line x1="12" y1="5" x2="12" y2="19" />
               <line x1="5"  y1="12" x2="19" y2="12" />
@@ -144,6 +196,17 @@ export default function MetadataConfigPage() {
             <span>New metadata</span>
           </button>
         </header>
+
+        {error && (
+          <div role="alert" style={S.errorBar}>{error}</div>
+        )}
+
+        {showProgress && (
+          <div role="status" style={S.progressBar}>
+            <span style={S.progressDot} />
+            <span>{progressLabel}</span>
+          </div>
+        )}
 
         <div style={S.filterBar}>
           <label htmlFor="metadata-search" style={S.filterLabel}>Search</label>
@@ -163,7 +226,9 @@ export default function MetadataConfigPage() {
               style={S.searchInput}
             />
           </div>
-          <span style={S.resultCount}>{filteredSorted.length} {filteredSorted.length === 1 ? 'result' : 'results'}</span>
+          <span style={S.resultCount}>
+            {loading ? 'Loading…' : `${filteredSorted.length} ${filteredSorted.length === 1 ? 'result' : 'results'}`}
+          </span>
         </div>
 
         <div style={S.tableWrap}>
@@ -200,26 +265,41 @@ export default function MetadataConfigPage() {
               </tr>
             </thead>
             <tbody>
-              {filteredSorted.length === 0 ? (
+              {loading ? (
                 <tr>
-                  <td colSpan={5} style={S.emptyCell}>No metadata matches the current search.</td>
+                  <td colSpan={5} style={S.emptyCell}>Loading metadata keys…</td>
+                </tr>
+              ) : filteredSorted.length === 0 ? (
+                <tr>
+                  <td colSpan={5} style={S.emptyCell}>
+                    {rows.length === 0
+                      ? 'No metadata keys yet. Publish content or create a manual key with the New metadata button.'
+                      : 'No metadata matches the current search.'}
+                  </td>
                 </tr>
               ) : filteredSorted.map((r) => (
-                <tr key={r.key} style={S.tr}>
+                <tr key={r.id} style={S.tr}>
                   <td style={{ ...S.td, fontFamily: 'monospace', fontSize: '0.84rem', color: '#0f172a' }}>{r.key}</td>
-                  <td style={S.td}><ValueChips values={r.values} /></td>
+                  <td style={S.td}>
+                    <ValueChips values={r.values} />
+                    {r.invalidDateCount > 0 && (
+                      <span style={S.invalidBadge}>
+                        {r.invalidDateCount} invalid date{r.invalidDateCount === 1 ? '' : 's'}
+                      </span>
+                    )}
+                  </td>
                   <td style={{ ...S.td, textAlign: 'center' }}>
-                    <Checkbox checked={r.indexed} onChange={() => toggleField(r.key, 'indexed')} />
+                    <Checkbox checked={r.indexed} onChange={() => toggleField(r.id, 'indexed')} />
                   </td>
                   <td style={{ ...S.td, textAlign: 'center' }}>
                     <Checkbox
                       checked={r.isDate}
                       disabled={r.dateLocked}
-                      onChange={() => !r.dateLocked && toggleField(r.key, 'isDate')}
+                      onChange={() => !r.dateLocked && toggleField(r.id, 'isDate')}
                     />
                   </td>
                   <td style={{ ...S.td, textAlign: 'right', whiteSpace: 'nowrap' }}>
-                    {!r.system && (
+                    {r.manual && r.valuesCount === 0 && (
                       <>
                         <IconBtn title="Edit metadata" onClick={() => setEditing(r)}>
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -243,14 +323,14 @@ export default function MetadataConfigPage() {
         <div style={S.actionsBar}>
           <button
             type="submit"
-            disabled={!dirty}
+            disabled={!dirty || busy}
             onClick={onSaveAndReprocess}
             style={{
               ...S.primaryBtn,
               background: dirty ? '#16a34a' : '#e2e8f0',
               color: dirty ? '#fff' : '#94a3b8',
               border: dirty ? '1px solid #16a34a' : '1px solid #e2e8f0',
-              cursor: dirty ? 'pointer' : 'not-allowed',
+              cursor: dirty && !busy ? 'pointer' : 'not-allowed',
             }}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -258,7 +338,7 @@ export default function MetadataConfigPage() {
             </svg>
             <span>Save and reprocess</span>
           </button>
-          <button type="button" onClick={onCancel} style={S.secondaryBtn}>
+          <button type="button" onClick={onCancel} style={S.secondaryBtn} disabled={busy}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
               <line x1="18" y1="6" x2="6" y2="18" />
               <line x1="6" y1="6" x2="18" y2="18" />
@@ -270,10 +350,11 @@ export default function MetadataConfigPage() {
 
       <MetadataModal
         open={!!editing}
-        existingKeys={rows.map((r) => r.key)}
+        existingKeys={rows.map((r) => r.key.toLowerCase())}
         editing={editing && editing !== 'new' ? editing : null}
         onCancel={() => setEditing(null)}
         onSave={upsertRow}
+        busy={busy}
       />
 
       <ConfirmModal
@@ -281,7 +362,10 @@ export default function MetadataConfigPage() {
         title={confirm?.row ? `Delete "${confirm.row.key}"?` : ''}
         body="The metadata key will be removed from the configuration. Save and reprocess to apply the change."
         onCancel={() => setConfirm(null)}
-        onConfirm={() => { if (confirm?.row) deleteRow(confirm.row); setConfirm(null); }}
+        onConfirm={async () => {
+          if (confirm?.row) await deleteRow(confirm.row);
+          setConfirm(null);
+        }}
       />
     </AdminShell>
   );
@@ -314,7 +398,6 @@ function truncate(text, n) {
   return text.length > n ? `${text.slice(0, n - 1)}…` : text;
 }
 
-// ── Custom checkbox (matches design tone) ──────────────────────────────────
 function Checkbox({ checked, onChange, disabled }) {
   return (
     <label style={{
@@ -355,8 +438,7 @@ function IconBtn({ title, danger, onClick, children }) {
   );
 }
 
-// ── New / edit metadata modal ──────────────────────────────────────────────
-function MetadataModal({ open, existingKeys, editing, onCancel, onSave }) {
+function MetadataModal({ open, existingKeys, editing, onCancel, onSave, busy }) {
   const isEdit = !!editing;
   const [draft, setDraft] = useState({ key: '', indexed: true, isDate: false });
 
@@ -375,8 +457,11 @@ function MetadataModal({ open, existingKeys, editing, onCancel, onSave }) {
 
   if (!open) return null;
   const keyTrim = draft.key.trim();
-  const clash   = !isEdit && existingKeys.includes(keyTrim);
-  const valid   = keyTrim && !clash;
+  const lower = keyTrim.toLowerCase();
+  // For edit, the existing key obviously matches itself — exclude it.
+  const otherKeys = isEdit ? existingKeys.filter((k) => k !== editing.key.toLowerCase()) : existingKeys;
+  const clash = otherKeys.includes(lower);
+  const valid = keyTrim && !clash && !busy;
 
   return (
     <div role="presentation" onClick={onCancel} style={S.modalOverlay}>
@@ -393,19 +478,13 @@ function MetadataModal({ open, existingKeys, editing, onCancel, onSave }) {
         </header>
 
         <div style={{ padding: '20px 22px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          <FloatField label="Key" disabled={isEdit}>
+          <FloatField label="Key">
             <input
               type="text"
               value={draft.key}
-              disabled={isEdit}
               onChange={(e) => setDraft((d) => ({ ...d, key: e.target.value }))}
               placeholder="metadata_key"
-              style={{
-                ...S.formInput,
-                background: isEdit ? '#f1f5f9' : '#fff',
-                cursor: isEdit ? 'not-allowed' : 'text',
-                fontFamily: 'monospace',
-              }}
+              style={{ ...S.formInput, fontFamily: 'monospace' }}
             />
           </FloatField>
           {clash && <span style={{ fontSize: '0.78rem', color: '#b91c1c', marginTop: '-8px' }}>A metadata with this key already exists.</span>}
@@ -427,7 +506,12 @@ function MetadataModal({ open, existingKeys, editing, onCancel, onSave }) {
           <button
             type="button"
             disabled={!valid}
-            onClick={() => valid && onSave({ key: keyTrim, indexed: draft.indexed, isDate: draft.isDate })}
+            onClick={() => valid && onSave({
+              id: isEdit ? editing.id : null,
+              key: keyTrim,
+              indexed: draft.indexed,
+              isDate: draft.isDate,
+            })}
             style={{ ...S.primaryBtn, opacity: valid ? 1 : 0.55, cursor: valid ? 'pointer' : 'not-allowed' }}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -490,7 +574,6 @@ function ConfirmModal({ open, title, body, onCancel, onConfirm }) {
   );
 }
 
-// ── Styles ─────────────────────────────────────────────────────────────────
 const S = {
   page: { display: 'flex', flexDirection: 'column', gap: '14px' },
   headerRow: {
@@ -569,6 +652,30 @@ const S = {
     padding: '2px 8px', borderRadius: '999px',
     background: '#fdf2f8', color: '#a21caf',
     fontSize: '0.74rem', fontWeight: 600,
+  },
+  invalidBadge: {
+    display: 'inline-block',
+    marginLeft: '8px',
+    padding: '2px 8px', borderRadius: '999px',
+    background: '#fef2f2', color: '#b91c1c',
+    fontSize: '0.74rem', fontWeight: 600,
+  },
+  errorBar: {
+    background: '#fef2f2', color: '#b91c1c',
+    border: '1px solid #fecaca', borderRadius: '4px',
+    padding: '10px 14px', fontSize: '0.86rem',
+  },
+  progressBar: {
+    display: 'inline-flex', alignItems: 'center', gap: '10px',
+    background: '#eff6ff', color: '#1e40af',
+    border: '1px solid #bfdbfe', borderRadius: '4px',
+    padding: '10px 14px', fontSize: '0.86rem', fontWeight: 500,
+  },
+  progressDot: {
+    width: '10px', height: '10px', borderRadius: '50%',
+    background: '#3b82f6',
+    boxShadow: '0 0 0 0 rgba(59,130,246,0.6)',
+    animation: 'pulse 1.4s infinite',
   },
   actionsBar: {
     display: 'flex', alignItems: 'center', justifyContent: 'flex-end',

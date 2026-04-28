@@ -24,6 +24,56 @@ const getUserFilters = (req) => {
 };
 
 // ---------------------------------------------------------------------------
+// GET /api/portal/by-pretty-url?path=foo/bar — resolve a pretty URL.
+//
+// Used by the /r/[...path] frontend route to find the document (and
+// optionally the topic) addressed by a pretty URL. Returns:
+//   { kind: 'document', document, topic? }   — matched a document URL
+//   { kind: 'topic',    document, topic   }  — matched a topic URL
+//   404 when nothing matches.
+//
+// We try document.prettyUrl first because the docs say document templates
+// have priority over topic templates. The lookup is case-insensitive on
+// the path itself but exact on the stored value (the engine already
+// normalises everything before persisting).
+// ---------------------------------------------------------------------------
+router.get('/by-pretty-url', optionalAuth, async (req, res, next) => {
+  try {
+    const raw = String(req.query.path || '').trim();
+    if (!raw) return res.status(400).json({ error: 'path query parameter is required' });
+    // Tolerate leading/trailing slashes from the client; everything we
+    // store starts with a single leading slash.
+    const stripped = raw.replace(/^\/+|\/+$/g, '');
+    if (!stripped) return res.status(400).json({ error: 'path query parameter is required' });
+    const candidate = '/' + stripped;
+
+    // 1) Document-level match wins.
+    const doc = await Document.findOne({ prettyUrl: candidate, status: 'completed' })
+      .select('title sourceFormat metadata topicIds isPaligoFormat publication tocTree createdAt prettyUrl')
+      .lean();
+    if (doc) {
+      return res.json({ kind: 'document', document: doc, topic: null });
+    }
+
+    // 2) Topic-level match. We pull the parent doc too so the page can
+    // render the standard reader (TOC + selected topic).
+    const topic = await Topic.findOne({ prettyUrl: candidate })
+      .select('_id title slug documentId prettyUrl')
+      .lean();
+    if (topic) {
+      const parent = await Document.findOne({ _id: topic.documentId, status: 'completed' })
+        .select('title sourceFormat metadata topicIds isPaligoFormat publication tocTree createdAt prettyUrl')
+        .lean();
+      if (parent) {
+        return res.json({ kind: 'topic', document: parent, topic });
+      }
+    }
+
+    return res.status(404).json({ error: 'No content matches that URL' });
+  } catch (err) { next(err); }
+});
+
+// ---------------------------------------------------------------------------
 // GET /api/portal/documents — public list of completed documents
 // ---------------------------------------------------------------------------
 router.get('/documents', optionalAuth, async (req, res, next) => {
@@ -56,7 +106,7 @@ router.get('/documents', optionalAuth, async (req, res, next) => {
     const priorityDocIds = new Set((req.user?.preferences?.priorityDocumentIds || []).map(String));
     const docs = await Document.find(query)
       .sort({ createdAt: -1 })
-      .select('title sourceFormat metadata topicIds isPaligoFormat publication createdAt')
+      .select('title sourceFormat metadata topicIds isPaligoFormat publication createdAt prettyUrl')
       .lean();
 
     if (priorityDocIds.size) {
@@ -81,6 +131,7 @@ router.get('/documents', optionalAuth, async (req, res, next) => {
         logoPath:      d.publication?.logoPath || '',
         backgroundPath:d.publication?.backgroundPath || '',
         createdAt:     d.createdAt,
+        prettyUrl:     d.prettyUrl || '',
       })),
     });
   } catch (err) {
@@ -145,7 +196,7 @@ router.get('/documents/search', optionalAuth, async (req, res, next) => {
 router.get('/documents/:id', optionalAuth, async (req, res, next) => {
   try {
     const doc = await Document.findOne({ _id: req.params.id, status: 'completed' })
-      .select('title sourceFormat metadata topicIds isPaligoFormat publication tocTree createdAt')
+      .select('title sourceFormat metadata topicIds isPaligoFormat publication tocTree createdAt prettyUrl')
       .lean();
 
     if (!doc) return res.status(404).json({ error: 'Not found' });
@@ -161,7 +212,7 @@ router.get('/documents/:id', optionalAuth, async (req, res, next) => {
 
     let topics = await Topic.find(topicQuery)
       .sort({ 'hierarchy.order': 1, createdAt: 1 })
-      .select('title slug originId permalink hierarchy.level hierarchy.parent hierarchy.children hierarchy.order timeModified metadata.author')
+      .select('title slug originId permalink prettyUrl hierarchy.level hierarchy.parent hierarchy.children hierarchy.order timeModified metadata.author')
       .lean();
 
     // If the topic filter ended up matching nothing in this doc, fall back to
@@ -169,7 +220,7 @@ router.get('/documents/:id', optionalAuth, async (req, res, next) => {
     if (filters?.topicIds?.length && topics.length === 0) {
       topics = await Topic.find({ documentId: req.params.id })
         .sort({ 'hierarchy.order': 1, createdAt: 1 })
-        .select('title slug originId permalink hierarchy.level hierarchy.parent hierarchy.children hierarchy.order timeModified metadata.author')
+        .select('title slug originId permalink prettyUrl hierarchy.level hierarchy.parent hierarchy.children hierarchy.order timeModified metadata.author')
         .lean();
     }
 
@@ -567,7 +618,7 @@ router.get('/topics-index', async (req, res, next) => {
 router.get('/topics/:id', optionalAuth, async (req, res, next) => {
   try {
     const topic = await Topic.findById(req.params.id)
-      .select('title slug content.html documentId hierarchy metadata originId permalink timeModified accessLevel updatedAt')
+      .select('title slug content.html documentId hierarchy metadata originId permalink prettyUrl timeModified accessLevel updatedAt')
       .lean();
 
     if (!topic) return res.status(404).json({ error: 'Not found' });

@@ -1,5 +1,7 @@
 const xml2js = require('xml2js');
+const cheerio = require('cheerio');
 const { stripHtml } = require('../../../utils/helpers');
+const { extractFromDitaCheerio } = require('../../metadata/customMetadata');
 
 /**
  * Parse XML content (DITA/DocBook/generic) into structured sections
@@ -22,7 +24,19 @@ const parseXML = async (xmlContent, filename = '') => {
     description: '',
     keywords: [],
     language: 'en',
+    // Captured from DITA <prolog>/<othermeta> via a cheerio xmlMode pass
+    // — xml2js with `mergeAttrs: true` collapses `<othermeta name=... />`
+    // into ambiguous shapes that are awkward to walk, whereas cheerio's
+    // attribute-aware traversal handles every variant the docs list.
+    custom: {},
   };
+  try {
+    const $xml = cheerio.load(xmlContent, { xmlMode: true, decodeEntities: false });
+    metadata.custom = extractFromDitaCheerio($xml);
+  } catch (_) {
+    // Malformed XML — leave custom empty rather than crash the whole
+    // ingest. The xml2js parser below has its own error path.
+  }
 
   const sections = [];
 

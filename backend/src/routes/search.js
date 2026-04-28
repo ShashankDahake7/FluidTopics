@@ -4,8 +4,58 @@ const { getSearchBoostParams } = require('../services/personalization/personaliz
 const { generateAnswer } = require('../services/ai/groqService');
 const { trackEvent } = require('../services/analytics/analyticsService');
 const { optionalAuth } = require('../middleware/auth');
+const Topic = require('../models/Topic');
+const AccessRule = require('../models/AccessRule');
+const AccessRulesConfig = require('../models/AccessRulesConfig');
+const {
+  userCanBypass,
+  buildMetaBagForTopic,
+  matchAllRequirements,
+  ruleGrantsAccessToUser,
+  defaultRuleAllows,
+} = require('../services/accessRules/accessRulesService');
 
 const router = express.Router();
+
+// Drops search hits whose backing topic is hidden by access rules. Operates on
+// the result.hits[] array shape produced by services/search/searchService.
+async function filterSearchHitsForUser(hits, user) {
+  if (!Array.isArray(hits) || hits.length === 0) return hits;
+  if (userCanBypass(user)) return hits;
+
+  const cfg = await AccessRulesConfig.getSingleton();
+  const activeRules = await AccessRule.find({ status: 'Active', inactiveSet: false })
+    .populate('groups', 'name').lean();
+  if (activeRules.length === 0 && defaultRuleAllows(cfg, user)) return hits;
+
+  const topicIds = hits.map((h) => h.topicId || h._id || h.id).filter(Boolean);
+  const topics = await Topic.find({ _id: { $in: topicIds } })
+    .select('metadata documentId').lean();
+  const topicById = new Map(topics.map((t) => [String(t._id), t]));
+
+  const Document = require('../models/Document');
+  const docIds = Array.from(new Set(topics.map((t) => String(t.documentId)).filter(Boolean)));
+  const docs = await Document.find({ _id: { $in: docIds } })
+    .select('title originalFilename sourceFormat metadata').lean();
+  const docById = new Map(docs.map((d) => [String(d._id), d]));
+
+  return hits.filter((h) => {
+    const t = topicById.get(String(h.topicId || h._id || h.id));
+    if (!t) return false;
+    const bag = buildMetaBagForTopic(t, docById.get(String(t.documentId)) || null);
+    const matching = activeRules.filter((r) => matchAllRequirements(r, bag));
+    if (matching.length === 0) return defaultRuleAllows(cfg, user);
+    for (const r of matching) {
+      if (r.authMode === 'auto') {
+        const autoVals = bag[r.autoBindKey] || [];
+        if (ruleGrantsAccessToUser({ ...r, _autoMatchedValues: autoVals }, user)) return true;
+      } else if (ruleGrantsAccessToUser(r, user)) {
+        return true;
+      }
+    }
+    return false;
+  });
+}
 
 async function resolveSearchLanguage(req, explicit) {
   if (explicit === '*' || explicit === 'all') return null;
@@ -56,6 +106,32 @@ router.get('/', optionalAuth, async (req, res, next) => {
       titlesOnly: titlesOnly === '1' || titlesOnly === 'true',
     });
     const responseTime = Date.now() - startTime;
+
+    // Apply access rules — privileged users (ADMIN, KHUB_ADMIN,
+    // CONTENT_PUBLISHER) bypass; everyone else loses hits whose backing topic
+    // is rule-gated.
+    if (Array.isArray(results.hits) && results.hits.length) {
+      const visible = await filterSearchHitsForUser(results.hits, req.user);
+      if (visible.length !== results.hits.length) {
+        results.hidden = (results.hits.length - visible.length);
+        results.total  = Math.max(0, (results.total || 0) - results.hidden);
+        results.hits   = visible;
+      }
+    }
+
+    if (Array.isArray(results.hits) && results.hits.length) {
+      const Document = require('../models/Document');
+      const docIds = [...new Set(results.hits.map((h) => h.documentId).filter(Boolean))];
+      if (docIds.length) {
+        const docs = await Document.find({ _id: { $in: docIds } })
+          .select('_id prettyUrl').lean();
+        const map = Object.fromEntries(docs.map((d) => [String(d._id), d.prettyUrl || '']));
+        results.hits = results.hits.map((h) => ({
+          ...h,
+          documentPrettyUrl: h.documentId ? map[String(h.documentId)] || '' : '',
+        }));
+      }
+    }
 
     // Track search event
     trackEvent({
@@ -112,7 +188,7 @@ router.get('/clustered', optionalAuth, async (req, res, next) => {
         $or: [{ title: rx }, { 'metadata.description': rx }, { 'metadata.tags': rx }],
       })
         .limit(parseInt(limit, 10) || 10)
-        .select('title metadata isPaligoFormat publication topicIds createdAt')
+        .select('title metadata isPaligoFormat publication topicIds createdAt prettyUrl')
         .lean();
       documents = docHits.map((d) => ({
         _id: String(d._id),
@@ -121,12 +197,28 @@ router.get('/clustered', optionalAuth, async (req, res, next) => {
         tags: d.metadata?.tags || [],
         topicCount: d.topicIds?.length || 0,
         isPaligo: d.isPaligoFormat || false,
+        prettyUrl: d.prettyUrl || '',
       }));
+    }
+
+    // Enrich topic hits with their parent doc prettyUrl (mirrors /search).
+    let enrichedTopics = topicResults.hits;
+    if (Array.isArray(enrichedTopics) && enrichedTopics.length) {
+      const docIds = [...new Set(enrichedTopics.map((h) => h.documentId).filter(Boolean))];
+      if (docIds.length) {
+        const docs = await Document.find({ _id: { $in: docIds } })
+          .select('_id prettyUrl').lean();
+        const map = Object.fromEntries(docs.map((d) => [String(d._id), d.prettyUrl || '']));
+        enrichedTopics = enrichedTopics.map((h) => ({
+          ...h,
+          documentPrettyUrl: h.documentId ? map[String(h.documentId)] || '' : '',
+        }));
+      }
     }
 
     res.json({
       total: topicResults.total + documents.length,
-      topics:    topicResults.hits,
+      topics:    enrichedTopics,
       documents,
       facets:    topicResults.facets,
       responseTime: 0,

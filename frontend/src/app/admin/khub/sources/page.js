@@ -1,20 +1,10 @@
 'use client';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AdminShell from '@/components/admin/AdminShell';
+import api from '@/lib/api';
 
-// ── Mock sources (matches Darwinbox screenshot rows) ────────────────────────
-const SEED = [
-  { id: 'dita',         name: 'DITA',       subtitle: 'Default DITA source',                 type: 'Dita',                  category: '',           publications: 0  },
-  { id: 'ud',           name: 'UD',         subtitle: 'Default Unstructured Document source', type: 'UnstructuredDocuments', category: '',           publications: 16 },
-  { id: 'ait',          name: 'Author-it',  subtitle: 'Default Author-It source',            type: 'Authorit',              category: '',           publications: 0  },
-  { id: 'ftml',         name: 'FTML',       subtitle: 'Default FTML source',                 type: 'Ftml',                  category: '',           publications: 0  },
-  { id: 'Paligo',       name: 'Paligo',     subtitle: '',                                    type: 'Paligo',                category: '',           publications: 57 },
-  { id: 'Confluence',   name: 'Confluence', subtitle: '',                                    type: 'Confluence',            category: 'Confluence', publications: 4  },
-  { id: 'PDF_open',     name: 'PDF_open',   subtitle: 'PDFs that do not need authentication.', type: 'UnstructuredDocuments', category: '',         publications: 0  },
-  { id: 'Docebo_help',  name: 'docebo',     subtitle: 'Docebo Help',                         type: 'ExternalDocument',      category: 'external source', publications: 0 },
-];
-
-// Pretty colour for the chip per source type
+// ── Type chips + dropdown order ─────────────────────────────────────────────
+// Pretty colour for the chip per source type.
 const TYPE_CHIP_COLORS = {
   MapAttachments:        { bg: '#fef3c7', fg: '#92400e' },
   Dita:                  { bg: '#fdf2f8', fg: '#9d174d' },
@@ -29,11 +19,13 @@ const TYPE_CHIP_COLORS = {
   External:              { bg: '#f1f5f9', fg: '#334155' },
 };
 
-// Order matches the "New source" dropdown in Darwinbox
-const SOURCE_TYPES = [
+// Default order for the "New source" dropdown — overridden by the live list
+// from /api/sources/types as soon as it loads.
+const DEFAULT_SOURCE_TYPES = [
   'MapAttachments',
   'Dita',
   'Html',
+  'Ftml',
   'UnstructuredDocuments',
   'Authorit',
   'AuthoritMagellan',
@@ -43,17 +35,66 @@ const SOURCE_TYPES = [
   'External',
 ];
 
+// Translate the wire shape (Source doc from /api/sources) into the row shape
+// the rest of this page already speaks (`id`, `subtitle`, `publications`,
+// plus the original Mongo `_id` so we can hit /:id endpoints).
+function toRow(s) {
+  return {
+    _id: s.id,                 // Mongo _id, used for PATCH/DELETE/clean URLs
+    id: s.sourceId,            // canonical, human id ("paligo")
+    name: s.name,
+    subtitle: s.description || '',
+    type: s.type,
+    category: s.category || '',
+    publications: s.publicationCount ?? 0,
+    permissions: s.permissions || { mode: 'admins', userIds: [], apiKeyHints: [] },
+    installationStatus: s.installationStatus || 'installed',
+  };
+}
+
 export default function SourcesPage() {
-  const [rows, setRows] = useState(SEED);
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [types, setTypes] = useState(DEFAULT_SOURCE_TYPES);
+  const [toast, setToast] = useState(null);          // { kind: 'success'|'error', text }
 
   const [sortKey, setSortKey] = useState('name');
   const [sortDir, setSortDir] = useState('asc');
 
-  const [editing, setEditing] = useState(null);            // source row, 'new', or { type }
-  const [confirm, setConfirm] = useState(null);            // { kind, source }
+  const [editing, setEditing] = useState(null);     // source row, 'new', or { type }
+  const [confirm, setConfirm] = useState(null);     // { kind, source }
+  const [busy, setBusy]       = useState(false);    // any in-flight save/clean/delete
   const [ditaOpen, setDitaOpen] = useState(false);
   const [newMenuOpen, setNewMenuOpen] = useState(false);
   const newMenuRef = useRef(null);
+
+  const showToast = useCallback((kind, text) => {
+    setToast({ kind, text });
+    setTimeout(() => setToast(null), 3500);
+  }, []);
+
+  const reload = useCallback(async () => {
+    try {
+      setLoadError('');
+      const data = await api.get('/sources');
+      setRows((data.items || []).map(toRow));
+    } catch (err) {
+      setLoadError(err?.message || 'Failed to load sources');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { reload(); }, [reload]);
+
+  useEffect(() => {
+    api.get('/sources/types')
+      .then((data) => {
+        if (Array.isArray(data?.types) && data.types.length) setTypes(data.types);
+      })
+      .catch(() => { /* fall back to defaults */ });
+  }, []);
 
   useEffect(() => {
     if (!newMenuOpen) return undefined;
@@ -86,21 +127,78 @@ export default function SourcesPage() {
     else { setSortKey(key); setSortDir('asc'); }
   };
 
-  const saveSource = (draft) => {
-    if (!draft.id || !draft.name) return;
-    setRows((prev) => {
-      const exists = prev.find((r) => r.id === draft.id);
-      if (exists) return prev.map((r) => (r.id === draft.id ? { ...r, ...draft } : r));
-      return [...prev, { ...draft, publications: 0 }];
-    });
-    setEditing(null);
+  // Persist an edit (PATCH) or a brand-new source (POST). The wizard/editor
+  // pre-validates the obvious cases; here we surface server-side conflicts
+  // (duplicate id/name) as a toast and keep the editor open so the admin can
+  // fix the input without losing their typing.
+  const saveSource = async (draft, { isEdit }) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const permissions = normaliseDraftPermissions(draft);
+      if (isEdit) {
+        const target = rows.find((r) => r.id === draft.id);
+        if (!target) throw new Error('Source not found');
+        await api.patch(`/sources/${target._id}`, {
+          name: draft.name.trim(),
+          category: draft.category || '',
+          description: draft.subtitle || '',
+          permissions,
+        });
+        showToast('success', `Saved ${draft.name.trim()}`);
+      } else {
+        await api.post('/sources', {
+          sourceId: draft.id.trim(),
+          name: draft.name.trim(),
+          type: draft.type,
+          category: draft.category || '',
+          description: draft.subtitle || '',
+          permissions,
+        });
+        showToast('success', `Created ${draft.name.trim()}`);
+      }
+      setEditing(null);
+      await reload();
+    } catch (err) {
+      showToast('error', err?.message || 'Save failed');
+    } finally {
+      setBusy(false);
+    }
   };
 
-  const cleanSource = (s) => {
-    setRows((prev) => prev.map((r) => (r.id === s.id ? { ...r, publications: 0 } : r)));
+  // Clean source — wipes every Publication attributed to this source. The
+  // Source row stays so the admin can immediately re-publish into it.
+  const cleanSource = async (s) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const data = await api.post(`/sources/${s._id}/clean`);
+      showToast('success', data?.message || 'Source cleaned');
+      await reload();
+    } catch (err) {
+      showToast('error', err?.message || 'Clean failed');
+    } finally {
+      setBusy(false);
+    }
   };
-  const deleteSource = (s) => {
-    setRows((prev) => prev.filter((r) => r.id !== s.id));
+
+  // Delete source — backend will respond 409 if any publications still link
+  // to it, which becomes a "Clean source first" toast in the UI.
+  const deleteSource = async (s) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await api.delete(`/sources/${s._id}`);
+      showToast('success', `Deleted ${s.name}`);
+      await reload();
+    } catch (err) {
+      const msg = err?.status === 409
+        ? (err.message || 'Clean the source first.')
+        : (err?.message || 'Delete failed');
+      showToast('error', msg);
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -130,7 +228,7 @@ export default function SourcesPage() {
             </button>
             {newMenuOpen && (
               <ul role="menu" aria-label="New source type" style={S.newMenu}>
-                {SOURCE_TYPES.map((t) => (
+                {types.map((t) => (
                   <li key={t} role="none">
                     <button
                       type="button"
@@ -157,8 +255,9 @@ export default function SourcesPage() {
         <SourceEditor
           source={editing}
           presetType=""
+          busy={busy}
           onCancel={() => setEditing(null)}
-          onSave={saveSource}
+          onSave={(draft) => saveSource(draft, { isEdit: true })}
         />
       ) : (
         <div style={S.tableWrap}>
@@ -174,10 +273,14 @@ export default function SourcesPage() {
               </tr>
             </thead>
             <tbody>
-              {sorted.length === 0 ? (
+              {loading ? (
+                <tr><td colSpan={6} style={S.emptyTableCell}>Loading sources…</td></tr>
+              ) : loadError ? (
+                <tr><td colSpan={6} style={{ ...S.emptyTableCell, color: '#b91c1c' }}>{loadError}</td></tr>
+              ) : sorted.length === 0 ? (
                 <tr><td colSpan={6} style={S.emptyTableCell}>No sources configured.</td></tr>
               ) : sorted.map((s) => (
-                <tr key={s.id} style={S.tr}>
+                <tr key={s._id || s.id} style={S.tr}>
                   <td style={S.td}>
                     <div style={{ color: '#0f172a' }}>{s.name}</div>
                     {s.subtitle && <div style={{ fontSize: '0.78rem', color: '#94a3b8' }}>{s.subtitle}</div>}
@@ -213,30 +316,59 @@ export default function SourcesPage() {
       <NewSourceWizard
         open={!!editing && editing.__new === true}
         presetType={editing && editing.__new ? editing.type : ''}
+        busy={busy}
         onCancel={() => setEditing(null)}
-        onSave={(payload) => { saveSource(payload); }}
+        onSave={(payload) => saveSource(payload, { isEdit: false })}
       />
 
-      <DitaOtModal open={ditaOpen} onClose={() => setDitaOpen(false)} />
+      <DitaOtModal open={ditaOpen} onClose={() => setDitaOpen(false)} onToast={showToast} />
 
       <ConfirmModal
         open={confirm?.kind === 'clean'}
         title="Clean source?"
         body={confirm?.source ? `All publications from "${confirm.source.name}" will be removed. This cannot be undone.` : ''}
         confirmLabel="Clean"
+        busy={busy}
         onCancel={() => setConfirm(null)}
-        onConfirm={() => { if (confirm?.source) cleanSource(confirm.source); setConfirm(null); }}
+        onConfirm={async () => { if (confirm?.source) await cleanSource(confirm.source); setConfirm(null); }}
       />
       <ConfirmModal
         open={confirm?.kind === 'delete'}
         title="Delete source?"
-        body={confirm?.source ? `"${confirm.source.name}" and its publications will be permanently deleted.` : ''}
+        body={confirm?.source ? `"${confirm.source.name}" will be permanently deleted. The backend refuses to delete a source that still has publications attributed to it — clean it first if needed.` : ''}
         confirmLabel="Delete"
+        busy={busy}
         onCancel={() => setConfirm(null)}
-        onConfirm={() => { if (confirm?.source) deleteSource(confirm.source); setConfirm(null); }}
+        onConfirm={async () => { if (confirm?.source) await deleteSource(confirm.source); setConfirm(null); }}
       />
+
+      {toast && (
+        <div role="status" style={{
+          ...S.toast,
+          background: toast.kind === 'error' ? '#fef2f2' : '#ecfdf5',
+          color:      toast.kind === 'error' ? '#991b1b' : '#065f46',
+          border:     `1px solid ${toast.kind === 'error' ? '#fecaca' : '#a7f3d0'}`,
+        }}>
+          {toast.text}
+        </div>
+      )}
     </AdminShell>
   );
+}
+
+// Translate the editor's three permission state fields into the wire shape
+// the backend wants. `userIds` is a comma-separated list and we silently
+// drop entries that aren't ObjectId-shaped — the backend filters too, so
+// this just keeps the UI honest about what survived the round-trip.
+function normaliseDraftPermissions(draft) {
+  const mode = draft.permission || 'admins';
+  const userIds = mode === 'some_pubs'
+    ? String(draft.users || '').split(',').map((s) => s.trim()).filter(Boolean)
+    : [];
+  const apiKeyHints = mode === 'some_pubs'
+    ? String(draft.apiKeys || '').split(',').map((s) => s.trim()).filter(Boolean)
+    : [];
+  return { mode, userIds, apiKeyHints };
 }
 
 // ── Small primitives ───────────────────────────────────────────────────────
@@ -299,7 +431,7 @@ function TypeChip({ type }) {
 }
 
 // ── Confirm modal (centred) ────────────────────────────────────────────────
-function ConfirmModal({ open, title, body, cancelLabel = 'Cancel', confirmLabel = 'Confirm', onCancel, onConfirm }) {
+function ConfirmModal({ open, title, body, cancelLabel = 'Cancel', confirmLabel = 'Confirm', busy, onCancel, onConfirm }) {
   useEffect(() => {
     if (!open) return undefined;
     const onKey = (e) => { if (e.key === 'Escape') onCancel?.(); };
@@ -323,41 +455,12 @@ function ConfirmModal({ open, title, body, cancelLabel = 'Cancel', confirmLabel 
         </header>
         <div style={S.modalBody}>{body}</div>
         <div style={S.modalFooter}>
-          <button type="button" style={S.linkBtn} onClick={onCancel}>{cancelLabel}</button>
-          <button type="button" style={S.primaryBtn} onClick={onConfirm}>{confirmLabel}</button>
+          <button type="button" style={S.linkBtn} onClick={onCancel} disabled={busy}>{cancelLabel}</button>
+          <button type="button" style={{ ...S.primaryBtn, opacity: busy ? 0.65 : 1 }} onClick={onConfirm} disabled={busy}>
+            {busy ? 'Working…' : confirmLabel}
+          </button>
         </div>
       </div>
-    </div>
-  );
-}
-
-// ── Right drawer shell ─────────────────────────────────────────────────────
-function RightDrawer({ open, title, width = 540, onClose, children, footer }) {
-  useEffect(() => {
-    if (!open) return undefined;
-    const onKey = (e) => { if (e.key === 'Escape') onClose?.(); };
-    window.addEventListener('keydown', onKey);
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = prev; };
-  }, [open, onClose]);
-  if (!open) return null;
-  return (
-    <div role="presentation" onClick={onClose} style={S.drawerOverlay}>
-      <aside role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()}
-             style={{ ...S.drawer, width: `min(${width}px, 96vw)` }}>
-        <header style={S.drawerHeader}>
-          <div style={S.drawerTitle}>{title}</div>
-          <button type="button" aria-label="Close" onClick={onClose} style={S.modalClose}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
-        </header>
-        <div style={S.drawerBody}>{children}</div>
-        {footer && <div style={S.drawerFooter}>{footer}</div>}
-      </aside>
     </div>
   );
 }
@@ -369,23 +472,29 @@ const PERMISSION_OPTIONS = [
   { value: 'some_pubs',  label: ['Admins, KHUB Admins ', { strong: 'and some' }, ' Content Publishers'] },
 ];
 
-function SourceEditor({ source, presetType, onCancel, onSave }) {
+function SourceEditor({ source, presetType, busy, onCancel, onSave }) {
   const initial = useMemo(() => {
     if (source) return { ...source };
     return { ...blankDraft(), type: presetType || '' };
   }, [source, presetType]);
 
   const [draft, setDraft] = useState(initial);
-  const [permission, setPermission] = useState('admins');
-  const [users, setUsers] = useState('');
-  const [apiKeys, setApiKeys] = useState('');
-  const [dirty, setDirty] = useState(false);
+  const [permission, setPermission] = useState(initial.permissions?.mode || 'admins');
+  const [users, setUsers]     = useState((initial.permissions?.userIds || []).join(', '));
+  const [apiKeys, setApiKeys] = useState((initial.permissions?.apiKeyHints || []).join(', '));
+  const [dirty, setDirty]     = useState(false);
 
-  useEffect(() => { setDraft(initial); setDirty(false); }, [initial]);
+  useEffect(() => {
+    setDraft(initial);
+    setPermission(initial.permissions?.mode || 'admins');
+    setUsers((initial.permissions?.userIds || []).join(', '));
+    setApiKeys((initial.permissions?.apiKeyHints || []).join(', '));
+    setDirty(false);
+  }, [initial]);
 
   const isEdit = !!source;
-  const valid  = draft.id.trim() && draft.name.trim() && draft.type;
-  const canSave = valid && dirty;
+  const valid  = draft.id?.trim() && draft.name?.trim() && draft.type;
+  const canSave = valid && dirty && !busy;
 
   const update = (patch) => { setDraft((d) => ({ ...d, ...patch })); setDirty(true); };
 
@@ -410,8 +519,9 @@ function SourceEditor({ source, presetType, onCancel, onSave }) {
               type="text"
               value={draft.id}
               disabled={isEdit}
+              readOnly={isEdit}
               onChange={(e) => update({ id: e.target.value })}
-              style={S.mInput}
+              style={{ ...S.mInput, ...(isEdit ? S.mInputDisabled : null) }}
             />
           </MField>
           <MField label="Name">
@@ -428,6 +538,18 @@ function SourceEditor({ source, presetType, onCancel, onSave }) {
               value={draft.category}
               onChange={(e) => update({ category: e.target.value })}
               style={S.mInput}
+            />
+          </MField>
+          {/* Type is also fixed once a Source has been created — the docs
+              treat it as part of the connector contract. */}
+          <MField label="Type" disabled={isEdit}>
+            <input
+              type="text"
+              value={draft.type}
+              disabled={isEdit}
+              readOnly={isEdit}
+              style={{ ...S.mInput, ...(isEdit ? S.mInputDisabled : null) }}
+              onChange={(e) => update({ type: e.target.value })}
             />
           </MField>
         </div>
@@ -471,21 +593,35 @@ function SourceEditor({ source, presetType, onCancel, onSave }) {
       </div>
 
       {permission === 'some_pubs' && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', marginTop: '20px' }}>
-          <MField label="Search for users">
-            <SelectStub value={users} onChange={(v) => { setUsers(v); setDirty(true); }} placeholder="Search for users" />
-          </MField>
-          <MField label="Search for API keys">
-            <SelectStub value={apiKeys} onChange={(v) => { setApiKeys(v); setDirty(true); }} placeholder="Search for API keys" />
-          </MField>
-        </div>
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', marginTop: '20px' }}>
+            <MField label="User IDs (comma-separated)">
+              <SelectStub value={users} onChange={(v) => { setUsers(v); setDirty(true); }} placeholder="Search for users" />
+            </MField>
+            <MField label="API key hints (comma-separated)">
+              <SelectStub value={apiKeys} onChange={(v) => { setApiKeys(v); setDirty(true); }} placeholder="Search for API keys" />
+            </MField>
+          </div>
+          <div style={S.permissionsCaption}>
+            Search not yet wired — paste raw user IDs or free-form API-key
+            labels for now. They round-trip through the API but aren&apos;t
+            yet enforced server-side.
+          </div>
+        </>
       )}
 
       <div style={S.editorSaveBar}>
         <button
           type="button"
           disabled={!canSave}
-          onClick={() => canSave && onSave({ ...draft, id: draft.id.trim(), name: draft.name.trim() })}
+          onClick={() => canSave && onSave({
+            ...draft,
+            id: draft.id.trim(),
+            name: draft.name.trim(),
+            permission,
+            users,
+            apiKeys,
+          })}
           style={{
             ...S.primaryBtn,
             opacity: canSave ? 1 : 0.55,
@@ -500,7 +636,7 @@ function SourceEditor({ source, presetType, onCancel, onSave }) {
             <polyline points="17 21 17 13 7 13 7 21" />
             <polyline points="7 3 7 8 15 8" />
           </svg>
-          Save
+          {busy ? 'Saving…' : 'Save'}
         </button>
       </div>
     </div>
@@ -508,7 +644,7 @@ function SourceEditor({ source, presetType, onCancel, onSave }) {
 }
 
 // ── New source two-step wizard (modal) ─────────────────────────────────────
-function NewSourceWizard({ open, presetType, onCancel, onSave }) {
+function NewSourceWizard({ open, presetType, busy, onCancel, onSave }) {
   const [step, setStep] = useState(1);
   const [draft, setDraft] = useState(blankDraft());
   const [permission, setPermission] = useState('admins');
@@ -537,8 +673,15 @@ function NewSourceWizard({ open, presetType, onCancel, onSave }) {
   const goNext = () => { if (validIdent) setStep(2); };
   const goPrev = () => setStep(1);
   const goSave = () => {
-    if (!validIdent || !draft.type) return;
-    onSave({ ...draft, id: draft.id.trim(), name: draft.name.trim() });
+    if (!validIdent || !draft.type || busy) return;
+    onSave({
+      ...draft,
+      id: draft.id.trim(),
+      name: draft.name.trim(),
+      permission,
+      users,
+      apiKeys,
+    });
   };
 
   return (
@@ -608,14 +751,21 @@ function NewSourceWizard({ open, presetType, onCancel, onSave }) {
                 </label>
               ))}
               {permission === 'some_pubs' && (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginTop: '14px' }}>
-                  <MField label="Search for users">
-                    <SelectStub value={users} onChange={setUsers} placeholder="Search for users" />
-                  </MField>
-                  <MField label="Search for API keys">
-                    <SelectStub value={apiKeys} onChange={setApiKeys} placeholder="Search for API keys" />
-                  </MField>
-                </div>
+                <>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginTop: '14px' }}>
+                    <MField label="User IDs (comma-separated)">
+                      <SelectStub value={users} onChange={setUsers} placeholder="Search for users" />
+                    </MField>
+                    <MField label="API key hints (comma-separated)">
+                      <SelectStub value={apiKeys} onChange={setApiKeys} placeholder="Search for API keys" />
+                    </MField>
+                  </div>
+                  <div style={S.permissionsCaption}>
+                    Search not yet wired — paste raw user IDs or free-form
+                    API-key labels for now. They round-trip through the API
+                    but aren&apos;t yet enforced server-side.
+                  </div>
+                </>
               )}
             </div>
           )}
@@ -641,13 +791,18 @@ function NewSourceWizard({ open, presetType, onCancel, onSave }) {
           ) : (
             <>
               <button type="button" style={{ ...S.linkBtn, color: '#a21caf', padding: '4px 8px' }} onClick={goPrev}>Previous</button>
-              <button type="button" style={S.primaryBtn} onClick={goSave}>
+              <button
+                type="button"
+                style={{ ...S.primaryBtn, opacity: busy ? 0.65 : 1, cursor: busy ? 'not-allowed' : 'pointer' }}
+                onClick={goSave}
+                disabled={busy}
+              >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
                   <polyline points="17 21 17 13 7 13 7 21" />
                   <polyline points="7 3 7 8 15 8" />
                 </svg>
-                Save
+                {busy ? 'Saving…' : 'Save'}
               </button>
             </>
           )}
@@ -726,7 +881,11 @@ function MField({ label, disabled, stretch, children }) {
 }
 
 function blankDraft() {
-  return { id: '', name: '', type: '', category: '', subtitle: '', publications: 0 };
+  return {
+    id: '', name: '', type: '', category: '', subtitle: '',
+    publications: 0,
+    permissions: { mode: 'admins', userIds: [], apiKeyHints: [] },
+  };
 }
 
 function Field({ label, hint, children }) {
@@ -740,55 +899,119 @@ function Field({ label, hint, children }) {
 }
 
 // ── DITA-OT configuration modal (centred) ──────────────────────────────────
-const DEFAULT_DITAOT = {
-  archiveName: 'DITA-OT-3.5',
-  uploadedBy:  'Bastien Boulard',
-  uploadedAt:  '10/11/2024, 6:18 PM',
-  transtype:   '',
-  parameters:  [{ key: '', value: '' }],
-};
-
-function DitaOtModal({ open, onClose }) {
-  const [archive, setArchive]      = useState({ name: DEFAULT_DITAOT.archiveName, uploadedBy: DEFAULT_DITAOT.uploadedBy, uploadedAt: DEFAULT_DITAOT.uploadedAt });
+//
+// Backed by /api/dita-ot/config + /archive + /reset. The modal loads on open
+// (so the user always sees the latest archive metadata even if another admin
+// uploaded between sessions), uploads + downloads route through the
+// presigned-URL endpoint to avoid streaming through the Next.js proxy, and
+// "Reset" wipes the S3 archive and clears the advanced settings.
+function DitaOtModal({ open, onClose, onToast }) {
+  const [config, setConfig]    = useState(null);
+  const [loading, setLoading]  = useState(true);
+  const [busy, setBusy]        = useState(false);
+  const [transtype, setTranstype] = useState('');
+  const [params, setParams]    = useState([{ key: '', value: '' }]);
   const [showAdvanced, setShowAdv] = useState(true);
-  const [transtype, setTranstype]  = useState(DEFAULT_DITAOT.transtype);
-  const [params, setParams]        = useState(DEFAULT_DITAOT.parameters);
-  const fileInputRef               = useRef(null);
   const [dragOver, setDragOver]    = useState(false);
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
     if (!open) return undefined;
+    let cancelled = false;
+    setLoading(true);
+    api.get('/dita-ot/config')
+      .then((data) => {
+        if (cancelled) return;
+        const cfg = data?.config || {};
+        setConfig(cfg);
+        setTranstype(cfg.transtype || '');
+        setParams(cfg.parameters?.length ? cfg.parameters : [{ key: '', value: '' }]);
+        setShowAdv(true);
+      })
+      .catch((err) => onToast?.('error', err?.message || 'Failed to load DITA-OT config'))
+      .finally(() => { if (!cancelled) setLoading(false); });
     const onKey = (e) => { if (e.key === 'Escape') onClose?.(); };
     window.addEventListener('keydown', onKey);
     const prev = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = prev; };
-  }, [open, onClose]);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prev;
+    };
+  }, [open, onClose, onToast]);
 
   if (!open) return null;
-
-  const handleFile = (file) => {
-    if (!file) return;
-    setArchive({
-      name: file.name.replace(/\.zip$/i, ''),
-      uploadedBy: 'Super Admin',
-      uploadedAt: new Date().toLocaleString('en-US', {
-        month: '2-digit', day: '2-digit', year: 'numeric',
-        hour: 'numeric', minute: '2-digit', hour12: true,
-      }),
-    });
-  };
 
   const updateParam = (i, patch) => setParams((p) => p.map((row, idx) => (idx === i ? { ...row, ...patch } : row)));
   const removeParam = (i) => setParams((p) => p.filter((_, idx) => idx !== i));
   const addParam    = () => setParams((p) => [...p, { key: '', value: '' }]);
 
-  const reset = () => {
-    setArchive({ name: DEFAULT_DITAOT.archiveName, uploadedBy: DEFAULT_DITAOT.uploadedBy, uploadedAt: DEFAULT_DITAOT.uploadedAt });
-    setTranstype(DEFAULT_DITAOT.transtype);
-    setParams(DEFAULT_DITAOT.parameters);
-    setShowAdv(true);
+  const handleFile = async (file) => {
+    if (!file || busy) return;
+    if (!/\.zip$/i.test(file.name)) {
+      onToast?.('error', 'DITA-OT archive must be a .zip file');
+      return;
+    }
+    const fd = new FormData();
+    fd.append('archive', file, file.name);
+    setBusy(true);
+    try {
+      const data = await api.upload('/dita-ot/config', fd);
+      setConfig(data?.config || null);
+      onToast?.('success', 'Archive uploaded');
+    } catch (err) {
+      onToast?.('error', err?.message || 'Upload failed');
+    } finally {
+      setBusy(false);
+    }
   };
+
+  const handleDownload = async () => {
+    if (!config?.archive) return;
+    try {
+      const data = await api.get('/dita-ot/archive');
+      if (data?.url) window.open(data.url, '_blank', 'noopener');
+    } catch (err) {
+      onToast?.('error', err?.message || 'Download failed');
+    }
+  };
+
+  const handleReset = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const data = await api.post('/dita-ot/reset');
+      setConfig(data?.config || null);
+      setTranstype('');
+      setParams([{ key: '', value: '' }]);
+      onToast?.('success', 'Reset to default DITA-OT');
+    } catch (err) {
+      onToast?.('error', err?.message || 'Reset failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleSaveAdvanced = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const cleaned = params
+        .map((p) => ({ key: String(p.key || '').trim(), value: String(p.value || '') }))
+        .filter((p) => p.key);
+      const data = await api.patch('/dita-ot/config', { transtype, parameters: cleaned });
+      setConfig(data?.config || null);
+      onToast?.('success', 'Advanced settings saved');
+      onClose?.();
+    } catch (err) {
+      onToast?.('error', err?.message || 'Save failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const archive = config?.archive || null;
 
   return (
     <div role="presentation" onClick={onClose} style={S.modalOverlay}>
@@ -806,105 +1029,122 @@ function DitaOtModal({ open, onClose }) {
         </header>
 
         <div style={{ padding: '20px 22px', display: 'flex', flexDirection: 'column', gap: '18px' }}>
-          {/* Upload archive */}
-          <div
-            onClick={() => fileInputRef.current?.click()}
-            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-            onDragLeave={() => setDragOver(false)}
-            onDrop={(e) => { e.preventDefault(); setDragOver(false); handleFile(e.dataTransfer.files?.[0]); }}
-            style={{
-              display: 'flex', alignItems: 'center', gap: '10px',
-              padding: '18px 16px', borderRadius: '6px',
-              background: dragOver ? '#fdf2f8' : '#f1f5f9',
-              border: `1px dashed ${dragOver ? '#a21caf' : '#cbd5e1'}`,
-              cursor: 'pointer',
-            }}
-          >
-            <span style={{ color: '#94a3b8', display: 'inline-flex' }}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                <path d="M16.5,6V17.5A4,4 0 0,1 12.5,21.5A4,4 0 0,1 8.5,17.5V5A2.5,2.5 0 0,1 11,2.5A2.5,2.5 0 0,1 13.5,5V15.5A1,1 0 0,1 12.5,16.5A1,1 0 0,1 11.5,15.5V6H10V15.5A2.5,2.5 0 0,0 12.5,18A2.5,2.5 0 0,0 15,15.5V5A4,4 0 0,0 11,1A4,4 0 0,0 7,5V17.5A5.5,5.5 0 0,0 12.5,23A5.5,5.5 0 0,0 18,17.5V6H16.5Z" />
-              </svg>
-            </span>
-            <span style={{ color: '#475569', fontSize: '0.92rem' }}>Upload DITA-OT archive</span>
-            <input ref={fileInputRef} type="file" accept=".zip" hidden onChange={(e) => handleFile(e.target.files?.[0])} />
-          </div>
-
-          {/* Existing archive details */}
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600, color: '#0f172a', fontSize: '0.95rem' }}>
-              DITA-OT configuration
-              <a href="#" onClick={(e) => e.preventDefault()} aria-label="Download archive" style={{ color: '#475569' }}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                  <polyline points="7 10 12 15 17 10" />
-                  <line x1="12" y1="15" x2="12" y2="3" />
-                </svg>
-              </a>
-            </div>
-            <div style={{ marginTop: '6px', fontSize: '0.86rem', color: '#475569', lineHeight: 1.5 }}>
-              <div>{archive.name}</div>
-              <div>Uploaded by {archive.uploadedBy}</div>
-              <div>{archive.uploadedAt}</div>
-            </div>
-          </div>
-
-          {/* Advanced settings toggle */}
-          <button
-            type="button"
-            onClick={() => setShowAdv((v) => !v)}
-            style={{
-              alignSelf: 'center',
-              display: 'inline-flex', alignItems: 'center', gap: '6px',
-              padding: '4px 8px', background: 'transparent', border: 'none',
-              color: '#a21caf', cursor: 'pointer', fontSize: '0.85rem',
-              fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase',
-            }}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
-                 style={{ transform: showAdvanced ? 'rotate(0deg)' : 'rotate(-90deg)', transition: 'transform 150ms' }}>
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
-            Advanced settings
-          </button>
-
-          {showAdvanced && (
+          {loading ? (
+            <div style={{ color: '#64748b', fontSize: '0.9rem' }}>Loading current configuration…</div>
+          ) : (
             <>
-              <Field label="Transtype">
-                <input type="text" value={transtype} onChange={(e) => setTranstype(e.target.value)} style={S.formInput} placeholder="e.g. xhtml" />
-              </Field>
+              <div
+                onClick={() => !busy && fileInputRef.current?.click()}
+                onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={(e) => { e.preventDefault(); setDragOver(false); handleFile(e.dataTransfer.files?.[0]); }}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '10px',
+                  padding: '18px 16px', borderRadius: '6px',
+                  background: dragOver ? '#fdf2f8' : '#f1f5f9',
+                  border: `1px dashed ${dragOver ? '#a21caf' : '#cbd5e1'}`,
+                  cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.7 : 1,
+                }}
+              >
+                <span style={{ color: '#94a3b8', display: 'inline-flex' }}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <path d="M16.5,6V17.5A4,4 0 0,1 12.5,21.5A4,4 0 0,1 8.5,17.5V5A2.5,2.5 0 0,1 11,2.5A2.5,2.5 0 0,1 13.5,5V15.5A1,1 0 0,1 12.5,16.5A1,1 0 0,1 11.5,15.5V6H10V15.5A2.5,2.5 0 0,0 12.5,18A2.5,2.5 0 0,0 15,15.5V5A4,4 0 0,0 11,1A4,4 0 0,0 7,5V17.5A5.5,5.5 0 0,0 12.5,23A5.5,5.5 0 0,0 18,17.5V6H16.5Z" />
+                  </svg>
+                </span>
+                <span style={{ color: '#475569', fontSize: '0.92rem' }}>
+                  {busy ? 'Uploading…' : 'Upload DITA-OT archive (.zip)'}
+                </span>
+                <input ref={fileInputRef} type="file" accept=".zip" hidden onChange={(e) => handleFile(e.target.files?.[0])} />
+              </div>
 
               <div>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-                  <span style={{ fontSize: '0.95rem', fontWeight: 600, color: '#0f172a' }}>Parameters</span>
-                  <button type="button" onClick={addParam} style={{ ...S.linkBtn, padding: '4px 6px' }}>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <line x1="12" y1="5" x2="12" y2="19" />
-                      <line x1="5"  y1="12" x2="19" y2="12" />
-                    </svg>
-                    <span>Add parameter</span>
-                  </button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600, color: '#0f172a', fontSize: '0.95rem' }}>
+                  DITA-OT configuration
+                  {archive ? (
+                    <button
+                      type="button" onClick={handleDownload}
+                      aria-label="Download archive"
+                      style={{ background: 'transparent', border: 'none', padding: 0, cursor: 'pointer', color: '#475569', display: 'inline-flex' }}
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                        <polyline points="7 10 12 15 17 10" />
+                        <line x1="12" y1="15" x2="12" y2="3" />
+                      </svg>
+                    </button>
+                  ) : null}
                 </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {params.map((p, i) => (
-                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <input type="text" value={p.key}   placeholder="Key"   onChange={(e) => updateParam(i, { key: e.target.value })}   style={{ ...S.formInput, flex: 1 }} />
-                      <input type="text" value={p.value} placeholder="Value" onChange={(e) => updateParam(i, { value: e.target.value })} style={{ ...S.formInput, flex: 1 }} />
-                      <button type="button" aria-label="Remove parameter" onClick={() => removeParam(i)}
-                              style={{ background: 'transparent', border: 'none', padding: '6px', cursor: 'pointer', color: '#a21caf', display: 'inline-flex' }}>
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                          <path d="M19,4H15.5L14.5,3H9.5L8.5,4H5V6H19M6,19A2,2 0 0,0 8,21H16A2,2 0 0,0 18,19V7H6V19Z" />
-                        </svg>
-                      </button>
-                    </div>
-                  ))}
+                <div style={{ marginTop: '6px', fontSize: '0.86rem', color: '#475569', lineHeight: 1.5 }}>
+                  {archive ? (
+                    <>
+                      <div>{archive.originalName}</div>
+                      <div>Uploaded by {archive.uploadedBy?.name || archive.uploadedBy?.email || 'Unknown'}</div>
+                      <div>{archive.uploadedAt ? new Date(archive.uploadedAt).toLocaleString() : ''}</div>
+                    </>
+                  ) : (
+                    <div>Using stock DITA-OT 3.5.4 — no custom archive uploaded.</div>
+                  )}
                 </div>
               </div>
+
+              <button
+                type="button"
+                onClick={() => setShowAdv((v) => !v)}
+                style={{
+                  alignSelf: 'center',
+                  display: 'inline-flex', alignItems: 'center', gap: '6px',
+                  padding: '4px 8px', background: 'transparent', border: 'none',
+                  color: '#a21caf', cursor: 'pointer', fontSize: '0.85rem',
+                  fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase',
+                }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+                     style={{ transform: showAdvanced ? 'rotate(0deg)' : 'rotate(-90deg)', transition: 'transform 150ms' }}>
+                  <polyline points="6 9 12 15 18 9" />
+                </svg>
+                Advanced settings
+              </button>
+
+              {showAdvanced && (
+                <>
+                  <Field label="Transtype">
+                    <input type="text" value={transtype} onChange={(e) => setTranstype(e.target.value)} style={S.formInput} placeholder="e.g. xhtml" />
+                  </Field>
+
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                      <span style={{ fontSize: '0.95rem', fontWeight: 600, color: '#0f172a' }}>Parameters</span>
+                      <button type="button" onClick={addParam} style={{ ...S.linkBtn, padding: '4px 6px' }}>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <line x1="12" y1="5" x2="12" y2="19" />
+                          <line x1="5"  y1="12" x2="19" y2="12" />
+                        </svg>
+                        <span>Add parameter</span>
+                      </button>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      {params.map((p, i) => (
+                        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <input type="text" value={p.key}   placeholder="Key"   onChange={(e) => updateParam(i, { key: e.target.value })}   style={{ ...S.formInput, flex: 1 }} />
+                          <input type="text" value={p.value} placeholder="Value" onChange={(e) => updateParam(i, { value: e.target.value })} style={{ ...S.formInput, flex: 1 }} />
+                          <button type="button" aria-label="Remove parameter" onClick={() => removeParam(i)}
+                                  style={{ background: 'transparent', border: 'none', padding: '6px', cursor: 'pointer', color: '#a21caf', display: 'inline-flex' }}>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                              <path d="M19,4H15.5L14.5,3H9.5L8.5,4H5V6H19M6,19A2,2 0 0,0 8,21H16A2,2 0 0,0 18,19V7H6V19Z" />
+                            </svg>
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
             </>
           )}
         </div>
 
         <div style={{ ...S.modalFooter, justifyContent: 'space-between' }}>
-          <button type="button" onClick={reset} style={{ ...S.linkBtn, color: '#a21caf', padding: '4px 8px' }}>
+          <button type="button" onClick={handleReset} disabled={busy} style={{ ...S.linkBtn, color: '#a21caf', padding: '4px 8px' }}>
             Reset to default
           </button>
           <div style={{ display: 'inline-flex', gap: '8px' }}>
@@ -915,11 +1155,11 @@ function DitaOtModal({ open, onClose }) {
               </svg>
               Cancel
             </button>
-            <button type="button" style={S.primaryBtn} onClick={onClose}>
+            <button type="button" style={{ ...S.primaryBtn, opacity: busy ? 0.65 : 1 }} onClick={handleSaveAdvanced} disabled={busy}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <polyline points="20 6 9 17 4 12" />
               </svg>
-              Save
+              {busy ? 'Saving…' : 'Save'}
             </button>
           </div>
         </div>
@@ -986,37 +1226,12 @@ const S = {
     padding: '40px 14px', textAlign: 'center', color: '#94a3b8',
     fontSize: '0.9rem',
   },
-  // Drawer
-  drawerOverlay: {
-    position: 'fixed', inset: 0, zIndex: 9999,
-    background: 'rgba(15,23,42,0.45)',
-    display: 'flex', justifyContent: 'flex-end',
-  },
-  drawer: {
-    background: '#fff', height: '100%',
-    display: 'flex', flexDirection: 'column',
-    boxShadow: '-12px 0 32px rgba(15,23,42,0.18)',
-    fontFamily: 'var(--font-sans)',
-  },
-  drawerHeader: {
-    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-    padding: '16px 20px', borderBottom: '1px solid #e2e8f0',
-    background: '#fff',
-  },
-  drawerTitle: { fontSize: '1.05rem', fontWeight: 600, color: '#0f172a',
-    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
-  drawerBody: { flex: 1, overflowY: 'auto', padding: '24px' },
-  drawerFooter: {
-    display: 'flex', justifyContent: 'flex-end', gap: '8px',
-    padding: '12px 16px', borderTop: '1px solid #e2e8f0', background: '#f8fafc',
-  },
   formInput: {
     width: '100%', padding: '10px 12px',
     border: '1px solid #cbd5e1', borderRadius: '4px',
     background: '#fff', fontSize: '0.92rem', color: '#0f172a',
     fontFamily: 'var(--font-sans)', outline: 'none', boxSizing: 'border-box',
   },
-  // Modal
   modalOverlay: {
     position: 'fixed', inset: 0, zIndex: 10001,
     background: 'rgba(15,23,42,0.45)',
@@ -1045,7 +1260,6 @@ const S = {
     display: 'flex', justifyContent: 'flex-end', gap: '8px',
     padding: '12px 16px', borderTop: '1px solid #e2e8f0',
   },
-  // Inline source editor
   editorWrap: {
     background: '#fff', borderRadius: '4px',
     padding: '20px 24px 80px',
@@ -1077,6 +1291,12 @@ const S = {
     background: '#fff', fontSize: '0.92rem', color: '#0f172a',
     fontFamily: 'var(--font-sans)', outline: 'none', boxSizing: 'border-box',
   },
+  // Visually communicate that a field is locked (id/type on edit). Same
+  // metrics as `mInput` so the layout doesn't shift.
+  mInputDisabled: {
+    background: '#f8fafc', color: '#64748b', cursor: 'not-allowed',
+    borderColor: '#e2e8f0',
+  },
   permissionsHeading: {
     display: 'flex', alignItems: 'center', gap: '12px',
     margin: '12px 0 4px',
@@ -1086,6 +1306,10 @@ const S = {
   },
   permissionsTitle: {
     fontSize: '0.95rem', fontWeight: 600, color: '#0f172a',
+  },
+  permissionsCaption: {
+    marginTop: '8px', fontSize: '0.78rem', color: '#94a3b8',
+    fontStyle: 'italic',
   },
   radioRow: {
     display: 'flex', alignItems: 'center', gap: '10px',
@@ -1105,7 +1329,6 @@ const S = {
     background: '#fff', borderTop: '1px solid #e2e8f0',
     display: 'flex', justifyContent: 'flex-end',
   },
-  // Wizard
   wizardHeader: {
     display: 'flex', alignItems: 'stretch', justifyContent: 'space-between',
     paddingRight: '12px',
@@ -1129,5 +1352,14 @@ const S = {
   stepperLabel: {
     fontSize: '0.92rem',
     fontFamily: 'var(--font-sans)',
+  },
+  // Floating bottom-right toast for save/clean/delete success and 409
+  // conflict messaging.
+  toast: {
+    position: 'fixed', bottom: '24px', right: '24px',
+    zIndex: 10010,
+    padding: '10px 14px', borderRadius: '6px',
+    fontSize: '0.85rem', fontFamily: 'var(--font-sans)',
+    boxShadow: '0 6px 16px rgba(15,23,42,0.18)',
   },
 };

@@ -1,12 +1,58 @@
 const express = require('express');
 const Topic = require('../models/Topic');
+const Document = require('../models/Document');
+const AccessRule = require('../models/AccessRule');
+const AccessRulesConfig = require('../models/AccessRulesConfig');
+const {
+  userCanBypass,
+  buildMetaBagForTopic,
+  matchAllRequirements,
+  ruleGrantsAccessToUser,
+  defaultRuleAllows,
+} = require('../services/accessRules/accessRulesService');
 const { optionalAuth, auth } = require('../middleware/auth');
 const { trackEvent } = require('../services/analytics/analyticsService');
 
 const router = express.Router();
 
+// Filters an array of topic plain-objects down to those the supplied user is
+// allowed to read under the active access-rule set. The privileged-bypass
+// short-circuits BRD: "ADMIN, KHUB_ADMIN, and CONTENT_PUBLISHER users can see
+// all content".
+async function filterTopicsForUser(topics, user) {
+  if (!Array.isArray(topics) || topics.length === 0) return topics;
+  if (userCanBypass(user)) return topics;
+
+  const cfg = await AccessRulesConfig.getSingleton();
+  const activeRules = await AccessRule.find({ status: 'Active', inactiveSet: false })
+    .populate('groups', 'name').lean();
+
+  // If no active rules and default rule allows everyone, skip evaluation.
+  if (activeRules.length === 0 && defaultRuleAllows(cfg, user)) return topics;
+
+  const docIds = Array.from(new Set(topics.map((t) => String(t.documentId)).filter(Boolean)));
+  const docs = await Document.find({ _id: { $in: docIds } }).select('title originalFilename sourceFormat metadata').lean();
+  const docById = new Map(docs.map((d) => [String(d._id), d]));
+
+  return topics.filter((t) => {
+    const doc = docById.get(String(t.documentId)) || null;
+    const bag = buildMetaBagForTopic(t, doc);
+    const matching = activeRules.filter((r) => matchAllRequirements(r, bag));
+    if (matching.length === 0) return defaultRuleAllows(cfg, user);
+    for (const r of matching) {
+      if (r.authMode === 'auto') {
+        const autoVals = bag[r.autoBindKey] || [];
+        if (ruleGrantsAccessToUser({ ...r, _autoMatchedValues: autoVals }, user)) return true;
+      } else if (ruleGrantsAccessToUser(r, user)) {
+        return true;
+      }
+    }
+    return false;
+  });
+}
+
 // GET /api/topics — List topics with pagination & filtering
-router.get('/', async (req, res, next) => {
+router.get('/', optionalAuth, async (req, res, next) => {
   try {
     const {
       page = 1,
@@ -38,11 +84,17 @@ router.get('/', async (req, res, next) => {
       Topic.countDocuments(filter),
     ]);
 
+    // Apply access rules — privileged users bypass; everyone else gets only
+    // topics whose document/topic metadata matches a granting rule (or whose
+    // default rule grants access).
+    const visible = await filterTopicsForUser(topics, req.user);
+
     res.json({
-      topics,
+      topics:    visible,
       total,
-      page: parseInt(page),
+      page:      parseInt(page),
       totalPages: Math.ceil(total / parseInt(limit)),
+      hidden:    topics.length - visible.length,
     });
   } catch (error) {
     next(error);
@@ -119,6 +171,15 @@ router.get('/by-slug/:slug', optionalAuth, async (req, res, next) => {
       return res.status(404).json({ error: 'Topic not found' });
     }
 
+    if (!userCanBypass(req.user)) {
+      const visible = await filterTopicsForUser(
+        [topic.toObject ? topic.toObject() : topic], req.user
+      );
+      if (visible.length === 0) {
+        return res.status(403).json({ error: 'Access denied by access rules.' });
+      }
+    }
+
     // Increment view count
     topic.viewCount = (topic.viewCount || 0) + 1;
     await topic.save();
@@ -148,6 +209,15 @@ router.get('/:id', optionalAuth, async (req, res, next) => {
 
     if (!topic) {
       return res.status(404).json({ error: 'Topic not found' });
+    }
+
+    if (!userCanBypass(req.user)) {
+      const visible = await filterTopicsForUser(
+        [topic.toObject ? topic.toObject() : topic], req.user
+      );
+      if (visible.length === 0) {
+        return res.status(403).json({ error: 'Access denied by access rules.' });
+      }
     }
 
     // Increment view count

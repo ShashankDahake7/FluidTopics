@@ -1,45 +1,52 @@
 'use client';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AdminShell from '@/components/admin/AdminShell';
+import api, { getStoredToken } from '@/lib/api';
 
-// ── Mock data ──────────────────────────────────────────────────────────────
-const SEED_VOCABULARIES = [
-  {
-    id: 'products',
-    usedInSearch: true,
-    languages: ['en', 'fr'],
-    author: 'Prem Garudadri',
-    updatedAt: '04/29/2025, 5:00 PM',
-    updatedSinceReprocess: false,
-  },
-  {
-    id: 'audiences',
-    usedInSearch: false,
-    languages: ['en'],
-    author: 'Bastien Boulard',
-    updatedAt: '03/14/2025, 11:18 AM',
-    updatedSinceReprocess: true,
-  },
-  {
-    id: 'regions',
-    usedInSearch: true,
-    languages: ['en', 'fr', 'de', 'ja'],
-    author: 'Lucia Mendez',
-    updatedAt: '02/04/2025, 09:42 AM',
-    updatedSinceReprocess: false,
-  },
-];
+// File picker constraints — RDF / SKOS / CSV. Server-side detection re-checks
+// based on extension; this is just a polite browser hint.
+const FILE_ACCEPT = '.rdf,.csv,.xml,.owl,.ttl,.nt,.jsonld,application/rdf+xml,text/csv,application/xml';
+const VALID_EXT = /\.(rdf|csv|xml|owl|ttl|nt|jsonld)$/i;
 
-const LAST_FULL_REPROCESS = {
-  user: 'Prem GARUDADRI',
-  at: '04/29/2025, 5:00 PM',
-};
+// Translate the API row into the shape the UI was originally designed
+// against (`SEED_VOCABULARIES` had `id`/`languages`/`author`/`updatedAt`).
+// We keep `dbId` for API calls and surface `id` as the slug so the rest of
+// the component reads naturally.
+function toUiRow(api) {
+  return {
+    dbId: api.id,
+    id: api.name,
+    displayName: api.displayName || api.name,
+    format: api.format,
+    sourceFilename: api.sourceFilename || '',
+    usedInSearch: !!api.usedInSearch,
+    languages: api.languages || [],
+    author: api.updatedByName || api.createdByName || '—',
+    updatedAt: api.updatedAt
+      ? new Date(api.updatedAt).toLocaleString('en-US', {
+          month: '2-digit', day: '2-digit', year: 'numeric',
+          hour: 'numeric', minute: '2-digit', hour12: true,
+        })
+      : '',
+    updatedSinceReprocess: !!api.updatedSinceReprocess,
+    status: api.status,
+    parseError: api.parseError || '',
+  };
+}
 
-const FILE_ACCEPT = '.rdf,.csv,application/rdf+xml,text/csv';
-const VALID_EXT = /\.(rdf|csv)$/i;
+function formatTimestamp(ts) {
+  if (!ts) return '';
+  return new Date(ts).toLocaleString('en-US', {
+    month: '2-digit', day: '2-digit', year: 'numeric',
+    hour: 'numeric', minute: '2-digit', hour12: true,
+  });
+}
 
 export default function VocabulariesPage() {
-  const [rows, setRows]               = useState(SEED_VOCABULARIES);
+  const [rows, setRows]               = useState([]);
+  const [config, setConfig]           = useState({ lastFullReprocessAt: null, lastFullReprocessByName: null, pendingReprocess: false });
+  const [loading, setLoading]         = useState(true);
+  const [busy, setBusy]               = useState(false);
   const [query, setQuery]             = useState('');
   const [sortKey, setSortKey]         = useState('id');
   const [sortDir, setSortDir]         = useState('asc');
@@ -47,8 +54,49 @@ export default function VocabulariesPage() {
   const [confirm, setConfirm]         = useState(null);
   const [popoverOpen, setPopoverOpen] = useState(false);
   const [pageError, setPageError]     = useState('');
+  const [pageWarnings, setPageWarnings] = useState([]);
   const [dragOver, setDragOver]       = useState(false);
+  const [job, setJob]                 = useState(null);
   const popoverRef = useRef(null);
+  const pollRef    = useRef(null);
+
+  // ── data loading ────────────────────────────────────────────────────────
+  const refetch = useCallback(async () => {
+    setLoading(true);
+    setPageError('');
+    try {
+      const res = await api.get('/vocabularies');
+      const items = (res?.items || []).map(toUiRow);
+      setRows(items);
+      setConfig(res?.config || { lastFullReprocessAt: null, lastFullReprocessByName: null, pendingReprocess: false });
+      // Resume polling if the server reported a worker was still in flight.
+      if (res?.config?.runningJob) setJob(res.config.runningJob);
+    } catch (e) {
+      setPageError(e?.message || 'Failed to load vocabularies');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { refetch(); }, [refetch]);
+
+  // ── reprocess job polling ───────────────────────────────────────────────
+  useEffect(() => {
+    if (!job?.id) return undefined;
+    if (job.status === 'done' || job.status === 'failed') {
+      // Refetch once the worker reports completion so the dot + footer
+      // timestamp reflect the new state.
+      refetch();
+      return undefined;
+    }
+    pollRef.current = setInterval(async () => {
+      try {
+        const res = await api.get(`/vocabularies/jobs/${job.id}`);
+        if (res?.job) setJob(res.job);
+      } catch (_) { /* keep polling on transient errors */ }
+    }, 1000);
+    return () => clearInterval(pollRef.current);
+  }, [job?.id, job?.status, refetch]);
 
   useEffect(() => {
     if (!popoverOpen) return undefined;
@@ -59,6 +107,7 @@ export default function VocabulariesPage() {
     return () => { document.removeEventListener('mousedown', onClick); window.removeEventListener('keydown', onKey); };
   }, [popoverOpen]);
 
+  // ── derived rows ────────────────────────────────────────────────────────
   const filteredSorted = useMemo(() => {
     const q = query.trim().toLowerCase();
     let list = !q ? rows : rows.filter((r) =>
@@ -80,6 +129,7 @@ export default function VocabulariesPage() {
     else { setSortKey(key); setSortDir('asc'); }
   };
 
+  // ── mutations ───────────────────────────────────────────────────────────
   const handlePageDrop = (file) => {
     if (!file) return;
     if (!VALID_EXT.test(file.name)) { setPageError('Unsupported vocabulary file type'); return; }
@@ -87,29 +137,62 @@ export default function VocabulariesPage() {
     setCreateOpen({ file });
   };
 
-  const upsertVocabulary = ({ id, usedInSearch, file }) => {
-    setRows((prev) => {
-      const idx = prev.findIndex((r) => r.id === id);
-      const today = new Date().toLocaleString('en-US', {
-        month: '2-digit', day: '2-digit', year: 'numeric',
-        hour: 'numeric', minute: '2-digit', hour12: true,
-      });
-      const langs = inferLanguagesFromFile(file);
-      const next  = {
-        id, usedInSearch,
-        languages: langs.length ? langs : ['en'],
-        author: 'Super Admin',
-        updatedAt: today,
-        updatedSinceReprocess: true,
-      };
-      if (idx >= 0) {
-        const copy = [...prev]; copy[idx] = { ...prev[idx], ...next }; return copy;
+  const upsertVocabulary = async ({ id, usedInSearch, file, editing }) => {
+    setBusy(true);
+    setPageError('');
+    setPageWarnings([]);
+    try {
+      let res;
+      if (editing) {
+        if (file) {
+          // File replacement → multipart PATCH carries displayName/usedInSearch
+          // alongside the new file.
+          const fd = new FormData();
+          fd.append('file', file);
+          fd.append('displayName', id || editing.displayName);
+          fd.append('usedInSearch', usedInSearch ? 'true' : 'false');
+          res = await api.uploadPatch(`/vocabularies/${editing.dbId}`, fd);
+        } else {
+          res = await api.patch(`/vocabularies/${editing.dbId}`, {
+            displayName: id || editing.displayName,
+            usedInSearch,
+          });
+        }
+      } else {
+        if (!file) throw new Error('Please choose a vocabulary file.');
+        const fd = new FormData();
+        fd.append('file', file);
+        fd.append('name', id);
+        fd.append('displayName', id);
+        fd.append('usedInSearch', usedInSearch ? 'true' : 'false');
+        res = await api.upload('/vocabularies', fd);
       }
-      return [...prev, next];
-    });
-    setCreateOpen(false);
+      if (Array.isArray(res?.warnings) && res.warnings.length) {
+        setPageWarnings(res.warnings.slice(0, 5));
+      }
+      setCreateOpen(false);
+      await refetch();
+    } catch (e) {
+      // Stay on the modal so the admin can fix and retry — surface the
+      // error inline at the page level too.
+      setPageError(e?.message || 'Save failed');
+    } finally {
+      setBusy(false);
+    }
   };
-  const deleteVocabulary = (row) => setRows((prev) => prev.filter((r) => r.id !== row.id));
+
+  const deleteVocabulary = async (row) => {
+    setBusy(true);
+    setPageError('');
+    try {
+      await api.delete(`/vocabularies/${row.dbId}`);
+      await refetch();
+    } catch (e) {
+      setPageError(e?.message || 'Delete failed');
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const downloadExample = () => {
     const csv = 'id,label,language,synonyms\nproduct.cloud,Cloud,en,"saas;hosted"\nproduct.cloud,Cloud,fr,"infonuagique"\n';
@@ -120,6 +203,47 @@ export default function VocabulariesPage() {
     document.body.appendChild(a); a.click(); a.remove();
     URL.revokeObjectURL(url);
   };
+
+  const downloadOriginal = async (row) => {
+    setPageError('');
+    try {
+      const token = getStoredToken();
+      const res = await fetch(`/api/vocabularies/${row.dbId}/download`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error || `Download failed (${res.status})`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const cd = res.headers.get('Content-Disposition') || '';
+      const m = /filename="([^"]+)"/.exec(cd);
+      a.href = url;
+      a.download = m ? m[1] : (row.sourceFilename || `${row.id}.${row.format === 'csv' ? 'csv' : 'rdf'}`);
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setPageError(e?.message || 'Download failed');
+    }
+  };
+
+  const onReprocess = async () => {
+    setPageError('');
+    try {
+      const res = await api.post('/vocabularies/reprocess');
+      if (res?.job) setJob(res.job);
+    } catch (e) {
+      setPageError(e?.message || 'Failed to start reprocess');
+    }
+  };
+
+  // ── progress strip helpers ──────────────────────────────────────────────
+  const showProgress = job && (job.status === 'queued' || job.status === 'running');
+  const progressLabel = job && job.total
+    ? `Reprocessing ${(job.processed || 0).toLocaleString()} / ${job.total.toLocaleString()} topics${job.errorCount ? ` — ${job.errorCount} error${job.errorCount === 1 ? '' : 's'}` : ''}`
+    : 'Reprocessing started…';
 
   return (
     <AdminShell active="khub-vocab" allowedRoles={['superadmin']}>
@@ -169,7 +293,7 @@ export default function VocabulariesPage() {
               </svg>
               <span>Download an example</span>
             </button>
-            <button type="button" style={S.primaryBtn} onClick={() => setCreateOpen({ file: null })}>
+            <button type="button" style={S.primaryBtn} onClick={() => setCreateOpen({ file: null })} disabled={busy}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <line x1="12" y1="5" x2="12" y2="19" />
                 <line x1="5"  y1="12" x2="19" y2="12" />
@@ -178,6 +302,22 @@ export default function VocabulariesPage() {
             </button>
           </div>
         </header>
+
+        {showProgress && (
+          <div role="status" style={S.progressBar}>
+            <span style={S.progressDot} />
+            <span>{progressLabel}</span>
+          </div>
+        )}
+
+        {pageWarnings.length > 0 && (
+          <div role="status" style={S.warningBar}>
+            <strong>Vocabulary saved with warnings:</strong>
+            <ul style={{ margin: '4px 0 0', paddingLeft: '18px' }}>
+              {pageWarnings.map((w, i) => <li key={i}>{w}</li>)}
+            </ul>
+          </div>
+        )}
 
         <div
           style={{
@@ -247,11 +387,15 @@ export default function VocabulariesPage() {
                       <span title='Vocabularies that have been added or updated since last full reprocess. Running a reprocess might be necessary.' style={S.thHint}>ⓘ</span>
                     )}
                   />
-                  <Th width="120px" />
+                  <Th width="160px" />
                 </tr>
               </thead>
               <tbody>
-                {filteredSorted.length === 0 ? (
+                {loading ? (
+                  <tr>
+                    <td colSpan={6} style={S.emptyCell}>Loading vocabularies…</td>
+                  </tr>
+                ) : filteredSorted.length === 0 ? (
                   <tr>
                     <td colSpan={6} style={S.emptyCell}>
                       <EmptyIllustration />
@@ -259,15 +403,18 @@ export default function VocabulariesPage() {
                     </td>
                   </tr>
                 ) : filteredSorted.map((r) => (
-                  <tr key={r.id} style={S.tr}>
+                  <tr key={r.dbId} style={S.tr}>
                     <td style={S.td}>
                       {r.id}
                       {r.updatedSinceReprocess && (
-                        <span title="Updated since last reprocess" style={S.dotChip} aria-label="updated since last reprocess">
+                        <span title="Updated since last reprocess. Running a reprocess might be necessary." style={S.dotChip} aria-label="updated since last reprocess">
                           <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                             <circle cx="12" cy="12" r="6" />
                           </svg>
                         </span>
+                      )}
+                      {r.status === 'failed' && (
+                        <span title={r.parseError || 'Parse failed'} style={{ ...S.dotChip, color: '#b91c1c' }}>!</span>
                       )}
                     </td>
                     <td style={S.td}>
@@ -282,13 +429,20 @@ export default function VocabulariesPage() {
                     <td style={S.td}>
                       <div style={{ display: 'inline-flex', flexWrap: 'wrap', gap: '4px' }}>
                         {r.languages.map((l) => (
-                          <span key={l} style={S.langChip}>{l.toUpperCase()}</span>
+                          <span key={l} style={S.langChip}>{(l || '*').toUpperCase()}</span>
                         ))}
                       </div>
                     </td>
                     <td style={S.td}>{r.author}</td>
                     <td style={S.td}>{r.updatedAt}</td>
                     <td style={{ ...S.td, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      <IconBtn title="Download original" onClick={() => downloadOriginal(r)}>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                          <polyline points="7 10 12 15 17 10" />
+                          <line x1="12" y1="15" x2="12" y2="3" />
+                        </svg>
+                      </IconBtn>
                       <IconBtn title="Edit vocabulary" onClick={() => setCreateOpen({ file: null, edit: r })}>
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                           <path d="M20.71,7.04C21.1,6.65 21.1,6 20.71,5.63L18.37,3.29C18,2.9 17.35,2.9 16.96,3.29L15.12,5.12L18.87,8.87M3,17.25V21H6.75L17.81,9.93L14.06,6.18L3,17.25Z" />
@@ -308,8 +462,39 @@ export default function VocabulariesPage() {
         </div>
 
         <footer style={S.footer}>
-          <span style={{ color: '#475569' }}>Last full reprocess by {LAST_FULL_REPROCESS.user}</span>
-          <span style={{ color: '#0f172a', fontWeight: 600 }}>{LAST_FULL_REPROCESS.at}</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1 }}>
+            <button
+              type="button"
+              onClick={onReprocess}
+              disabled={busy || showProgress}
+              style={{
+                ...S.tertiaryBtn,
+                color: '#a21caf', border: '1px solid #a21caf',
+                opacity: (busy || showProgress) ? 0.55 : 1,
+                cursor: (busy || showProgress) ? 'not-allowed' : 'pointer',
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <polyline points="23 4 23 10 17 10" />
+                <polyline points="1 20 1 14 7 14" />
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+              </svg>
+              <span>Reprocess</span>
+            </button>
+            {config.pendingReprocess && !showProgress && (
+              <span style={{ fontSize: '0.78rem', color: '#a21caf' }}>
+                Pending changes — running a reprocess will apply them across the corpus.
+              </span>
+            )}
+          </div>
+          <span style={{ color: '#475569' }}>
+            {config.lastFullReprocessByName
+              ? <>Last full reprocess by {config.lastFullReprocessByName}</>
+              : 'Never reprocessed'}
+          </span>
+          {config.lastFullReprocessAt && (
+            <span style={{ color: '#0f172a', fontWeight: 600 }}>{formatTimestamp(config.lastFullReprocessAt)}</span>
+          )}
         </footer>
       </div>
 
@@ -319,6 +504,7 @@ export default function VocabulariesPage() {
           initialFile={createOpen.file || null}
           editing={createOpen.edit || null}
           existingIds={rows.map((r) => r.id)}
+          busy={busy}
           onCancel={() => setCreateOpen(false)}
           onSave={upsertVocabulary}
         />
@@ -329,14 +515,17 @@ export default function VocabulariesPage() {
         title={confirm?.row ? `Delete "${confirm.row.id}"?` : ''}
         body="This action cannot be undone. Running a reprocess might be necessary to stop applying the vocabulary to documents."
         onCancel={() => setConfirm(null)}
-        onConfirm={() => { if (confirm?.row) deleteVocabulary(confirm.row); setConfirm(null); }}
+        onConfirm={async () => {
+          if (confirm?.row) await deleteVocabulary(confirm.row);
+          setConfirm(null);
+        }}
       />
     </AdminShell>
   );
 }
 
 // ── Create/Edit modal ──────────────────────────────────────────────────────
-function CreateVocabularyModal({ open, initialFile, editing, existingIds, onCancel, onSave }) {
+function CreateVocabularyModal({ open, initialFile, editing, existingIds, busy, onCancel, onSave }) {
   const [file, setFile]              = useState(initialFile || null);
   const [id, setId]                  = useState(editing?.id || '');
   const [usedInSearch, setUsedInSearch] = useState(editing?.usedInSearch || false);
@@ -362,8 +551,9 @@ function CreateVocabularyModal({ open, initialFile, editing, existingIds, onCanc
 
   const isEdit = !!editing;
   const idTrim = id.trim();
-  const idClash = !isEdit && existingIds.includes(idTrim);
-  const valid  = !!file && idTrim && !idClash;
+  const idClash = !isEdit && existingIds.includes(idTrim.toLowerCase());
+  // For edit: file optional. For create: file required.
+  const valid  = (isEdit ? !!idTrim : (!!file && idTrim && !idClash)) && !busy;
 
   const pickFile = (f) => {
     if (!f) return;
@@ -396,7 +586,9 @@ function CreateVocabularyModal({ open, initialFile, editing, existingIds, onCanc
         </header>
 
         <div style={{ padding: '20px 22px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          <div style={{ fontSize: '0.92rem', fontWeight: 600, color: '#0f172a' }}>Upload vocabulary file:</div>
+          <div style={{ fontSize: '0.92rem', fontWeight: 600, color: '#0f172a' }}>
+            {isEdit ? 'Replace vocabulary file (optional):' : 'Upload vocabulary file:'}
+          </div>
 
           <div
             onClick={() => fileRef.current?.click()}
@@ -429,7 +621,10 @@ function CreateVocabularyModal({ open, initialFile, editing, existingIds, onCanc
                   <polyline points="17 8 12 3 7 8" />
                   <line x1="12" y1="3" x2="12" y2="15" />
                 </svg>
-                Drop a vocabulary file or <span style={{ color: '#a21caf', textDecoration: 'underline' }}>click to browse</span>
+                {isEdit
+                  ? <>Drop a new file or <span style={{ color: '#a21caf', textDecoration: 'underline' }}>click to browse</span> (keeps current file if empty)</>
+                  : <>Drop a vocabulary file or <span style={{ color: '#a21caf', textDecoration: 'underline' }}>click to browse</span></>
+                }
               </span>
             )}
             <input ref={fileRef} type="file" accept={FILE_ACCEPT} hidden onChange={(e) => pickFile(e.target.files?.[0])} />
@@ -484,7 +679,7 @@ function CreateVocabularyModal({ open, initialFile, editing, existingIds, onCanc
           <button
             type="button"
             disabled={!valid}
-            onClick={() => valid && onSave({ id: idTrim, usedInSearch, file })}
+            onClick={() => valid && onSave({ id: idTrim, usedInSearch, file, editing })}
             style={{
               ...S.primaryBtn,
               opacity: valid ? 1 : 0.55, cursor: valid ? 'pointer' : 'not-allowed',
@@ -493,7 +688,7 @@ function CreateVocabularyModal({ open, initialFile, editing, existingIds, onCanc
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <polyline points="20 6 9 17 4 12" />
             </svg>
-            Save
+            {busy ? 'Saving…' : 'Save'}
           </button>
         </div>
       </div>
@@ -622,12 +817,6 @@ function EmptyIllustration() {
   );
 }
 
-function inferLanguagesFromFile(file) {
-  if (!file) return [];
-  const m = file.name.match(/[._-]([a-z]{2})\b/i);
-  return m ? [m[1].toLowerCase()] : [];
-}
-
 // ── Styles ─────────────────────────────────────────────────────────────────
 const S = {
   page: { display: 'flex', flexDirection: 'column', gap: '14px' },
@@ -703,6 +892,23 @@ const S = {
     background: '#fee2e2', color: '#b91c1c',
     fontSize: '0.82rem', fontWeight: 500,
     width: 'fit-content',
+  },
+  warningBar: {
+    padding: '10px 14px', borderRadius: '4px',
+    background: '#fffbeb', color: '#92400e',
+    fontSize: '0.86rem', border: '1px solid #fde68a',
+  },
+  progressBar: {
+    display: 'inline-flex', alignItems: 'center', gap: '8px',
+    padding: '8px 12px', borderRadius: '4px',
+    background: '#f5f3ff', color: '#5b21b6',
+    fontSize: '0.86rem', fontWeight: 500, border: '1px solid #ddd6fe',
+    width: 'fit-content',
+  },
+  progressDot: {
+    width: '10px', height: '10px', borderRadius: '999px',
+    background: '#7c3aed', display: 'inline-block',
+    animation: 'pulse 1s infinite',
   },
   searchRow: {
     display: 'flex', alignItems: 'center', gap: '8px',

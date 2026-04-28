@@ -17,20 +17,40 @@ router.get('/', async (req, res, next) => {
 
     const total = await Bookmark.countDocuments(query);
     const bookmarks = await Bookmark.find(query)
-      .populate('topicId', 'title slug metadata viewCount hierarchy.level')
+      .populate('topicId', 'title slug metadata viewCount hierarchy.level prettyUrl documentId')
       .sort({ createdAt: -1 })
       .skip((page - 1) * limit)
       .limit(parseInt(limit))
       .lean();
 
+    // Enrich with each topic's parent document prettyUrl so the frontend
+    // can build a doc-level pretty URL when the topic itself has no
+    // template match. We fetch in one batch keyed by unique documentId.
+    const Document = require('../models/Document');
+    const docIds = [...new Set(
+      bookmarks
+        .map((b) => b.topicId?.documentId && String(b.topicId.documentId))
+        .filter(Boolean)
+    )];
+    const parentDocs = docIds.length
+      ? await Document.find({ _id: { $in: docIds } }).select('_id prettyUrl').lean()
+      : [];
+    const parentMap = Object.fromEntries(parentDocs.map((d) => [String(d._id), d.prettyUrl || '']));
+
     res.json({
-      bookmarks: bookmarks.map((b) => ({
-        id: b._id,
-        topic: b.topicId,
-        note: b.note,
-        folder: b.folder,
-        createdAt: b.createdAt,
-      })),
+      bookmarks: bookmarks.map((b) => {
+        const t = b.topicId || null;
+        const docId = t?.documentId ? String(t.documentId) : null;
+        return {
+          id: b._id,
+          topic: t,
+          documentId: docId,
+          documentPrettyUrl: docId ? parentMap[docId] || '' : '',
+          note: b.note,
+          folder: b.folder,
+          createdAt: b.createdAt,
+        };
+      }),
       total,
       page: parseInt(page),
       totalPages: Math.ceil(total / limit),

@@ -41,6 +41,16 @@ const INDEX_DEFINITIONS = [
               version:  [{ type: 'token' }, { type: 'stringFacet' }],
               language: [{ type: 'token' }, { type: 'stringFacet' }],
               author:   [{ type: 'token' }],
+              // Flat projection of values for keys flagged
+              // MetadataKey.isIndexed — populated by the reprocess
+              // worker. Search treats this as full-text so e.g. typing
+              // "AD1000" finds the topic that carries
+              // <othermeta name="reference" content="AD1000"/>.
+              indexedValues: [{ type: 'string' }, { type: 'token' }],
+              // Parsed dates for keys flagged MetadataKey.isDate. Stored
+              // as a sub-document with `dynamic: true` so the reconciler
+              // doesn't need to know each key name up front.
+              dateValues: { type: 'document', dynamic: true },
             },
           },
           documentId: [{ type: 'objectId' }],

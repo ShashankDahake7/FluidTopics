@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import api, { getStoredToken } from '@/lib/api';
 import { useTranslation } from '@/lib/i18n';
+import { hrefForTopic } from '@/lib/prettyUrl';
 
 function SearchContent() {
   const searchParams = useSearchParams();
@@ -317,17 +318,50 @@ function SearchContent() {
             </div>
           ) : results ? (
             <>
+              {/* Custom-template virtual hits — static dashboard pages
+                  (Release Notes, FAQs, …) surfaced server-side so a
+                  search for e.g. "release notes" jumps straight to the
+                  /dashboard/templates/release-notes page. Only present
+                  on page 1; backend never paginates them. */}
+              {results.templates?.length > 0 && (
+                <div style={s.templateBlock}>
+                  <div style={s.templateBlockLabel}>{t('searchPagesLabel') || 'PAGES'}</div>
+                  {results.templates.map((tpl) => (
+                    <a
+                      key={tpl.slug}
+                      href={tpl.href}
+                      style={s.templateCard}
+                    >
+                      <div style={s.templateCardRow}>
+                        <span style={s.templateBadge}>Page</span>
+                        <h3 style={s.templateTitle}>{tpl.title}</h3>
+                      </div>
+                      {tpl.description && (
+                        <p style={s.templateSnippet}>{tpl.description}</p>
+                      )}
+                    </a>
+                  ))}
+                </div>
+              )}
+
               {results.hits?.map((hit) => {
-                // The /dashboard/docs/[id] route expects a *document* id and
-                // reads ?topic=<topicId> to pre-select the matching topic
-                // inside that document. Search hits are topics, so build
-                // the link from the parent documentId + topicId pair.
-                const docId = hit.documentId || hit.id;
-                const topicId = hit.topicId || hit.id;
+                // Search hits are topics. Resolve the link with our
+                // shared helper so we use:
+                //   /r/<topic-pretty>                 when topic has prettyUrl
+                //   /r/<doc-pretty>?topic=<topicId>   when only the doc does
+                //   /dashboard/docs/<docId>?topic=…   legacy fallback
+                const topicLike = {
+                  _id: hit.topicId || hit.id,
+                  prettyUrl: hit.prettyUrl || '',
+                  documentId: hit.documentId || null,
+                };
+                const parentDoc = hit.documentId
+                  ? { _id: hit.documentId, prettyUrl: hit.documentPrettyUrl || '' }
+                  : null;
                 return (
                 <a
                   key={hit.id}
-                  href={`/dashboard/docs/${docId}?topic=${topicId}`}
+                  href={hrefForTopic(topicLike, parentDoc)}
                   style={s.resultCard}
                 >
                   <h3
@@ -528,4 +562,36 @@ const s = {
     padding: '6px 12px', cursor: 'pointer', fontSize: '0.85rem',
   },
   pagerBtnActive: { background: '#1d4ed8', color: '#fff', borderColor: '#1d4ed8' },
+  // Custom-template "Pages" block — distinct from topic hits so readers
+  // can tell at a glance these are dashboard pages, not document snippets.
+  templateBlock: {
+    marginBottom: '18px',
+    paddingBottom: '14px',
+    borderBottom: '1px solid #e5e7eb',
+  },
+  templateBlockLabel: {
+    fontSize: '0.7rem', color: '#94a3b8', fontWeight: 700,
+    letterSpacing: '0.08em', marginBottom: '8px',
+  },
+  templateCard: {
+    display: 'block', textDecoration: 'none',
+    background: '#f8faff', border: '1px solid #c7d7f5', borderRadius: '8px',
+    padding: '14px 18px', marginBottom: '8px',
+    transition: 'box-shadow 120ms, transform 120ms',
+  },
+  templateCardRow: {
+    display: 'flex', alignItems: 'center', gap: '10px',
+  },
+  templateBadge: {
+    background: '#1d4ed8', color: '#ffffff',
+    padding: '2px 8px', borderRadius: '4px',
+    fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.08em',
+    textTransform: 'uppercase',
+  },
+  templateTitle: {
+    fontSize: '0.95rem', fontWeight: 600, color: '#1d4ed8', margin: 0,
+  },
+  templateSnippet: {
+    fontSize: '0.85rem', color: '#475569', marginTop: '6px', lineHeight: 1.55,
+  },
 };

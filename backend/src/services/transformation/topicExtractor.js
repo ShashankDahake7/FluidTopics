@@ -31,6 +31,11 @@ const extractTopics = (sections, documentMetadata = {}, sourcePath = '') => {
         product: documentMetadata.product || '',
         language: documentMetadata.language || 'en',
         author: documentMetadata.author || '',
+        // Forward arbitrary metadata captured by the parser. The
+        // reprocess worker + ingestion-tail upserter both read from
+        // this bag to feed the MetadataKey registry and to recompute
+        // metadata.indexedValues / metadata.dateValues.
+        custom: documentMetadata.custom || {},
       },
       media: [],
     };

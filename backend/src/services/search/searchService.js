@@ -1,5 +1,13 @@
 const mongoose = require('mongoose');
 const Topic = require('../../models/Topic');
+// Custom templates (Release Notes, FAQs, …) live in the frontend as
+// static React pages so they cannot be indexed by Atlas. We surface
+// them as virtual hits alongside the real Atlas results — see
+// customTemplates.js for the registry + matcher.
+const {
+  matchCustomTemplates,
+  suggestCustomTemplates,
+} = require('./customTemplates');
 
 const SEARCH_INDEX = process.env.ATLAS_SEARCH_INDEX || 'default';
 const AUTOCOMPLETE_INDEX = process.env.ATLAS_AUTOCOMPLETE_INDEX || 'autocomplete_title';
@@ -53,9 +61,14 @@ const buildCompound = ({ query, filters, boost, titlesOnly, sort }) => {
       compound.must.push({
         compound: {
           should: [
-            { text: { query: q, path: 'title',          fuzzy: { maxEdits: 1 }, score: { boost: { value: 3 } } } },
-            { text: { query: q, path: 'content.text',   fuzzy: { maxEdits: 1 } } },
-            { text: { query: q, path: 'metadata.tags',                            score: { boost: { value: 2 } } } },
+            { text: { query: q, path: 'title',                  fuzzy: { maxEdits: 1 }, score: { boost: { value: 3 } } } },
+            { text: { query: q, path: 'content.text',           fuzzy: { maxEdits: 1 } } },
+            { text: { query: q, path: 'metadata.tags',                                  score: { boost: { value: 2 } } } },
+            // Indexed custom-metadata values (per Metadata configuration
+            // admin "Index values" toggle). Atlas only sees this path if
+            // the index definition includes it — see backend/src/config/
+            // atlasSearch.js for the matching mapping.
+            { text: { query: q, path: 'metadata.indexedValues',                         score: { boost: { value: 2 } } } },
           ],
           minimumShouldMatch: 1,
         },
@@ -138,6 +151,10 @@ const PROJECTION = {
   slug: 1,
   documentId: { $toString: '$documentId' },
   topicId: { $toString: '$_id' },
+  // Pretty URL of the topic, when an active topic-scope template matched
+  // during ingestion. Empty string otherwise — clients fall back to the
+  // parent document's pretty URL or to /dashboard/docs/<id>?topic=<id>.
+  prettyUrl: 1,
   // Keep `content` as the nested object (RAG endpoint reads `content.text`)
   // and also expose flat fields the frontend expects.
   content: { text: '$content.text' },
@@ -205,8 +222,17 @@ const search = async ({ query, filters = {}, page = 1, limit = 20, sort = 'relev
     };
   });
 
+  // Custom templates (static dashboard pages) are matched in-memory and
+  // surfaced only on the first page — paging through topic hits should
+  // not duplicate them. They're returned as a separate array rather
+  // than mixed into `hits` so the frontend can render them as their
+  // own "Pages" section above the topic results without disturbing
+  // pagination, facet counts, or analytics.
+  const templates = page === 1 ? matchCustomTemplates(query) : [];
+
   return {
     hits: formattedHits,
+    templates,
     total,
     page,
     limit,
@@ -221,25 +247,41 @@ const search = async ({ query, filters = {}, page = 1, limit = 20, sort = 'relev
 };
 
 // Auto-complete via a dedicated Atlas Search autocomplete index on `title`.
+//
+// We additionally fold in the static custom-template registry so a query
+// like "rele" surfaces both topic titles AND a direct link to the
+// Release Notes dashboard page. Template suggestions carry `kind:
+// 'template'` + `href` so the frontend can route straight to the page
+// instead of bouncing through /search?q=.
 const suggest = async (prefix) => {
-  const results = await Topic.aggregate([
-    { $search: {
-        index: AUTOCOMPLETE_INDEX,
-        autocomplete: {
-          query: prefix,
-          path: 'title',
-          fuzzy: { maxEdits: 1 },
-        },
-    } },
-    { $limit: 8 },
-    { $project: {
-        _id: 0,
-        id: { $toString: '$_id' },
-        text: '$title',
-        score: { $meta: 'searchScore' },
-    } },
-  ]);
-  return results;
+  const TOTAL_LIMIT = 8;
+  const templateSuggestions = suggestCustomTemplates(prefix, { limit: 4 });
+
+  const remaining = Math.max(0, TOTAL_LIMIT - templateSuggestions.length);
+  const topicSuggestions = remaining > 0
+    ? await Topic.aggregate([
+        { $search: {
+            index: AUTOCOMPLETE_INDEX,
+            autocomplete: {
+              query: prefix,
+              path: 'title',
+              fuzzy: { maxEdits: 1 },
+            },
+        } },
+        { $limit: remaining },
+        { $project: {
+            _id: 0,
+            id: { $toString: '$_id' },
+            text: '$title',
+            score: { $meta: 'searchScore' },
+        } },
+      ])
+    : [];
+
+  // Templates rank above topic-title suggestions because they're a
+  // direct page link rather than a search-rerun, and they only match
+  // when the prefix is a strong fit for the template name/keywords.
+  return [...templateSuggestions, ...topicSuggestions];
 };
 
 // "More like this" replacement for the /api/search/semantic endpoint.

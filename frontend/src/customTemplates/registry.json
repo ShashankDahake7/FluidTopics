@@ -1,0 +1,89 @@
+{
+  "_comment": "Single source of truth for custom dashboard templates. Read by frontend/src/customTemplates/index.js (UI registry) and backend/src/services/search/customTemplates.js (search matcher). Adding a new template requires (1) adding an entry here, (2) dropping the React component in this folder, and (3) wiring slug -> { icon, component } in index.js. Search will pick the new template up automatically — no backend edit needed.",
+  "templates": [
+    {
+      "slug": "whats-upcoming",
+      "title": "What's Upcoming",
+      "description": "A pointer to the latest release notes — what to expect in upcoming Darwinbox releases.",
+      "keywords": [
+        "what's upcoming",
+        "whats upcoming",
+        "upcoming",
+        "upcoming releases",
+        "next release",
+        "roadmap",
+        "preview",
+        "latest release"
+      ]
+    },
+    {
+      "slug": "release-notes",
+      "title": "Release Notes",
+      "description": "Darwinbox's quarterly release notes — updates, enhancements, and bug fixes by year.",
+      "keywords": [
+        "release notes",
+        "release note",
+        "releases",
+        "changelog",
+        "change log",
+        "whats new",
+        "what's new",
+        "updates",
+        "enhancements",
+        "bug fixes",
+        "fixes",
+        "patches"
+      ]
+    },
+    {
+      "slug": "legal-changes",
+      "title": "Legal Changes",
+      "description": "Track upcoming and recent legal changes across countries, modules, and Darwinbox releases.",
+      "keywords": [
+        "legal changes",
+        "legal change",
+        "compliance",
+        "statutory",
+        "regulatory",
+        "tax",
+        "payroll legal",
+        "labour law",
+        "labor law",
+        "budget changes",
+        "pf",
+        "esi",
+        "lwf"
+      ]
+    },
+    {
+      "slug": "faqs",
+      "title": "FAQs",
+      "description": "Answers to common questions about accessing and using the Darwinbox Help Portal.",
+      "keywords": [
+        "faq",
+        "faqs",
+        "frequently asked questions",
+        "frequently asked",
+        "questions",
+        "help portal access",
+        "how do i",
+        "who can access",
+        "support",
+        "help"
+      ]
+    },
+    {
+      "slug": "coming-soon",
+      "title": "Coming Soon",
+      "description": "Placeholder page for modules whose content is still on the way.",
+      "keywords": [
+        "coming soon",
+        "placeholder",
+        "work in progress",
+        "wip",
+        "tba",
+        "to be announced"
+      ]
+    }
+  ]
+}

@@ -1,5 +1,6 @@
 import "./globals.css";
 import PortalHeader from "@/components/portal/PortalHeader";
+import LegalTermsGate from "@/components/legal/LegalTermsGate";
 
 export const metadata = {
   title: "Fluid Topics — Content Delivery Platform",
@@ -17,6 +18,7 @@ export default function RootLayout({ children }) {
       <body data-gramm="false" data-gramm_editor="false" suppressHydrationWarning>
         <PortalHeader />
         {children}
+        <LegalTermsGate />
       </body>
     </html>
   );

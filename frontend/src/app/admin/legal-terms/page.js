@@ -142,7 +142,9 @@ export default function LegalTermsPage() {
 
   useEffect(() => {
     const u = getStoredUser();
-    setIsAdmin(u?.role === 'admin' || u?.role === 'superadmin');
+    const tierOk    = u?.role === 'admin' || u?.role === 'superadmin';
+    const portalAdm = Array.isArray(u?.adminRoles) && u.adminRoles.includes('PORTAL_ADMIN');
+    setIsAdmin(tierOk || portalAdm);
   }, []);
 
   const load = useCallback(async () => {
@@ -298,7 +300,11 @@ export default function LegalTermsPage() {
 
   if (loading) {
     return (
-      <AdminShell active="legal-terms">
+      <AdminShell
+        active="legal-terms"
+        allowedRoles={['superadmin', 'admin', 'editor']}
+        allowedAdminRoles={['PORTAL_ADMIN']}
+      >
         <div style={{ padding: 40 }}><div className="spinner" /></div>
       </AdminShell>
     );
@@ -307,6 +313,8 @@ export default function LegalTermsPage() {
   return (
     <AdminShell
       active="legal-terms"
+      allowedRoles={['superadmin', 'admin', 'editor']}
+      allowedAdminRoles={['PORTAL_ADMIN']}
       footer={
         <>
           <button type="button" style={S.btnCancel} onClick={cancel} disabled={!dirty}>

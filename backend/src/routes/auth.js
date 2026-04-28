@@ -12,19 +12,42 @@ const router = express.Router();
 // Token + session helpers
 // ────────────────────────────────────────────────────────────────────────────
 
-const ACCESS_TTL  = '15m';                          // short-lived access token
-const REFRESH_TTL_MS = 30 * 24 * 60 * 60 * 1000;    // 30-day refresh token
+const DEFAULT_ACCESS_TTL_SECONDS  = 15 * 60;            // fallback if no AuthSettings row
+const REFRESH_TTL_MS = 30 * 24 * 60 * 60 * 1000;        // 30-day refresh token
 const MAX_FAILED_LOGINS = 5;
-const LOCKOUT_MS = 15 * 60 * 1000;                  // 15 minutes
+const LOCKOUT_MS = 15 * 60 * 1000;                      // 15 minutes
+
+// Lazily load AuthSettings — the schema lives in another model file and we
+// don't want this module to crash if the DB connection is still warming up
+// during cold start.
+const AuthSettings = require('../models/AuthSettings');
+
+// Resolve the access-token lifetime from the General-tab "Authentication
+// timeout" knob. Honours the BRD floor of 30 minutes and treats the
+// "trigger timeout after" toggle being off as "issue a long-lived token"
+// (capped at the refresh-token lifetime so we don't outlive the session row).
+async function resolveAccessTtlSeconds() {
+  try {
+    const cfg = await AuthSettings.getSingleton();
+    if (cfg.idleTimeoutEnabled === false) {
+      return Math.floor(REFRESH_TTL_MS / 1000);
+    }
+    const minutes = Math.max(30, Number(cfg.idleTimeoutMinutes) || 30);
+    return minutes * 60;
+  } catch {
+    return DEFAULT_ACCESS_TTL_SECONDS;
+  }
+}
 
 // Sign a JWT for API access. Includes the session id so middleware can
 // revoke globally by flipping `Session.revokedAt`. Optional `actor` claim
 // records the admin behind an impersonation.
-const signAccessToken = (user, sessionId, actorId = null) => {
+async function signAccessToken(user, sessionId, actorId = null) {
   const payload = { id: user._id, sid: sessionId };
   if (actorId) payload.actor = actorId;
-  return jwt.sign(payload, config.jwt.secret, { expiresIn: ACCESS_TTL });
-};
+  const expiresIn = await resolveAccessTtlSeconds();
+  return jwt.sign(payload, config.jwt.secret, { expiresIn });
+}
 
 const hash = (s) => crypto.createHash('sha256').update(s).digest('hex');
 
@@ -40,7 +63,7 @@ const issueSession = async (user, req, actorId = null) => {
     expiresAt: new Date(Date.now() + REFRESH_TTL_MS),
     actorId: actorId || null,
   });
-  const accessToken = signAccessToken(user, session._id, actorId);
+  const accessToken = await signAccessToken(user, session._id, actorId);
   return { accessToken, refreshToken: refresh, session };
 };
 
@@ -196,7 +219,7 @@ router.post('/refresh', async (req, res, next) => {
     session.expiresAt = new Date(Date.now() + REFRESH_TTL_MS);
     await session.save();
 
-    const accessToken = signAccessToken(user, session._id, session.actorId);
+    const accessToken = await signAccessToken(user, session._id, session.actorId);
     res.json({ token: accessToken, refreshToken: newRefresh });
   } catch (err) { next(err); }
 });

@@ -15,6 +15,7 @@ const topicsRoutes = require('./routes/topics');
 const analyticsRoutes = require('./routes/analytics');
 const recommendationsRoutes = require('./routes/recommendations');
 const adminRoutes = require('./routes/admin');
+const adminUsersRoutes = require('./routes/adminUsers');
 const bookmarkRoutes = require('./routes/bookmarks');
 const userRoutes = require('./routes/user');
 const designerRoutes = require('./routes/designer');
@@ -34,6 +35,17 @@ const languagesRoutes = require('./routes/languages');
 const aiRoutes = require('./routes/ai');
 const portalAssetsRoutes = require('./routes/portalAssets');
 const publicationsRoutes = require('./routes/publications');
+const sourcesRoutes = require('./routes/sources');
+const ditaOtRoutes = require('./routes/ditaOt');
+const metadataKeysRoutes = require('./routes/metadataKeys');
+const prettyUrlsRoutes = require('./routes/prettyUrls');
+const vocabulariesRoutes = require('./routes/vocabularies');
+const enrichRulesRoutes = require('./routes/enrichRules');
+const legalTermsRoutes = require('./routes/legalTerms');
+const accessRulesRoutes = require('./routes/accessRules');
+const authAdminRoutes     = require('./routes/authAdmin');
+const emailAdminRoutes    = require('./routes/emailAdmin');
+const feedbackAdminRoutes = require('./routes/feedbackAdmin');
 
 const app = express();
 
@@ -64,6 +76,13 @@ app.use('/api/search', searchRoutes);
 app.use('/api/topics', topicsRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/recommendations', recommendationsRoutes);
+// Manage Users routes mount FIRST so they win over the legacy `/api/admin`
+// router for shared paths (e.g. `/users`, `/audit-log`, `/default-roles`).
+app.use('/api/admin', adminUsersRoutes);
+app.use('/api/admin/access-rules', accessRulesRoutes);
+app.use('/api/admin/auth', authAdminRoutes);
+app.use('/api/admin/email', emailAdminRoutes);
+app.use('/api/admin/feedback', feedbackAdminRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/bookmarks', bookmarkRoutes);
 app.use('/api/user', userRoutes);
@@ -89,6 +108,13 @@ app.use('/api/groups',           groupsRoutes);
 app.use('/api/saved-searches',   savedSearchesRoutes);
 app.use('/api/personal-books',   personalBooksRoutes);
 app.use('/api/publications',     publicationsRoutes);
+app.use('/api/sources',          sourcesRoutes);
+app.use('/api/dita-ot',          ditaOtRoutes);
+app.use('/api/metadata-keys',    metadataKeysRoutes);
+app.use('/api/pretty-urls',      prettyUrlsRoutes);
+app.use('/api/vocabularies',     vocabulariesRoutes);
+app.use('/api/enrich-rules',     enrichRulesRoutes);
+app.use('/api/legal-terms',      legalTermsRoutes);
 
 // OpenSearch descriptor at the root so browsers can autodiscover.
 app.get('/opensearch.xml', (req, res) => {

@@ -6,6 +6,7 @@ import PortalSearch from '@/components/portal/PortalSearch';
 import PortalFooter from '@/components/portal/PortalFooter';
 import { customTemplates, GenericDocIcon } from '@/customTemplates';
 import { useTranslation } from '@/lib/i18n';
+import { hrefForDoc } from '@/lib/prettyUrl';
 
 const HIDDEN_TEMPLATES_KEY = 'ft_hidden_templates';
 
@@ -140,7 +141,7 @@ function DocTile({ doc, canDelete, onRequestDelete }) {
 
   return (
     <div style={styles.tileWrap} onContextMenu={handleContextMenu}>
-      <Link href={`/dashboard/docs/${doc._id}`} style={styles.tile}>
+      <Link href={hrefForDoc(doc)} style={styles.tile}>
         <div style={styles.tileBox}>
           <div style={styles.tileIconBox}>
             <GenericDocIcon />

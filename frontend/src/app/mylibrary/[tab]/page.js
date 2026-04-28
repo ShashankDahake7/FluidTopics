@@ -4,6 +4,7 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import api from '@/lib/api';
 import { useTranslation } from '@/lib/i18n';
+import { hrefForTopic } from '@/lib/prettyUrl';
 import MyLibrarySidebar from '@/components/mylibrary/MyLibrarySidebar';
 import { myLibraryStyles as s } from '../mylibraryStyles';
 
@@ -371,15 +372,20 @@ export default function MyLibraryTabPage() {
               ? <div style={s.empty}>{t('nothingToSee')}</div>
               : (
                 <ul style={s.list}>
-                  {bookmarks.map((b) => (
+                  {bookmarks.map((b) => {
+                    const parentDoc = b.documentId
+                      ? { _id: b.documentId, prettyUrl: b.documentPrettyUrl || '' }
+                      : null;
+                    return (
                     <li key={b.id || b._id} style={s.row}>
-                      <Link href={`/dashboard/docs/${b.topic?._id}`} style={s.rowMain}>
+                      <Link href={hrefForTopic(b.topic || {}, parentDoc)} style={s.rowMain}>
                         <div style={s.rowTitle}>{b.topic?.title || 'Untitled'}</div>
                         {b.note && <div style={s.rowSub}>{b.note}</div>}
                       </Link>
                       <button type="button" onClick={() => removeBookmark(b)} style={s.removeBtn} aria-label="Remove bookmark">×</button>
                     </li>
-                  ))}
+                    );
+                  })}
                 </ul>
               )
           ) : tab === 'searches' ? (

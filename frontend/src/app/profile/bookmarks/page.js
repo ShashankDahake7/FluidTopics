@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import api from '@/lib/api';
+import { hrefForTopic } from '@/lib/prettyUrl';
 
 const COLORS = ['#0f172a', '#10b981', '#3b82f6', '#a855f7', '#ef4444', '#f97316', '#eab308'];
 
@@ -116,15 +117,20 @@ export default function MyLibraryPage() {
             ? <div style={s.empty}>Nothing to see here</div>
             : (
               <ul style={s.list}>
-                {bookmarks.map((b) => (
+                {bookmarks.map((b) => {
+                  const parentDoc = b.documentId
+                    ? { _id: b.documentId, prettyUrl: b.documentPrettyUrl || '' }
+                    : null;
+                  return (
                   <li key={b.id || b.topic?._id} style={s.row}>
-                    <Link href={`/dashboard/docs/${b.topic?._id}`} style={s.rowMain}>
+                    <Link href={hrefForTopic(b.topic || {}, parentDoc)} style={s.rowMain}>
                       <div style={s.rowTitle}>{b.topic?.title || 'Untitled'}</div>
                       {b.note && <div style={s.rowSub}>{b.note}</div>}
                     </Link>
                     <button type="button" onClick={() => removeBookmark(b)} style={s.removeBtn} aria-label="Remove bookmark">×</button>
                   </li>
-                ))}
+                  );
+                })}
               </ul>
             )
         ) : tab === 'searches' ? (

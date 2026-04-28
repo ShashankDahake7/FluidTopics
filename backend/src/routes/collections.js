@@ -68,6 +68,25 @@ router.get('/:id/contents', async (req, res, next) => {
     const collection = await Collection.findOne({ _id: req.params.id, userId: req.user.id }).lean();
     if (!collection) return res.status(404).json({ error: 'Not found' });
 
+    const Document = require('../models/Document');
+
+    // Helper: enriches an array of topic-shaped objects with the parent
+    // document's prettyUrl so the frontend can build a doc-level pretty
+    // URL when a topic itself has no template match. We resolve all
+    // unique documentIds in one batch.
+    const enrichWithParentPrettyUrl = async (topics) => {
+      const docIds = [...new Set(
+        topics.map((tt) => tt.documentId && String(tt.documentId)).filter(Boolean)
+      )];
+      if (!docIds.length) return topics;
+      const docs = await Document.find({ _id: { $in: docIds } }).select('_id prettyUrl').lean();
+      const map = Object.fromEntries(docs.map((d) => [String(d._id), d.prettyUrl || '']));
+      return topics.map((tt) => ({
+        ...tt,
+        documentPrettyUrl: tt.documentId ? map[String(tt.documentId)] || '' : '',
+      }));
+    };
+
     if (collection.kind === 'smart') {
       const { search } = require('../services/search/searchService');
       const results = await search({
@@ -77,21 +96,23 @@ router.get('/:id/contents', async (req, res, next) => {
         limit:   100,
         sort:    'relevance',
       });
+      const topics = (results.hits || []).map((h) => ({
+        _id:         h.topicId || h.id,
+        title:       h.title,
+        documentId:  h.documentId || null,
+        prettyUrl:   h.prettyUrl || '',
+      }));
       return res.json({
         collection,
-        topics: (results.hits || []).map((h) => ({
-          _id:         h.topicId || h.id,
-          title:       h.title,
-          documentId:  h.documentId || null,
-        })),
+        topics: await enrichWithParentPrettyUrl(topics),
         total: results.total,
       });
     }
 
     const Topic = require('../models/Topic');
     const topics = await Topic.find({ _id: { $in: collection.topicIds || [] } })
-      .select('_id title slug documentId').lean();
-    res.json({ collection, topics, total: topics.length });
+      .select('_id title slug documentId prettyUrl').lean();
+    res.json({ collection, topics: await enrichWithParentPrettyUrl(topics), total: topics.length });
   } catch (err) { next(err); }
 });
 

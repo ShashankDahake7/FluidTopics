@@ -53,6 +53,23 @@ router.get('/portal-asset/:key', (req, res) => {
   }
 
   const key = raw.replace(/[^a-zA-Z0-9_.-]/g, '');
+
+  // Email-logo uploads (uploaded via /api/admin/email/logo) are stored under
+  // ASSET_ROOT with a `email-logo-<uuid>.<ext>` filename. Serve them directly
+  // when the key matches that prefix — this is the public URL embedded in
+  // notification emails.
+  if (key.startsWith('email-logo-')) {
+    const candidate = path.join(ASSET_ROOT, key);
+    try {
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+        res.setHeader('Content-Type', mimeFor(candidate));
+        res.setHeader('Cache-Control', 'public, max-age=300');
+        return fs.createReadStream(candidate).pipe(res);
+      }
+    } catch { /* fall through to 404 */ }
+    return res.status(404).send('Not found');
+  }
+
   if (!key.endsWith('-avatar')) {
     return res.status(404).send('Not found');
   }

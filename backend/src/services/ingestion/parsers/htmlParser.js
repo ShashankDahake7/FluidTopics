@@ -1,6 +1,7 @@
 const cheerio = require('cheerio');
 const { stripHtml } = require('../../../utils/helpers');
 const { extractAuthorFromHtml } = require('../../../utils/authorFromHtml');
+const { extractFromHtmlCheerio } = require('../../metadata/customMetadata');
 
 /**
  * Parse HTML content into structured sections
@@ -21,6 +22,10 @@ const parseHTML = (htmlContent, filename = '') => {
       .map((k) => k.trim())
       .filter(Boolean),
     language: $('html').attr('lang') || 'en',
+    // Arbitrary <meta name="X" content="Y"> goes into the registry-aware
+    // custom bag. Built-in names (description/keywords/...) are filtered
+    // out by the helper to avoid double-counting.
+    custom: extractFromHtmlCheerio($),
   };
 
   // Remove non-content elements (scripts, styles, nav chrome)

@@ -15,6 +15,28 @@ const fileEntrySchema = new mongoose.Schema(
     size:        { type: Number, default: 0 },
     contentType: { type: String, default: '' },
     etag:        { type: String, default: '' },
+    // Per-file content hash. Lets the extract worker dedupe repeated bytes
+    // across publications via the ExtractedFileBlob CAS index — and makes
+    // each manifest entry self-describing for the read-side helpers in
+    // s3Service that resolve attachments by hash, not by pubId+relPath.
+    contentHash: { type: String, default: '' },
+  },
+  { _id: false }
+);
+
+// One entry per ingest pass that landed against a target Document. The
+// Publication.replaces chain is the chronological order; this audit array is
+// what the drawer's "Version chain" section renders (V3 ← V2 ← V1) with
+// per-version add/update/remove counters.
+const versionHistoryEntrySchema = new mongoose.Schema(
+  {
+    publicationId: { type: mongoose.Schema.Types.ObjectId, ref: 'Publication' },
+    ingestedAt:    { type: Date, default: () => new Date() },
+    topicsAdded:   { type: Number, default: 0 },
+    topicsUpdated: { type: Number, default: 0 },
+    topicsRemoved: { type: Number, default: 0 },
+    topicsKept:    { type: Number, default: 0 },
+    dedupeMode:    { type: String, default: 'fresh' },
   },
   { _id: false }
 );
@@ -25,8 +47,21 @@ const publicationSchema = new mongoose.Schema(
     originalFilename: { type: String, required: true },
     sizeBytes:        { type: Number, default: 0 },
 
-    // Free-form label picked in the Publish-content dialog (Paligo, Confluence,
-    // DITA…). Only used for reporting — has no behavioural effect server-side.
+    // Canonical reference to the configured Source the upload was attributed
+    // to. The Publish-content modal sends `Source.sourceId` (the canonical
+    // string id) over the wire and the publication service resolves it to
+    // this ObjectId. Nullable for legacy rows that pre-date the Source model.
+    sourceId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Source',
+      default: null,
+      index: true,
+    },
+
+    // Denormalised display copy of `Source.name` at the time of upload. We
+    // keep this around so a renamed/deleted Source doesn't blank out the
+    // history table, and so the legacy free-form label still survives for
+    // rows that pre-date the Source model.
     sourceLabel: { type: String, default: '' },
 
     uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
@@ -36,6 +71,47 @@ const publicationSchema = new mongoose.Schema(
     // finishes. Lets the publishing drawer link straight to the rendered doc
     // and lets `deletePublication` clean both sides up in one go.
     documentId: { type: mongoose.Schema.Types.ObjectId, ref: 'Document', default: null },
+
+    // sha256 of the raw zip bytes, computed in a streaming pass during
+    // upload. Drives the four cache layers below:
+    //   - Two Publications with the same hash share their raw S3 object
+    //     (raw/<hash[0..1]>/<hash>.zip).
+    //   - The extract worker can short-circuit straight to manifest-copy
+    //     when a previous validated row exists (`reused-zip` dedupeMode).
+    //   - ValidationCache is keyed by this value.
+    //   - Diff ingest can detect "every byte identical" without reparsing.
+    contentHash: { type: String, default: '', index: true },
+
+    // Pointer to the Publication whose Document this re-publish should
+    // merge into. Set by the upload modal's "Publish as new version of"
+    // dropdown. Null = create a brand-new Document on ingest (legacy /
+    // first-time behaviour).
+    replaces: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Publication',
+      default: null,
+      index: true,
+    },
+
+    // What the pipeline reused on this run, surfaced as a status pill in
+    // the drawer. Lifecycle:
+    //   'fresh'              — first time we've seen this contentHash, no
+    //                          replaces target (new Document).
+    //   'reused-zip'         — contentHash matched a prior validated row;
+    //                          we copied its manifest + validation summary
+    //                          and skipped the extract + validate workers
+    //                          entirely.
+    //   'reused-validation'  — extract had to run (e.g. raw S3 GC), but
+    //                          the ValidationCache hit short-circuited
+    //                          validate.
+    //   'reused-document'    — `replaces` was set, so ingest merged into
+    //                          the existing Document via diff (Topic._id
+    //                          continuity preserved).
+    dedupeMode: {
+      type: String,
+      enum: ['fresh', 'reused-zip', 'reused-validation', 'reused-document'],
+      default: 'fresh',
+    },
 
     status: {
       type: String,

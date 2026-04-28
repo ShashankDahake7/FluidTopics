@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import AdminShell from '@/components/admin/AdminShell';
 import api from '@/lib/api';
+import { hrefForDoc } from '@/lib/prettyUrl';
 
 // ── Filter option lists ─────────────────────────────────────────────────────
 const STATUSES = ['All', 'Success', 'Warning', 'Error', 'Running'];
@@ -570,16 +571,11 @@ function ConfirmModal({ open, title, body, cancelLabel = 'Cancel', confirmLabel 
 }
 
 // ── Publish content modal (file drop + source picker) ──────────────────────
-const SOURCE_OPTIONS = [
-  { value: 'dita',         label: 'DITA — Default DITA source' },
-  { value: 'ud',           label: 'UD — Default Unstructured Document source' },
-  { value: 'ait',          label: 'Author-it — Default Author-It source' },
-  { value: 'ftml',         label: 'FTML — Default FTML source' },
-  { value: 'Paligo',       label: 'Paligo' },
-  { value: 'Confluence',   label: 'Confluence' },
-  { value: 'PDF_open',     label: 'PDF_open — PDFs that do not need authentication' },
-  { value: 'Docebo_help',  label: 'docebo — Docebo Help' },
-];
+//
+// The Source dropdown is populated from /api/sources (the same list driving
+// the Knowledge-Hub Sources admin page). When no Source has been configured
+// yet we render an empty-state link to /admin/khub/sources so the publisher
+// can hop over and create one without leaving the flow guess-bound.
 
 // Only .zip uploads flow through /api/publications — single-file ingest still
 // goes through the legacy /api/ingest/upload endpoint via the portal Upload-
@@ -591,28 +587,79 @@ function PublishContentModal({ open, onCancel, onPublished }) {
   const router = useRouter();
   const [file, setFile] = useState(null);
   const [source, setSource] = useState('');
+  // Optional: id of an existing Publication this upload should
+  // diff-merge into. Empty = fresh publish (default behaviour). The
+  // dropdown is populated from /publications/replaceable filtered by
+  // the picked source so a user can't merge a Paligo zip into a
+  // generic-source publication.
+  const [replaces, setReplaces] = useState('');
+  const [replaceables, setReplaceables] = useState([]);
+  const [replaceablesLoading, setReplaceablesLoading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
-  // When the backend rejects auth (e.g. session revoked, JWT expired), we
-  // surface a re-sign-in CTA instead of a generic "Publish failed" message.
   const [authExpired, setAuthExpired] = useState(false);
+  const [sources, setSources] = useState([]);
+  const [sourcesLoading, setSourcesLoading] = useState(true);
+  const [sourcesError, setSourcesError] = useState('');
   const fileInputRef = useRef(null);
 
   useEffect(() => {
     if (!open) return undefined;
-    setFile(null); setSource(''); setDragOver(false); setError(''); setAuthExpired(false); setUploading(false);
+    setFile(null); setSource(''); setReplaces(''); setReplaceables([]);
+    setDragOver(false); setError(''); setAuthExpired(false); setUploading(false);
+
+    let cancelled = false;
+    setSourcesLoading(true);
+    setSourcesError('');
+    api.get('/sources')
+      .then((data) => {
+        if (cancelled) return;
+        setSources(data?.items || []);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setSourcesError(err?.message || 'Failed to load sources');
+      })
+      .finally(() => { if (!cancelled) setSourcesLoading(false); });
+
     const onKey = (e) => { if (e.key === 'Escape' && !uploading) onCancel?.(); };
     window.addEventListener('keydown', onKey);
     const prev = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = prev; };
+    return () => {
+      cancelled = true;
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prev;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  // Whenever the user changes the source (or first picks one), refresh
+  // the "Publish as new version of" dropdown. Resetting `replaces` here
+  // is intentional: a target only makes sense within the picked source,
+  // and we'd otherwise carry stale state across selections.
+  useEffect(() => {
+    if (!open) return undefined;
+    setReplaces('');
+    setReplaceables([]);
+    if (!source) return undefined;
+    let cancelled = false;
+    setReplaceablesLoading(true);
+    api.get(`/publications/replaceable?source=${encodeURIComponent(source)}`)
+      .then((data) => {
+        if (cancelled) return;
+        setReplaceables(Array.isArray(data?.items) ? data.items : []);
+      })
+      .catch(() => { if (!cancelled) setReplaceables([]); })
+      .finally(() => { if (!cancelled) setReplaceablesLoading(false); });
+    return () => { cancelled = true; };
+  }, [open, source]);
 
   if (!open) return null;
 
   const valid = !!file && !!source && !uploading;
+  const pickedReplacement = replaces ? replaceables.find((r) => r.id === replaces) : null;
 
   // /api/publications only accepts .zip — anything else gets rejected by
   // the backend with a 400, but we surface a friendlier error up-front.
@@ -640,6 +687,7 @@ function PublishContentModal({ open, onCancel, onPublished }) {
       const fd = new FormData();
       fd.append('file', file);
       fd.append('source', source);
+      if (replaces) fd.append('replaces', replaces);
       const data = await api.upload('/publications', fd);
       onPublished?.({ file, source, publication: data?.publication });
     } catch (e) {
@@ -738,22 +786,114 @@ function PublishContentModal({ open, onCancel, onPublished }) {
           <div style={{ position: 'relative' }}>
             <select
               value={source}
-              disabled={uploading}
+              disabled={uploading || sourcesLoading || sources.length === 0}
               onChange={(e) => setSource(e.target.value)}
               style={{
                 width: '100%', padding: '10px 28px 10px 12px',
                 border: '1px solid #cbd5e1', borderRadius: '4px',
                 background: '#fff', fontSize: '0.92rem', color: source ? '#0f172a' : '#94a3b8',
                 fontFamily: 'var(--font-sans)', outline: 'none',
-                appearance: 'none', cursor: uploading ? 'not-allowed' : 'pointer', boxSizing: 'border-box',
+                appearance: 'none',
+                cursor: (uploading || sourcesLoading || sources.length === 0) ? 'not-allowed' : 'pointer',
+                boxSizing: 'border-box',
                 opacity: uploading ? 0.6 : 1,
               }}
             >
-              <option value="">Select a source</option>
-              {SOURCE_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+              <option value="">
+                {sourcesLoading ? 'Loading sources…' : 'Select a source'}
+              </option>
+              {sources.map((s) => {
+                // Compose a Darwinbox-style "Name — description" label so the
+                // operator can pick the right Source even when several share
+                // the same connector type. Falls back to just the name.
+                const label = s.description ? `${s.name} — ${s.description}` : s.name;
+                return <option key={s.id} value={s.sourceId}>{label}</option>;
+              })}
             </select>
             <span aria-hidden="true" style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8', pointerEvents: 'none' }}>▾</span>
           </div>
+
+          {!sourcesLoading && !sourcesError && sources.length === 0 && (
+            <div role="status" style={{
+              padding: '10px 12px',
+              background: '#fffbeb', color: '#92400e',
+              border: '1px solid #fde68a', borderRadius: '6px',
+              fontSize: '0.85rem',
+            }}>
+              No sources configured yet.{' '}
+              <a
+                href="/admin/khub/sources"
+                style={{ color: '#a21caf', textDecoration: 'underline', fontWeight: 600 }}
+              >
+                Configure a source first
+              </a>
+              {' '}before publishing content.
+            </div>
+          )}
+
+          {/* "Publish as new version of" dropdown — only meaningful once the
+              source has been picked AND there's at least one prior validated
+              publication under that source. Otherwise we hide the row entirely
+              to keep the modal focussed on the common (fresh-publish) path. */}
+          {source && (replaceablesLoading || replaceables.length > 0) && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <label htmlFor="publish-replaces" style={{
+                fontSize: '0.78rem', color: '#475569', fontWeight: 600,
+                textTransform: 'uppercase', letterSpacing: '0.04em',
+              }}>
+                Publish as new version of
+              </label>
+              <div style={{ position: 'relative' }}>
+                <select
+                  id="publish-replaces"
+                  value={replaces}
+                  disabled={uploading || replaceablesLoading}
+                  onChange={(e) => setReplaces(e.target.value)}
+                  style={{
+                    width: '100%', padding: '10px 28px 10px 12px',
+                    border: '1px solid #cbd5e1', borderRadius: '4px',
+                    background: '#fff', fontSize: '0.92rem', color: replaces ? '#0f172a' : '#94a3b8',
+                    fontFamily: 'var(--font-sans)', outline: 'none',
+                    appearance: 'none',
+                    cursor: (uploading || replaceablesLoading) ? 'not-allowed' : 'pointer',
+                    boxSizing: 'border-box',
+                    opacity: uploading ? 0.6 : 1,
+                  }}
+                >
+                  <option value="">
+                    {replaceablesLoading ? 'Loading existing publications…' : '(None — publish as a new document)'}
+                  </option>
+                  {replaceables.map((r) => {
+                    const when = r.createdAt ? new Date(r.createdAt).toLocaleString() : '';
+                    const label = `${r.name || r.originalFilename}${when ? ` — ${when}` : ''}`;
+                    return <option key={r.id} value={r.id}>{label}</option>;
+                  })}
+                </select>
+                <span aria-hidden="true" style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8', pointerEvents: 'none' }}>▾</span>
+              </div>
+              {pickedReplacement && (
+                <div role="note" style={{
+                  padding: '10px 12px',
+                  background: '#eff6ff', color: '#1e40af',
+                  border: '1px solid #bfdbfe', borderRadius: '6px',
+                  fontSize: '0.82rem', lineHeight: 1.5,
+                }}>
+                  Topics that match the existing publication will reuse their bookmarks, ratings, and pretty URLs.
+                  New topics will be added; missing topics will be removed.
+                </div>
+              )}
+            </div>
+          )}
+          {sourcesError && (
+            <div role="alert" style={{
+              padding: '10px 12px',
+              background: '#fef2f2', color: '#991b1b',
+              border: '1px solid #fecaca', borderRadius: '6px',
+              fontSize: '0.85rem',
+            }}>
+              Couldn&apos;t load sources: {sourcesError}
+            </div>
+          )}
 
           {error && (
             <div role="alert" style={{
@@ -1042,7 +1182,7 @@ function JobDetailDrawer({ job, onClose, onChanged }) {
 
               {pub?.documentId && (
                 <a
-                  href={`/dashboard/docs/${pub.documentId}`}
+                  href={hrefForDoc({ _id: pub.documentId, prettyUrl: pub.documentPrettyUrl || '' })}
                   target="_blank"
                   rel="noopener noreferrer"
                   style={{ ...S.linkBtn, padding: '6px 12px', fontSize: '0.85rem', marginLeft: 'auto', textDecoration: 'none' }}
@@ -1075,6 +1215,24 @@ function JobDetailDrawer({ job, onClose, onChanged }) {
               <InfoCell label="Files:"      value={String(pub?.extracted?.fileCount ?? job?.publications ?? 0)} />
               <InfoCell label="Size:"       value={formatBytes(pub?.sizeBytes)} />
             </div>
+
+            {/* dedupeMode pill: surfaces what the incremental pipeline did
+                on this publish (skipped extract/validate, merged into an
+                existing doc, or full fresh run). */}
+            {pub?.dedupeMode && pub.dedupeMode !== 'fresh' && (
+              <DedupePill mode={pub.dedupeMode} replaces={pub.replacesSummary} />
+            )}
+
+            {/* Version chain: rendered only for documents that have been
+                re-published at least once (versionHistory length > 1, or
+                a single non-fresh entry). The most recent ingest sits at
+                the top of the list. */}
+            {Array.isArray(pub?.documentVersionHistory) && pub.documentVersionHistory.length > 0 && (
+              <VersionChainSection
+                history={pub.documentVersionHistory}
+                currentPublicationId={pub.id}
+              />
+            )}
 
             <div style={{ marginTop: '24px' }}>
               <div style={S.drawerSectionHeader}>
@@ -1203,6 +1361,115 @@ function formatBytes(n) {
   let v = n;
   while (v >= 1024 && i < units.length - 1) { v /= 1024; i += 1; }
   return `${v.toFixed(v < 10 && i > 0 ? 1 : 0)} ${units[i]}`;
+}
+
+// ── Incremental-pipeline UI helpers ────────────────────────────────────────
+//
+// `DedupePill` renders a small status badge that explains what the pipeline
+// reused on this run. We deliberately render NOTHING for the 'fresh' case
+// (handled by the parent's conditional) so we don't clutter the drawer for
+// the common first-publish path.
+function DedupePill({ mode, replaces }) {
+  const variants = {
+    'reused-zip': {
+      label: 'Skipped extract + validate (identical zip)',
+      bg: '#ecfdf5', border: '#a7f3d0', fg: '#065f46',
+    },
+    'reused-validation': {
+      label: 'Used cached validation summary',
+      bg: '#eff6ff', border: '#bfdbfe', fg: '#1e40af',
+    },
+    'reused-document': {
+      label: 'Merged into existing document',
+      bg: '#fef3c7', border: '#fde68a', fg: '#92400e',
+    },
+  };
+  const v = variants[mode];
+  if (!v) return null;
+  return (
+    <div style={{
+      marginTop: '14px',
+      padding: '10px 12px',
+      background: v.bg, color: v.fg, border: `1px solid ${v.border}`,
+      borderRadius: '6px', fontSize: '0.85rem',
+      display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap',
+    }}>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <polyline points="20 6 9 17 4 12" />
+      </svg>
+      <strong>{v.label}</strong>
+      {replaces && (
+        <span style={{ opacity: 0.85 }}>
+          (was {replaces.name || replaces.originalFilename}
+          {replaces.createdAt ? ` — ${new Date(replaces.createdAt).toLocaleDateString()}` : ''})
+        </span>
+      )}
+    </div>
+  );
+}
+
+// `VersionChainSection` renders Document.versionHistory in reverse-chrono
+// order. Each row shows the per-version add/update/remove counters that
+// the diff-ingest path emits, so a publisher can answer "which release
+// actually changed Topic X" without leaving the drawer.
+function VersionChainSection({ history, currentPublicationId }) {
+  const ordered = useMemo(() => {
+    return [...history].sort((a, b) => {
+      const aTime = a.ingestedAt ? new Date(a.ingestedAt).getTime() : 0;
+      const bTime = b.ingestedAt ? new Date(b.ingestedAt).getTime() : 0;
+      return bTime - aTime;
+    });
+  }, [history]);
+  if (!ordered.length) return null;
+  return (
+    <div style={{ marginTop: '24px' }}>
+      <h3 style={S.drawerSectionTitle}>Version chain</h3>
+      <div style={{ ...S.tableWrap, marginTop: '8px' }}>
+        <table style={S.table}>
+          <thead>
+            <tr>
+              <th style={{ ...S.th, width: '70px' }}>Version</th>
+              <th style={{ ...S.th, width: '170px' }}>Ingested</th>
+              <th style={S.th}>Topics</th>
+              <th style={{ ...S.th, width: '170px' }}>Mode</th>
+            </tr>
+          </thead>
+          <tbody>
+            {ordered.map((entry, idx) => {
+              const versionNumber = ordered.length - idx;
+              const isCurrent = entry.publicationId
+                && currentPublicationId
+                && String(entry.publicationId) === String(currentPublicationId);
+              const ts = entry.ingestedAt ? new Date(entry.ingestedAt).toLocaleString() : '—';
+              return (
+                <tr key={`${entry.publicationId || idx}-${idx}`} style={{
+                  ...S.tr,
+                  background: isCurrent ? '#fef9c3' : undefined,
+                }}>
+                  <td style={{ ...S.td, fontWeight: 600 }}>V{versionNumber}{isCurrent ? ' ★' : ''}</td>
+                  <td style={S.td}>{ts}</td>
+                  <td style={S.td}>
+                    <span style={{ color: '#16a34a', fontWeight: 600 }}>+{entry.topicsAdded || 0}</span>{' '}
+                    <span style={{ color: '#0369a1', fontWeight: 600 }}>~{entry.topicsUpdated || 0}</span>{' '}
+                    <span style={{ color: '#dc2626', fontWeight: 600 }}>-{entry.topicsRemoved || 0}</span>{' '}
+                    <span style={{ color: '#64748b' }}>={entry.topicsKept || 0}</span>
+                  </td>
+                  <td style={S.td}>
+                    <span style={{
+                      fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.04em',
+                      color: '#475569', fontWeight: 600,
+                    }}>
+                      {entry.dedupeMode || 'fresh'}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }
 
 function InfoCell({ label, value, copyable }) {

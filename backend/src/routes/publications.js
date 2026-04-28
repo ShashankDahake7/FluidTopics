@@ -27,13 +27,40 @@ router.post('/', auth, adminOrEditor, upload.single('file'), async (req, res, ne
       });
     }
 
+    // Wire format: the FormData field is still called `source` for back-compat
+    // with older clients, but the value is now the canonical `Source.sourceId`
+    // string (e.g. "paligo"). The service resolves it to a real ObjectId; if
+    // the caller is on the legacy free-form-label path we fall through to
+    // `sourceLabel` so the column still renders something sensible.
+    const sourceFromBody = (req.body?.source || '').trim();
+    // Optional: ObjectId of a previously-published Publication this upload
+    // should diff-merge into. Empty / omitted → fresh publish (creates a
+    // new Document on ingest, current behaviour). The service validates
+    // that the target exists and shares the same source so the dropdown
+    // can't be abused to merge across unrelated documents.
+    const replacesFromBody = (req.body?.replaces || '').trim();
     const pub = await publicationService.uploadPublication({
       file: req.file,
       userId: req.user?._id,
-      sourceLabel: req.body?.source || '',
+      sourceId: sourceFromBody,
+      sourceLabel: req.body?.sourceLabel || '',
+      replaces: replacesFromBody || null,
     });
 
     res.status(201).json({ publication: serialise(pub) });
+  } catch (err) { next(err); }
+});
+
+// GET /api/publications/replaceable?source=<sourceId> — feeds the
+// "Publish as new version of" dropdown in the upload modal. Optionally
+// filtered by source so the dropdown only shows publications that
+// already belong to the source the user is uploading under.
+router.get('/replaceable', auth, adminOrEditor, async (req, res, next) => {
+  try {
+    const out = await publicationService.listReplaceablePublications({
+      sourceId: (req.query.source || '').trim(),
+    });
+    res.json(out);
   } catch (err) { next(err); }
 });
 
@@ -151,11 +178,24 @@ function serialise(pub) {
   const uploadedBy = pub.uploadedBy && typeof pub.uploadedBy === 'object'
     ? { id: String(pub.uploadedBy._id), name: pub.uploadedBy.name, email: pub.uploadedBy.email }
     : null;
+  // Mirror the publicationService.serialise contract — flat sourceId
+  // (canonical string) + sourceRefId (Mongo _id) so the UI doesn't have to
+  // case-split on the populated/raw shape.
+  let sourceCanonicalId = null;
+  let sourceRefId = null;
+  if (pub.sourceId && typeof pub.sourceId === 'object' && pub.sourceId.sourceId) {
+    sourceCanonicalId = pub.sourceId.sourceId;
+    sourceRefId = String(pub.sourceId._id);
+  } else if (pub.sourceId) {
+    sourceRefId = String(pub.sourceId);
+  }
   return {
     id: String(pub._id || pub.id),
     name: pub.name,
     originalFilename: pub.originalFilename,
     sizeBytes: pub.sizeBytes,
+    sourceId: sourceCanonicalId,
+    sourceRefId,
     sourceLabel: pub.sourceLabel,
     status: pub.status,
     documentId: pub.documentId ? String(pub.documentId) : null,
@@ -163,6 +203,9 @@ function serialise(pub) {
     extractedFileCount: pub.extracted?.fileCount || 0,
     validation: pub.validation || null,
     timings: pub.timings || null,
+    contentHash:           pub.contentHash || '',
+    dedupeMode:            pub.dedupeMode || 'fresh',
+    replacesPublicationId: pub.replaces ? String(pub.replaces) : null,
     uploadedBy,
     createdAt: pub.createdAt,
     updatedAt: pub.updatedAt,
