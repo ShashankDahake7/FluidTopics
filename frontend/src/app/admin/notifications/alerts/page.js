@@ -1,9 +1,10 @@
 'use client';
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import AdminShell from '@/components/admin/AdminShell';
 import { ActionFooter, Section, Checkbox, Radio, ReorderList } from '@/components/admin/AdminBits';
 import AlertPreviewModal from '@/components/admin/AlertPreviewModal';
 import { buildAlertSrcDoc, resolveLogoAbs } from '@/lib/emailPreviews';
+import api from '@/lib/api';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
@@ -28,13 +29,65 @@ const METADATA_OPTIONS = [
   'subtitle', 'Taxonomy', 'title',
 ];
 
+// Convert the on-disk shape to / from the local UI shape. Days come in as a
+// `{Monday: true, …}` map for the checkbox grid; the API uses a flat
+// ['Monday', 'Wednesday'] array so the audit diff is trivial to read.
+const DAY_MAP_DEFAULT = Object.fromEntries(DAYS.map((d) => [d, false]));
+function daysArrayToMap(arr = []) {
+  const out = { ...DAY_MAP_DEFAULT };
+  for (const d of arr) if (d in out) out[d] = true;
+  return out;
+}
+function daysMapToArray(map = {}) {
+  return DAYS.filter((d) => !!map[d]);
+}
+
 export default function AlertsNotificationsPage() {
   const [matchMode, setMatchMode] = useState('any');             // 'any' | 'all'
-  const [days, setDays] = useState({ Monday: true, Tuesday: false, Wednesday: false, Thursday: false, Friday: false, Saturday: false, Sunday: false });
+  const [days, setDays] = useState({ ...DAY_MAP_DEFAULT, Monday: true });
   const [bodyMeta, setBodyMeta] = useState(['Created_by', 'title', 'publicationDate']);
   const [bodyAdd, setBodyAdd] = useState('');
   const [dirty, setDirty] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [savedAt, setSavedAt] = useState(null);
+  const [error, setError] = useState('');
   const [previewOpen, setPreviewOpen] = useState(false);
+
+  // Snapshot of the last successfully-loaded/saved settings — Cancel reverts.
+  const [savedSnapshot, setSavedSnapshot] = useState({
+    matchMode: 'any', days: { ...DAY_MAP_DEFAULT, Monday: true },
+    bodyMeta: ['Created_by', 'title', 'publicationDate'],
+  });
+
+  // Load on mount.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await api.get('/admin/notifications/alerts');
+        if (cancelled) return;
+        const s = data?.settings || {};
+        const next = {
+          matchMode: s.matchMode || 'any',
+          days:      daysArrayToMap(s.recurrenceDays || []),
+          bodyMeta:  Array.isArray(s.bodyMetadataKeys) && s.bodyMetadataKeys.length
+            ? s.bodyMetadataKeys
+            : ['Created_by', 'title', 'publicationDate'],
+        };
+        setMatchMode(next.matchMode);
+        setDays(next.days);
+        setBodyMeta(next.bodyMeta);
+        setSavedSnapshot(next);
+      } catch (e) {
+        if (!cancelled) setError(e?.message || 'Failed to load alert settings.');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const set = (fn) => (v) => { fn(v); setDirty(true); };
 
   const toggleDay = (d) => { setDays({ ...days, [d]: !days[d] }); setDirty(true); };
@@ -54,6 +107,44 @@ export default function AlertsNotificationsPage() {
     setBodyMeta(arr); setDirty(true);
   };
   const removeBody = (i) => { setBodyMeta(bodyMeta.filter((_, idx) => idx !== i)); setDirty(true); };
+
+  const handleCancel = useCallback(() => {
+    setMatchMode(savedSnapshot.matchMode);
+    setDays(savedSnapshot.days);
+    setBodyMeta(savedSnapshot.bodyMeta);
+    setDirty(false);
+    setError('');
+  }, [savedSnapshot]);
+
+  const handleSave = useCallback(async () => {
+    if (saving) return;
+    setSaving(true);
+    setError('');
+    try {
+      const payload = {
+        matchMode,
+        recurrenceDays:   daysMapToArray(days),
+        bodyMetadataKeys: bodyMeta,
+      };
+      const data = await api.put('/admin/notifications/alerts', payload);
+      const s = data?.settings || {};
+      const next = {
+        matchMode: s.matchMode || matchMode,
+        days:      daysArrayToMap(s.recurrenceDays || payload.recurrenceDays),
+        bodyMeta:  Array.isArray(s.bodyMetadataKeys) ? s.bodyMetadataKeys : payload.bodyMetadataKeys,
+      };
+      setMatchMode(next.matchMode);
+      setDays(next.days);
+      setBodyMeta(next.bodyMeta);
+      setSavedSnapshot(next);
+      setDirty(false);
+      setSavedAt(new Date());
+    } catch (e) {
+      setError(e?.message || 'Failed to save alert settings.');
+    } finally {
+      setSaving(false);
+    }
+  }, [matchMode, days, bodyMeta, saving]);
 
   // ----- Preview wiring ----------------------------------------------------
   const previewMeta = useMemo(() => ({
@@ -80,7 +171,7 @@ export default function AlertsNotificationsPage() {
   return (
     <AdminShell
       active="notif-alerts"
-      footer={<ActionFooter dirty={dirty} onCancel={() => setDirty(false)} onSave={() => setDirty(false)} />}
+      footer={<ActionFooter dirty={dirty && !saving} onCancel={handleCancel} onSave={handleSave} />}
     >
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '14px' }}>
         <div>
@@ -98,6 +189,18 @@ export default function AlertsNotificationsPage() {
           <span>Preview</span>
         </button>
       </div>
+
+      {loading && (
+        <div style={S.statusBar}>Loading current settings…</div>
+      )}
+      {error && !loading && (
+        <div style={{ ...S.statusBar, ...S.statusBarError }}>{error}</div>
+      )}
+      {savedAt && !error && !dirty && (
+        <div style={{ ...S.statusBar, ...S.statusBarOk }}>
+          Saved at {savedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+        </div>
+      )}
 
       <Section title="Match all search terms" desc="Triggers alert when new or updated results match:">
         <div style={S.radioGroup}>
@@ -218,5 +321,17 @@ const S = {
   },
   addBtnDisabled: {
     background: '#e2e8f0', color: '#94a3b8', cursor: 'not-allowed',
+  },
+  statusBar: {
+    margin: '0 0 16px', padding: '8px 12px',
+    background: '#f1f5f9', color: '#475569',
+    border: '1px solid #e2e8f0', borderRadius: '4px',
+    fontSize: '0.85rem', fontFamily: 'var(--font-sans)',
+  },
+  statusBarOk: {
+    background: '#ecfdf5', color: '#065f46', borderColor: '#a7f3d0',
+  },
+  statusBarError: {
+    background: '#fef2f2', color: '#991b1b', borderColor: '#fecaca',
   },
 };

@@ -1,8 +1,9 @@
 'use client';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import AdminShell from '@/components/admin/AdminShell';
 import { ActionFooter, Section, MagentaLinks } from '@/components/admin/AdminBits';
 import ConfigureRuleDrawer from '@/components/admin/ConfigureRuleDrawer';
+import api from '@/lib/api';
 
 const RATING_TYPES = ['Stars', 'Like', 'Dichotomous'];
 
@@ -14,21 +15,81 @@ const PREVIEW_TITLES = {
   Dichotomous: 'Did this solve your problem?',
 };
 
+// Tag a server-shaped rule with the local-only `id`/`targets`/`scope` fields
+// the existing UI relies on. The `targets` chips are derived from the rating
+// types, and the `scope` text becomes "for documents where …" when there's
+// at least one metadata requirement.
+function decorateRule(rule, idx) {
+  const targets = [];
+  if (rule.docType && rule.docType !== 'No rating') targets.push('Document');
+  if (rule.topicType && rule.topicType !== 'No rating') targets.push('Topic');
+  const scope = rule.metaReqs && rule.metaReqs.length > 0
+    ? `for documents matching ${rule.metaReqs.length} metadata requirement${rule.metaReqs.length === 1 ? '' : 's'}`
+    : 'for all documents';
+  return {
+    id: idx + 1,
+    docType:     rule.docType || 'Stars',
+    topicType:   rule.topicType || 'Stars',
+    topicLevels: Array.isArray(rule.topicLevels) ? rule.topicLevels : [],
+    metaReqs:    Array.isArray(rule.metaReqs) ? rule.metaReqs : [],
+    targets,
+    scope,
+  };
+}
+
+// Strip the local-only fields before posting back to the server.
+function toApiPayload(rules) {
+  return rules.map((r) => ({
+    docType:     r.docType,
+    topicType:   r.topicType,
+    topicLevels: Array.isArray(r.topicLevels) ? r.topicLevels : [],
+    metaReqs:    (r.metaReqs || []).map((m) => ({ key: m.key, value: m.value ?? '' })),
+  }));
+}
+
+const DEFAULT_RULE = {
+  id: 1,
+  targets: ['Document', 'Topic'],
+  scope: 'for all documents',
+  docType: 'Stars',
+  topicType: 'Stars',
+  topicLevels: ['Rate individually'],
+  metaReqs: [],
+};
+
 export default function RatingNotificationsPage() {
-  const [rules, setRules] = useState([
-    {
-      id: 1,
-      targets: ['Document', 'Topic'],
-      scope: 'for all documents',
-      docType: 'Stars',
-      topicType: 'Stars',
-      topicLevels: ['Rate together'],
-      metaReqs: [],
-    },
-  ]);
+  const [rules, setRules] = useState([DEFAULT_RULE]);
+  // Snapshot of the last successfully-loaded/saved rules — Cancel reverts to
+  // this so the operator can throw away in-progress edits.
+  const [savedSnapshot, setSavedSnapshot] = useState([DEFAULT_RULE]);
   const [dirty, setDirty] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [savedAt, setSavedAt] = useState(null);
+  const [error, setError] = useState('');
   const [preview, setPreview] = useState(null);
   const [editingRule, setEditingRule] = useState(null);
+
+  // Load current configuration on mount. Failures keep the default scaffold
+  // visible so the operator can still author a fresh policy.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await api.get('/admin/notifications/rating');
+        if (cancelled) return;
+        const decorated = (data?.settings?.rules || []).map(decorateRule);
+        const next = decorated.length ? decorated : [DEFAULT_RULE];
+        setRules(next);
+        setSavedSnapshot(next);
+      } catch (e) {
+        if (!cancelled) setError(e?.message || 'Failed to load rating settings.');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const addRule = () => {
     const id = (rules[rules.length - 1]?.id || 0) + 1;
@@ -52,24 +113,59 @@ export default function RatingNotificationsPage() {
   const removeRule = (i) => { setRules(rules.filter((_, idx) => idx !== i)); setDirty(true); };
 
   const saveRule = (updated) => {
-    setRules((prev) => {
-      const targets = [];
-      if (updated.docType && updated.docType !== 'No rating') targets.push('Document');
-      if (updated.topicType && updated.topicType !== 'No rating') targets.push('Topic');
-      const next = { ...updated, targets: targets.length ? targets : ['Document'] };
-      return prev.map((r) => (r.id === updated.id ? next : r));
-    });
+    setRules((prev) =>
+      prev.map((r) => (r.id === updated.id ? decorateRule(updated, prev.findIndex((p) => p.id === updated.id)) : r)),
+    );
     setDirty(true);
     setEditingRule(null);
   };
 
+  const handleCancel = useCallback(() => {
+    setRules(savedSnapshot);
+    setDirty(false);
+    setError('');
+  }, [savedSnapshot]);
+
+  const handleSave = useCallback(async () => {
+    if (saving) return;
+    setSaving(true);
+    setError('');
+    try {
+      const data = await api.put('/admin/notifications/rating', {
+        rules: toApiPayload(rules),
+      });
+      const decorated = (data?.settings?.rules || []).map(decorateRule);
+      const next = decorated.length ? decorated : [DEFAULT_RULE];
+      setRules(next);
+      setSavedSnapshot(next);
+      setDirty(false);
+      setSavedAt(new Date());
+    } catch (e) {
+      setError(e?.message || 'Failed to save rating settings.');
+    } finally {
+      setSaving(false);
+    }
+  }, [rules, saving]);
+
   return (
     <AdminShell
       active="notif-rating"
-      footer={<ActionFooter dirty={dirty} onCancel={() => setDirty(false)} onSave={() => setDirty(false)} />}
+      footer={<ActionFooter dirty={dirty && !saving} onCancel={handleCancel} onSave={handleSave} />}
     >
       <h1 style={S.h1}>Rating</h1>
       <p style={S.subtitle}>Configure which content can be rated.</p>
+
+      {loading && (
+        <div style={S.statusBar}>Loading current settings…</div>
+      )}
+      {error && !loading && (
+        <div style={{ ...S.statusBar, ...S.statusBarError }}>{error}</div>
+      )}
+      {savedAt && !error && !dirty && (
+        <div style={{ ...S.statusBar, ...S.statusBarOk }}>
+          Saved at {savedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+        </div>
+      )}
 
       <Section title="Preview rating types">
         <div style={{ position: 'relative', display: 'inline-block' }}>
@@ -327,6 +423,18 @@ const S = {
     background: '#a21caf', color: '#fff',
     display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
     fontSize: '0.95rem', fontWeight: 700,
+  },
+  statusBar: {
+    margin: '0 0 16px', padding: '8px 12px',
+    background: '#f1f5f9', color: '#475569',
+    border: '1px solid #e2e8f0', borderRadius: '4px',
+    fontSize: '0.85rem', fontFamily: 'var(--font-sans)',
+  },
+  statusBarOk: {
+    background: '#ecfdf5', color: '#065f46', borderColor: '#a7f3d0',
+  },
+  statusBarError: {
+    background: '#fef2f2', color: '#991b1b', borderColor: '#fecaca',
   },
 
   // -------------------- Preview popup --------------------

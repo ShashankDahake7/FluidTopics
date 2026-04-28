@@ -5,6 +5,18 @@ const { auth, optionalAuth } = require('../middleware/auth');
 
 const router = express.Router();
 
+// Feature gate per the BRD: "Rating is only available to users who have the
+// RATING_USER role." Reads remain anonymous-friendly so non-rating viewers
+// still see the aggregate stars; only mutating endpoints are gated.
+function requireRatingFeature(req, res, next) {
+  const perms = Array.isArray(req.user?.permissions) ? req.user.permissions : [];
+  if (perms.includes('RATING_USER')) return next();
+  // superadmin/admin tier always passes — they're inherently allowed to
+  // rate, e.g. when curating sample content.
+  if (req.user?.role === 'superadmin' || req.user?.role === 'admin') return next();
+  return res.status(403).json({ error: 'RATING_USER role required to rate content.' });
+}
+
 // Build the aggregate-rating shape that the API returns. Optionally also
 // returns the signed-in user's own rating so the UI can render the active state.
 async function aggregate(filter, userId) {
@@ -88,22 +100,23 @@ function makeRatingHandlers(kind) {
   return { get, upsert, remove };
 }
 
-// Topic ratings — readable anonymously, write/delete requires auth.
+// Topic ratings — readable anonymously, write/delete requires auth + the
+// RATING_USER feature role (gated by `requireRatingFeature`).
 const topic = makeRatingHandlers('topic');
 router.get('/topics/:id/rating',    optionalAuth, topic.get);
-router.post('/topics/:id/rating',   auth,         topic.upsert);
-router.delete('/topics/:id/rating', auth,         topic.remove);
+router.post('/topics/:id/rating',   auth, requireRatingFeature, topic.upsert);
+router.delete('/topics/:id/rating', auth, requireRatingFeature, topic.remove);
 
 // Document (map) ratings.
 const doc = makeRatingHandlers('document');
 router.get('/documents/:id/rating',    optionalAuth, doc.get);
-router.post('/documents/:id/rating',   auth,         doc.upsert);
-router.delete('/documents/:id/rating', auth,         doc.remove);
+router.post('/documents/:id/rating',   auth, requireRatingFeature, doc.upsert);
+router.delete('/documents/:id/rating', auth, requireRatingFeature, doc.remove);
 
 // Unstructured document ratings.
 const un = makeRatingHandlers('unstructured');
 router.get('/khub/documents/:id/rating',    optionalAuth, un.get);
-router.post('/khub/documents/:id/rating',   auth,         un.upsert);
-router.delete('/khub/documents/:id/rating', auth,         un.remove);
+router.post('/khub/documents/:id/rating',   auth, requireRatingFeature, un.upsert);
+router.delete('/khub/documents/:id/rating', auth, requireRatingFeature, un.remove);
 
 module.exports = router;

@@ -287,7 +287,7 @@ router.get('/config', async (_req, res) => {
     selfRegistration: SELF_REGISTRATION_ENABLED,
     passwordResetEnabled: true,
     emailVerificationEnabled: true,
-    accessTokenTtl: ACCESS_TTL,
+    accessTokenTtl: await resolveAccessTtlSeconds(),
     refreshTokenTtlMs: REFRESH_TTL_MS,
     defaultLocale,
     enabledContentLocales,

@@ -46,6 +46,7 @@ const accessRulesRoutes = require('./routes/accessRules');
 const authAdminRoutes     = require('./routes/authAdmin');
 const emailAdminRoutes    = require('./routes/emailAdmin');
 const feedbackAdminRoutes = require('./routes/feedbackAdmin');
+const notificationsAdminRoutes = require('./routes/notificationsAdmin');
 
 const app = express();
 
@@ -83,6 +84,9 @@ app.use('/api/admin/access-rules', accessRulesRoutes);
 app.use('/api/admin/auth', authAdminRoutes);
 app.use('/api/admin/email', emailAdminRoutes);
 app.use('/api/admin/feedback', feedbackAdminRoutes);
+// Notification admin (Rating + Alerts) — also serves the public-read
+// `/api/portal/rating-rules/applicable` endpoint mounted in the same router.
+app.use('/api', notificationsAdminRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/bookmarks', bookmarkRoutes);
 app.use('/api/user', userRoutes);

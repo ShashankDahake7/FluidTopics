@@ -875,7 +875,12 @@ export default function DocumentReader({ documentId, initialTopicId = null, allD
                 {t('noContentTopic')}
               </p>
             )}
-            <RatingBlock topicId={selectedId} feedbackRef={feedbackRef} />
+            <RatingBlock
+              topicId={selectedId}
+              documentId={id}
+              topicDepth={topicContent?.hierarchy?.level || 1}
+              feedbackRef={feedbackRef}
+            />
           </article>
         ) : (
           <div style={layout.contentLoading}>
@@ -1002,28 +1007,84 @@ const shareStyles = {
   },
 };
 
-function RatingBlock({ topicId, feedbackRef }) {
+// Rating + feedback panel rendered at the bottom of every topic. The actual
+// control (5-star, like/dislike, yes/no, or hidden) is decided server-side
+// by /portal/rating-rules/applicable so the admin's rule list — including
+// metadata-based filters — drives what the user sees. The numeric value the
+// widget collects is normalised to a 1-5 scale before posting to /feedback,
+// because the existing Feedback model and admin email pipeline both speak
+// in 1-5 stars and we don't want to fork that contract for two new shapes.
+function RatingBlock({ topicId, documentId, topicDepth = 1, feedbackRef }) {
   const { t } = useTranslation();
-  const [hover, setHover] = useState(0);
+  // `rating` carries the normalised 1-5 value; `choice` carries the visual
+  // selection so the like/yes button stays highlighted regardless of mapping.
   const [rating, setRating] = useState(0);
+  const [hover, setHover] = useState(0);
+  const [choice, setChoice] = useState(null);    // 'like'|'dislike'|'yes'|'no'|null
   const [feedback, setFeedback] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [submitMsg, setSubmitMsg] = useState('');
+  // Resolved rule. `null` = unknown (loading); `{ type: 'No rating' }` hides
+  // the rating row entirely. `canRate` reflects the user's RATING_USER
+  // capability so we hide the row for users who can't rate even when the
+  // configured type is something other than "No rating".
+  const [resolved, setResolved] = useState(null);
+
   useEffect(() => {
-    setHover(0); setRating(0);
+    setRating(0); setHover(0); setChoice(null);
     setFeedback(''); setSubmitMsg('');
   }, [topicId]);
 
-  const canSubmit = (rating > 0 || feedback.trim().length > 0) && !submitting;
+  // Fetch the applicable rule whenever the selection changes. Failures are
+  // swallowed and the rating row simply hides — better to lose the widget
+  // than to render something the admin disabled.
+  useEffect(() => {
+    let cancelled = false;
+    if (!topicId && !documentId) { setResolved({ type: 'No rating', canRate: false }); return undefined; }
+    const params = new URLSearchParams();
+    if (documentId) params.set('documentId', documentId);
+    if (topicId) params.set('topicId', topicId);
+    if (topicDepth) params.set('topicDepth', String(topicDepth));
+    api.get(`/portal/rating-rules/applicable?${params.toString()}`)
+      .then((data) => {
+        if (cancelled) return;
+        setResolved({
+          // Topic-level type honours depth-based zones (Rate together /
+          // individually / Do not rate). Document-level type is exposed for
+          // future "Quick action" wiring at the title bar.
+          type:    data?.topicRatingType || 'No rating',
+          canRate: !!data?.canRate,
+        });
+      })
+      .catch(() => { if (!cancelled) setResolved({ type: 'No rating', canRate: false }); });
+    return () => { cancelled = true; };
+  }, [topicId, documentId, topicDepth]);
+
+  const ratingType = resolved?.type || 'No rating';
+  const canShowRating = !!resolved && resolved.canRate && ratingType !== 'No rating';
+  const hasRatingValue = rating > 0;
+  const canSubmit = (hasRatingValue || feedback.trim().length > 0) && !submitting && !!topicId;
+
+  // Selection handlers per widget variant. Each one fills both `choice` (for
+  // visual state) and `rating` (the 1-5 value sent to /feedback).
+  const pickStars = (n) => { setRating(n); setChoice(`stars-${n}`); };
+  const pickLike = (which) => {
+    setChoice(which);
+    setRating(which === 'like' ? 5 : 1);
+  };
+  const pickYesNo = (which) => {
+    setChoice(which);
+    setRating(which === 'yes' ? 5 : 1);
+  };
 
   const handleSubmit = async () => {
-    if (!canSubmit || !topicId) return;
+    if (!canSubmit) return;
     setSubmitting(true);
     setSubmitMsg('');
     try {
       await api.post('/feedback', {
         topicId,
-        rating: rating || null,
+        rating: hasRatingValue ? rating : null,
         feedback: feedback.trim() || null,
       });
       setSubmitMsg(t('thanksFeedback'));
@@ -1046,39 +1107,80 @@ function RatingBlock({ topicId, feedbackRef }) {
       alignItems: 'center',
       gap: '14px',
     }}>
-      <div style={{ fontSize: '1.05rem', color: '#1f2937', fontWeight: 500 }}>
-        {t('yourRating')}
-      </div>
-      <div style={{ display: 'inline-flex', alignItems: 'center', gap: '10px' }}>
-        <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>{t('poor')}</span>
-        <div style={{ display: 'inline-flex', gap: '4px' }}>
-          {[1, 2, 3, 4, 5].map((n) => {
-            const filled = (hover || rating) >= n;
-            return (
-              <button
-                key={n}
-                type="button"
-                onMouseEnter={() => setHover(n)}
-                onMouseLeave={() => setHover(0)}
-                onClick={() => setRating(n)}
-                aria-label={`${n} star${n > 1 ? 's' : ''}`}
-                style={{
-                  background: 'none', border: 'none', padding: '2px',
-                  cursor: 'pointer', lineHeight: 0,
-                  color: filled ? '#1d4ed8' : '#cbd5e1',
-                }}
-              >
-                <svg width="22" height="22" viewBox="0 0 24 24" fill={filled ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round">
-                  <polygon points="12 2 15.1 8.6 22 9.5 17 14.4 18.2 21.3 12 18 5.8 21.3 7 14.4 2 9.5 8.9 8.6 12 2" />
-                </svg>
-              </button>
-            );
-          })}
-        </div>
-        <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>{t('excellent')}</span>
-      </div>
+      {canShowRating && (
+        <>
+          <div style={{ fontSize: '1.05rem', color: '#1f2937', fontWeight: 500 }}>
+            {ratingType === 'Dichotomous' ? 'Did this solve your problem?' : t('yourRating')}
+          </div>
 
-      <div style={{ width: '100%', maxWidth: '760px', marginTop: '24px' }}>
+          {ratingType === 'Stars' && (
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '10px' }}>
+              <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>{t('poor')}</span>
+              <div style={{ display: 'inline-flex', gap: '4px' }}>
+                {[1, 2, 3, 4, 5].map((n) => {
+                  const filled = (hover || rating) >= n;
+                  return (
+                    <button
+                      key={n}
+                      type="button"
+                      onMouseEnter={() => setHover(n)}
+                      onMouseLeave={() => setHover(0)}
+                      onClick={() => pickStars(n)}
+                      aria-label={`${n} star${n > 1 ? 's' : ''}`}
+                      style={{
+                        background: 'none', border: 'none', padding: '2px',
+                        cursor: 'pointer', lineHeight: 0,
+                        color: filled ? '#1d4ed8' : '#cbd5e1',
+                      }}
+                    >
+                      <svg width="22" height="22" viewBox="0 0 24 24" fill={filled ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round">
+                        <polygon points="12 2 15.1 8.6 22 9.5 17 14.4 18.2 21.3 12 18 5.8 21.3 7 14.4 2 9.5 8.9 8.6 12 2" />
+                      </svg>
+                    </button>
+                  );
+                })}
+              </div>
+              <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>{t('excellent')}</span>
+            </div>
+          )}
+
+          {ratingType === 'Like' && (
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '10px' }}>
+              <ChoiceButton
+                active={choice === 'like'}
+                onClick={() => pickLike('like')}
+                label="Like"
+                icon={(
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3H14Z" />
+                    <line x1="7" y1="22" x2="7" y2="11" />
+                  </svg>
+                )}
+              />
+              <ChoiceButton
+                active={choice === 'dislike'}
+                onClick={() => pickLike('dislike')}
+                label="Dislike"
+                icon={(
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3H10Z" />
+                    <line x1="17" y1="2" x2="17" y2="13" />
+                  </svg>
+                )}
+              />
+            </div>
+          )}
+
+          {ratingType === 'Dichotomous' && (
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '10px' }}>
+              <ChoiceButton active={choice === 'yes'} onClick={() => pickYesNo('yes')} label="Yes" />
+              <ChoiceButton active={choice === 'no'}  onClick={() => pickYesNo('no')}  label="No" />
+            </div>
+          )}
+        </>
+      )}
+
+      <div style={{ width: '100%', maxWidth: '760px', marginTop: canShowRating ? '24px' : '0' }}>
         <label htmlFor="topic-feedback" style={{
           display: 'block', fontSize: '0.95rem', color: '#0f172a',
           fontWeight: 600, marginBottom: '8px',
@@ -1122,6 +1224,31 @@ function RatingBlock({ topicId, feedbackRef }) {
         </div>
       </div>
     </div>
+  );
+}
+
+// Pill-style toggle button used by the Like/Dislike and Yes/No variants. The
+// chrome matches the admin preview card so the in-portal widget feels like a
+// natural extension of the policy preview.
+function ChoiceButton({ active, onClick, label, icon }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: '6px',
+        padding: '8px 16px', minWidth: '64px',
+        background: active ? '#eff6ff' : '#fff',
+        color: active ? '#1d4ed8' : '#0f172a',
+        border: `1px solid ${active ? '#1d4ed8' : '#cbd5e1'}`,
+        borderRadius: '999px',
+        fontSize: '0.88rem', fontWeight: 500, cursor: 'pointer',
+        fontFamily: 'var(--font-sans)',
+      }}
+    >
+      {icon}
+      <span>{label}</span>
+    </button>
   );
 }
 
