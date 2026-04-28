@@ -999,7 +999,7 @@ function JobDetailDrawer({ job, onClose, onChanged }) {
   const [logTotal, setLogTotal] = useState(0);
   const [drawerLoading, setDrawerLoading] = useState(false);
   const [drawerError, setDrawerError] = useState('');
-  const [busyAction, setBusyAction] = useState('');     // '' | 'extract' | 'validate' | 'delete'
+  const [busyAction, setBusyAction] = useState('');     // '' | 'delete'
   const [tick, setTick] = useState(0);                  // local refresh counter
 
   const open = !!job;
@@ -1040,30 +1040,6 @@ function JobDetailDrawer({ job, onClose, onChanged }) {
   }, [open, pub?.status]);
 
   const reload = () => setTick((n) => n + 1);
-
-  const triggerExtract = async () => {
-    if (!id) return;
-    setBusyAction('extract');
-    try {
-      await api.post(`/publications/${id}/extract`);
-      onChanged?.();
-      reload();
-    } catch (e) {
-      setDrawerError(e?.message || 'Extraction failed');
-    } finally { setBusyAction(''); }
-  };
-
-  const triggerValidate = async () => {
-    if (!id) return;
-    setBusyAction('validate');
-    try {
-      await api.post(`/publications/${id}/validate`);
-      onChanged?.();
-      reload();
-    } catch (e) {
-      setDrawerError(e?.message || 'Validation failed');
-    } finally { setBusyAction(''); }
-  };
 
   const triggerDelete = async () => {
     if (!id) return;
@@ -1132,9 +1108,6 @@ function JobDetailDrawer({ job, onClose, onChanged }) {
     return { text: 'DONE', color: '#16a34a', kind: 'ok' };
   })();
 
-  const canExtract  = pub && (pub.status === 'uploaded' || pub.status === 'failed' || pub.status === 'extracted' || pub.status === 'validated');
-  const canValidate = pub && (pub.status === 'extracted' || pub.status === 'validated' || pub.status === 'failed');
-
   return (
     <>
       <RightDrawer open={open} title={job?.name || pub?.originalFilename || ''} width={640} onClose={onClose}>
@@ -1158,22 +1131,6 @@ function JobDetailDrawer({ job, onClose, onChanged }) {
                   {statusBadge.text}
                 </span>
               </span>
-
-              {canExtract && (
-                <button type="button" disabled={!!busyAction}
-                  onClick={triggerExtract}
-                  style={{ ...S.primaryBtn, padding: '6px 12px', fontSize: '0.85rem', opacity: busyAction ? 0.6 : 1 }}>
-                  {busyAction === 'extract' ? 'Extracting…' : (pub?.status === 'uploaded' ? 'Extract' : 'Re-extract')}
-                </button>
-              )}
-
-              {canValidate && (
-                <button type="button" disabled={!!busyAction}
-                  onClick={triggerValidate}
-                  style={{ ...S.linkBtn, padding: '6px 12px', fontSize: '0.85rem', border: '1px solid #cbd5e1', opacity: busyAction ? 0.6 : 1 }}>
-                  {busyAction === 'validate' ? 'Validating…' : (pub?.status === 'validated' ? 'Re-validate' : 'Validate')}
-                </button>
-              )}
 
               <button type="button" style={{ ...S.linkBtn, padding: '6px 12px', fontSize: '0.85rem', color: '#dc2626' }}
                 onClick={() => setCancelOpen(true)}>

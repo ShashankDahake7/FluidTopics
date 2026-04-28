@@ -288,6 +288,13 @@ async function uploadPublication({ file, userId, sourceId, sourceLabel, replaces
     runDedupedPublishInBackground(pub._id, priorValidated).catch((err) => {
       console.error('uploadPublication: dedupe pipeline error:', err);
     });
+  } else {
+    // Auto-chain extract → validate → portal-publish so a single click of
+    // "Publish" in the UI takes the zip all the way through. Validate is
+    // chained from runExtractionInBackground on success.
+    extractPublication(pub._id).catch((err) => {
+      console.error('uploadPublication: auto-extract error:', err);
+    });
   }
 
   return pub;
@@ -449,6 +456,15 @@ async function runExtractionInBackground(publicationId) {
       await upsertExtractedFileBlobs(manifest);
     } catch (err) {
       console.warn('runExtractionInBackground: blob index upsert warning:', err.message);
+    }
+
+    // Chain validate so the publish UI runs the full pipeline on a single
+    // click. Validation itself only ingests into the portal on a clean
+    // (zero-issue) run, so failed validations stop short of dashboard publish.
+    try {
+      await validatePublication(fresh._id);
+    } catch (err) {
+      console.error('runExtractionInBackground: auto-validate error:', err);
     }
   } catch (err) {
     console.error('runExtractionInBackground worker error:', err);
