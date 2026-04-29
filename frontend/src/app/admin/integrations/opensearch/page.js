@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import AdminShell from '@/components/admin/AdminShell';
+import api from '@/lib/api';
 
 const DEFAULT_XML = `<?xml version="1.0" encoding="UTF-8"?>
 <OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
@@ -19,8 +20,20 @@ const INITIAL = {
 
 export default function OpenSearchPage() {
   const [state, setState] = useState(INITIAL);
-  const [baseline] = useState(INITIAL);
+  const [baseline, setBaseline] = useState(INITIAL);
   const [nameTouched, setNameTouched] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api.get('/opensearch-config')
+      .then((data) => {
+        const merged = { ...INITIAL, ...data };
+        setState(merged);
+        setBaseline(merged);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
 
   const dirty = useMemo(
     () => JSON.stringify(state) !== JSON.stringify(baseline),
@@ -33,6 +46,19 @@ export default function OpenSearchPage() {
   const update = (patch) => setState((s) => ({ ...s, ...patch }));
   const onCancel = () => { setState(baseline); setNameTouched(false); };
   const onResetConfig = () => update({ xml: DEFAULT_XML });
+
+  const handleSave = async () => {
+    try {
+      const data = await api.put('/opensearch-config', state);
+      setState(data);
+      setBaseline(data);
+      alert('Settings saved successfully');
+    } catch (e) {
+      alert('Failed to save settings: ' + e.message);
+    }
+  };
+
+  if (loading) return null;
 
   return (
     <AdminShell
@@ -54,7 +80,7 @@ export default function OpenSearchPage() {
           <button
             type="button"
             style={{ ...S.btnSave, opacity: canSave ? 1 : 0.5, cursor: canSave ? 'pointer' : 'default' }}
-            onClick={() => { /* TODO: persist */ }}
+            onClick={handleSave}
             disabled={!canSave}
           >
             <CheckIcon /> <span>Save</span>
@@ -97,15 +123,17 @@ export default function OpenSearchPage() {
           />
         </Section>
 
-        {/* Reset configuration mini-button (bottom right of content area) */}
-        <button
-          type="button"
-          onClick={onResetConfig}
-          style={S.resetMini}
-          title="Restore default OpenSearch description document"
-        >
-          Reset configuration
-        </button>
+        {/* Reset configuration mini-button */}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '-12px' }}>
+          <button
+            type="button"
+            onClick={onResetConfig}
+            style={S.resetMini}
+            title="Restore default OpenSearch description document"
+          >
+            Reset configuration
+          </button>
+        </div>
       </div>
     </AdminShell>
   );
@@ -406,8 +434,6 @@ const S = {
   },
 
   resetMini: {
-    position: 'absolute',
-    right: 0, bottom: '14px',
     padding: '5px 10px',
     background: '#fef9c3',
     color: '#713f12',

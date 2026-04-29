@@ -232,11 +232,11 @@ export default function MyLibraryTabPage() {
     try {
       const [b, s, c] = await Promise.all([
         api.get('/bookmarks').catch(() => ({ bookmarks: [] })),
-        api.get('/user/searches').catch(() => ({ searches: [] })),
+        api.get('/saved-searches').catch(() => ({ savedSearches: [] })),
         api.get('/collections').catch(() => ({ collections: [] })),
       ]);
       setBookmarks(b.bookmarks || []);
-      setSearches(s.searches || []);
+      setSearches(s.savedSearches || []);
       setCollections(c.collections || []);
     } finally {
       setLoading(false);
@@ -272,9 +272,16 @@ export default function MyLibraryTabPage() {
   }, [deleteTarget, pushToast, t]);
 
   const clearSearches = async () => {
-    if (!confirm('Clear all search history?')) return;
-    await api.delete('/user/searches').catch(() => {});
+    if (!confirm('Clear all saved searches?')) return;
+    await api.delete('/saved-searches').catch(() => {});
     setSearches([]);
+  };
+
+  const removeSearch = async (id) => {
+    try {
+      await api.delete(`/saved-searches/${id}`);
+      setSearches((ss) => ss.filter((s) => s._id !== id));
+    } catch (e) { alert(e.message); }
   };
 
   const handleCreateCollection = useCallback(async ({ name, description, color }) => {
@@ -394,14 +401,15 @@ export default function MyLibraryTabPage() {
               : (
                 <ul style={s.list}>
                   {searches.map((q) => (
-                    <li key={q.query} style={s.row}>
+                    <li key={q._id} style={s.row}>
                       <Link href={`/search?q=${encodeURIComponent(q.query)}`} style={s.rowMain}>
-                        <div style={s.rowTitle}>{q.query}</div>
+                        <div style={s.rowTitle}>{q.name}</div>
                         <div style={s.rowSub}>
-                          {q.resultCount} result{q.resultCount === 1 ? '' : 's'}
-                          {q.lastUsed ? ` · ${new Date(q.lastUsed).toLocaleString()}` : ''}
+                          {q.query ? `Query: ${q.query}` : 'No query'}
+                          {q.lastRunAt ? ` · Last run: ${new Date(q.lastRunAt).toLocaleString()}` : ''}
                         </div>
                       </Link>
+                      <button type="button" onClick={() => removeSearch(q._id)} style={s.removeBtn} aria-label="Remove search">×</button>
                     </li>
                   ))}
                 </ul>

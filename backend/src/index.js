@@ -38,6 +38,10 @@ const publicationsRoutes = require('./routes/publications');
 const sourcesRoutes = require('./routes/sources');
 const ditaOtRoutes = require('./routes/ditaOt');
 const metadataKeysRoutes = require('./routes/metadataKeys');
+const seoConfigRoutes = require('./routes/seoConfig');
+const seoPublicRoutes = require('./routes/seoPublic');
+const openSearchConfigRoutes = require('./routes/openSearchConfig');
+const openSearchPublicRoutes = require('./routes/openSearchPublic');
 const prettyUrlsRoutes = require('./routes/prettyUrls');
 const vocabulariesRoutes = require('./routes/vocabularies');
 const enrichRulesRoutes = require('./routes/enrichRules');
@@ -119,20 +123,10 @@ app.use('/api/pretty-urls',      prettyUrlsRoutes);
 app.use('/api/vocabularies',     vocabulariesRoutes);
 app.use('/api/enrich-rules',     enrichRulesRoutes);
 app.use('/api/legal-terms',      legalTermsRoutes);
-
-// OpenSearch descriptor at the root so browsers can autodiscover.
-app.get('/opensearch.xml', (req, res) => {
-  const origin = `${req.protocol}://${req.get('host')}`;
-  res.setHeader('Content-Type', 'application/opensearchdescription+xml');
-  res.send(`<?xml version="1.0" encoding="UTF-8"?>
-<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
-  <ShortName>Darwinbox Docs</ShortName>
-  <Description>Search Darwinbox product documentation</Description>
-  <InputEncoding>UTF-8</InputEncoding>
-  <Url type="text/html" template="${origin}/search?q={searchTerms}"/>
-  <Url type="application/json" template="${origin}/api/search?q={searchTerms}"/>
-</OpenSearchDescription>`);
-});
+app.use('/api/seo-config',       seoConfigRoutes);
+app.use('/api/opensearch-config', openSearchConfigRoutes);
+app.use('/',                     openSearchPublicRoutes);
+app.use('/',                     seoPublicRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

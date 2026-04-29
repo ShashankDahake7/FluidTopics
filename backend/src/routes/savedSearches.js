@@ -60,6 +60,14 @@ router.patch('/:id', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// DELETE /api/saved-searches — clear all
+router.delete('/', async (req, res, next) => {
+  try {
+    await SavedSearch.deleteMany({ userId: req.user.id });
+    res.json({ message: 'All saved searches deleted' });
+  } catch (err) { next(err); }
+});
+
 // DELETE /api/saved-searches/:id
 router.delete('/:id', async (req, res, next) => {
   try {

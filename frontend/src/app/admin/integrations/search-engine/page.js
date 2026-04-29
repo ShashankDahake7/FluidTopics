@@ -1,6 +1,7 @@
 'use client';
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState, useEffect } from 'react';
 import AdminShell from '@/components/admin/AdminShell';
+import api from '@/lib/api';
 
 // Full metadata-key list mirrored from the Fluid Topics admin panel.
 const METADATA_KEYS = [
@@ -46,10 +47,35 @@ const INITIAL = {
 
 export default function WebSearchEnginesPage() {
   const [state, setState] = useState(INITIAL);
-  const [baseline] = useState(INITIAL);
+  const [baseline, setBaseline] = useState(INITIAL);
+  const [loading, setLoading] = useState(true);
   const dirty = useMemo(() => JSON.stringify(state) !== JSON.stringify(baseline), [state, baseline]);
 
+  useEffect(() => {
+    api.get('/seo-config')
+      .then((data) => {
+        const merged = { ...INITIAL, ...data };
+        setState(merged);
+        setBaseline(merged);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
   const update = (patch) => setState((s) => ({ ...s, ...patch }));
+
+  const handleSave = async () => {
+    try {
+      const data = await api.put('/seo-config', state);
+      setState(data);
+      setBaseline(data);
+      alert('Settings saved successfully');
+    } catch (e) {
+      alert('Failed to save settings: ' + e.message);
+    }
+  };
+
+  if (loading) return null;
 
   return (
     <AdminShell
@@ -68,7 +94,7 @@ export default function WebSearchEnginesPage() {
           <button
             type="button"
             style={{ ...S.btnSave, opacity: dirty ? 1 : 0.5, cursor: dirty ? 'pointer' : 'default' }}
-            onClick={() => { /* TODO: persist */ }}
+            onClick={handleSave}
             disabled={!dirty}
           >
             <CheckIcon /> <span>Save</span>

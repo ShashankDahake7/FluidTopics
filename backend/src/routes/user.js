@@ -191,6 +191,18 @@ router.delete('/searches', async (req, res, next) => {
 });
 
 /**
+ * DELETE /api/user/searches/:query — clear a specific saved search for this user
+ */
+router.delete('/searches/:query', async (req, res, next) => {
+  try {
+    await Analytics.deleteMany({ userId: req.user._id, eventType: 'search', 'data.query': req.params.query });
+    res.json({ message: 'Search query removed' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * PATCH /api/user/profile — let a user edit their own display name / avatar.
  * Email and role can only be changed by an admin.
  */

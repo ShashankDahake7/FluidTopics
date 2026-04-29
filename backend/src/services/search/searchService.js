@@ -75,9 +75,9 @@ const buildCompound = ({ query, filters, boost, titlesOnly, sort }) => {
       });
     }
   } else {
-    // Empty query → match-all. Atlas has no match_all op, but `exists` on _id
-    // is true for every document.
-    compound.must.push({ exists: { path: '_id' } });
+    // Empty query → match-all. Atlas has no match_all op, but `exists` on documentId
+    // is true for every topic, and documentId is explicitly mapped in our index.
+    compound.must.push({ exists: { path: 'documentId' } });
   }
 
   // ---- hard filters ----
@@ -101,39 +101,61 @@ const buildCompound = ({ query, filters, boost, titlesOnly, sort }) => {
     const ids = toObjectIds(filters.topicIds);
     if (ids.length) compound.filter.push({ in: { path: '_id', value: ids } });
   }
+  if (filters.updatedAfter) {
+    compound.filter.push({ range: { path: 'updatedAt', gte: new Date(filters.updatedAfter) } });
+  }
 
   // ---- personalization boosts (only on relevance sort) ----
   if (boost && sort === 'relevance') {
     if (boost.tags?.length) {
       compound.should.push({
-        in: { path: 'metadata.tags', value: boost.tags },
-        score: { constant: { value: 1.5 } },
+        in: {
+          path: 'metadata.tags',
+          value: boost.tags,
+          score: { constant: { value: 1.5 } },
+        },
       });
     }
     if (boost.products?.length) {
       compound.should.push({
-        in: { path: 'metadata.product', value: boost.products },
-        score: { constant: { value: 2.0 } },
+        in: {
+          path: 'metadata.product',
+          value: boost.products,
+          score: { constant: { value: 2.0 } },
+        },
       });
     }
     if (boost.documentIds?.length) {
       const ids = toObjectIds(boost.documentIds);
-      if (ids.length) compound.should.push({
-        in: { path: 'documentId', value: ids },
-        score: { constant: { value: 3.0 } },
-      });
+      if (ids.length) {
+        compound.should.push({
+          in: {
+            path: 'documentId',
+            value: ids,
+            score: { constant: { value: 3.0 } },
+          },
+        });
+      }
     }
     if (boost.topicIds?.length) {
       const ids = toObjectIds(boost.topicIds);
-      if (ids.length) compound.should.push({
-        in: { path: '_id', value: ids },
-        score: { constant: { value: 5.0 } },
-      });
+      if (ids.length) {
+        compound.should.push({
+          in: {
+            path: '_id',
+            value: ids,
+            score: { constant: { value: 5.0 } },
+          },
+        });
+      }
     }
     if (boost.releaseNotes) {
       compound.should.push({
-        in: { path: 'metadata.tags', value: ['Release Notes'] },
-        score: { constant: { value: 2.5 } },
+        in: {
+          path: 'metadata.tags',
+          value: ['Release Notes'],
+          score: { constant: { value: 2.5 } },
+        },
       });
     }
   }
@@ -143,6 +165,20 @@ const buildCompound = ({ query, filters, boost, titlesOnly, sort }) => {
 
 // Project a Topic into the legacy ES `_source` shape so existing route /
 // frontend code keeps working unchanged.
+// Recursively strip all `score` fields from an operator tree. Used for
+// facets, as Atlas Search rejects scoring modifiers in the facet operator.
+const stripScores = (obj) => {
+  if (!obj || typeof obj !== 'object') return obj;
+  if (obj instanceof Date || obj instanceof mongoose.Types.ObjectId) return obj;
+  if (Array.isArray(obj)) return obj.map(stripScores);
+  const out = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (k === 'score') continue;
+    out[k] = stripScores(v);
+  }
+  return out;
+};
+
 const PROJECTION = {
   id: { $toString: '$_id' },
   score: { $meta: 'searchScore' },
@@ -196,7 +232,7 @@ const search = async ({ query, filters = {}, page = 1, limit = 20, sort = 'relev
       { $searchMeta: {
           index: SEARCH_INDEX,
           facet: {
-            operator: { compound },
+            operator: { compound: stripScores(compound) },
             facets: {
               tags:      { type: 'string', path: 'metadata.tags',     numBuckets: 20 },
               products:  { type: 'string', path: 'metadata.product',  numBuckets: 10 },

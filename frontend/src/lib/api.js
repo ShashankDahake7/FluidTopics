@@ -202,7 +202,10 @@ const api = {
   async delete(path) {
     const res = await fetchWithOptionalRefresh(path, { method: 'DELETE' });
     if (!res.ok) await failResponse('DELETE', path, res);
-    return res.json();
+    if (res.status === 204) return null;
+    const text = await res.text();
+    if (!text) return null;
+    return JSON.parse(text);
   },
   async patch(path, data) {
     const res = await fetchWithOptionalRefresh(path, {
