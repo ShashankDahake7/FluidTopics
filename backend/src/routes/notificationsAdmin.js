@@ -5,6 +5,7 @@ const { auth, optionalAuth } = require('../middleware/auth');
 const RatingRulesConfig = require('../models/RatingRulesConfig');
 const AlertsConfig = require('../models/AlertsConfig');
 const MetadataKey = require('../models/MetadataKey');
+const DefaultRolesConfig = require('../models/DefaultRolesConfig');
 const ratingRulesService = require('../services/ratings/ratingRules');
 const { writeAudit, diffContext } = require('../services/users/auditService');
 
@@ -215,8 +216,19 @@ router.get('/portal/rating-rules/applicable', optionalAuth, async (req, res, nex
 
     // Surface the user's RATING_USER capability in the same payload so the
     // frontend can hide the widget without an additional round-trip.
-    const userPermissions = Array.isArray(req.user?.permissions) ? req.user.permissions : [];
-    const canRate = userPermissions.includes('RATING_USER');
+    let canRate = false;
+    const defaults = await DefaultRolesConfig.getSingleton();
+    if (req.user) {
+      const perms = new Set([
+        ...(Array.isArray(req.user.permissions) ? req.user.permissions : []),
+        ...(Array.isArray(req.user.permissionsManual) ? req.user.permissionsManual : []),
+        ...(Array.isArray(req.user.permissionsAuto) ? req.user.permissionsAuto : []),
+        ...(Array.isArray(req.user.permissionsDefault) ? req.user.permissionsDefault : []),
+      ]);
+      canRate = perms.has('RATING_USER') || (Array.isArray(defaults.authenticated) && defaults.authenticated.includes('RATING_USER'));
+    } else {
+      canRate = Array.isArray(defaults.unauthenticated) && defaults.unauthenticated.includes('RATING_USER');
+    }
 
     res.json({
       documentRatingType: resolved.rule ? resolved.rule.docType : 'No rating',
