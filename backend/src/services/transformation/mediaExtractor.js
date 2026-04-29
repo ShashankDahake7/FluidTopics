@@ -1,18 +1,13 @@
-const fs = require('fs');
-const path = require('path');
 const crypto = require('crypto');
 const config = require('../../config/env');
-
-const MEDIA_DIR = path.resolve(config.upload.dir, 'media');
-
-// Ensure media directory exists
-if (!fs.existsSync(MEDIA_DIR)) {
-  fs.mkdirSync(MEDIA_DIR, { recursive: true });
-}
+const {
+  putObject,
+  extractedCasKey,
+} = require('../storage/s3Service');
 
 /**
  * Extract and save media (images) from parsed content
- * Replaces base64 inline images with file references
+ * Replaces base64 inline images with file references in S3
  */
 const extractMedia = async (parsedDoc) => {
   const mediaItems = [];
@@ -21,12 +16,12 @@ const extractMedia = async (parsedDoc) => {
   if (parsedDoc.images) {
     for (const img of parsedDoc.images) {
       if (img.src.startsWith('data:')) {
-        // Base64 inline image — save to disk
-        const saved = saveBase64Image(img.src);
+        // Base64 inline image — save to S3
+        const saved = await saveBase64Image(img.src);
         if (saved) {
           mediaItems.push({
             type: 'image',
-            url: `/uploads/media/${saved.filename}`,
+            url: `/api/portal/media/${saved.key}`,
             alt: img.alt || '',
             caption: img.title || '',
             originalSrc: img.src.substring(0, 50) + '...',
@@ -60,9 +55,9 @@ const extractMedia = async (parsedDoc) => {
 };
 
 /**
- * Save base64-encoded image to disk
+ * Save base64-encoded image to S3
  */
-const saveBase64Image = (dataUri) => {
+const saveBase64Image = async (dataUri) => {
   try {
     const matches = dataUri.match(/^data:(.+);base64,(.+)$/);
     if (!matches) return null;
@@ -81,19 +76,23 @@ const saveBase64Image = (dataUri) => {
     };
     const ext = extMap[mimeType] || '.png';
 
-    // Generate hash-based filename
-    const hash = crypto.createHash('md5').update(buffer).digest('hex');
-    const filename = `${hash}${ext}`;
-    const filepath = path.join(MEDIA_DIR, filename);
+    // Generate hash-based filename (sha256 for CAS)
+    const hash = crypto.createHash('sha256').update(buffer).digest('hex');
+    const key = extractedCasKey(hash, ext);
 
-    // Skip if already exists (dedup)
-    if (!fs.existsSync(filepath)) {
-      fs.writeFileSync(filepath, buffer);
-    }
+    if (!key) return null;
 
-    return { filename, filepath, mimeType, size: buffer.length };
+    // Upload to S3
+    await putObject({
+      bucket: config.s3.extractedBucket,
+      key,
+      body: buffer,
+      contentType: mimeType,
+    });
+
+    return { key, mimeType, size: buffer.length };
   } catch (error) {
-    console.error('Error saving base64 image:', error.message);
+    console.error('Error saving base64 image to S3:', error.message);
     return null;
   }
 };

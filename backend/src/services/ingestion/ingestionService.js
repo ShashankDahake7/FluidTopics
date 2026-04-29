@@ -20,6 +20,10 @@ const {
 } = require('../metadata/registryService');
 const { regenerateForDocument: regeneratePrettyUrlsForDocument } = require('../prettyUrl/prettyUrlService');
 const { diffAndApplyTopics } = require('./diffIngest');
+const {
+  putObject,
+  extractedCasKey,
+} = require('../storage/s3Service');
 const { computeStableId, computeTopicContentHash } = require('./stableIdentity');
 
 /**
@@ -54,8 +58,8 @@ const ingestFile = async (file, userId = null) => {
         level: 'info',
       });
 
-      // Save images to disk and build zipPath → served URL map
-      const imageSrcMap = saveZipImages(images);
+      // Save images to S3 and build zipPath → served URL map
+      const imageSrcMap = await saveZipImages(images);
 
       // Check if this is a Paligo HTML5 Help Center publication
       const paligoRoot = detectPaligoRoot(files);
@@ -398,22 +402,30 @@ const saveTopics = async (transformed, documentId) => {
  * Save image files extracted from a ZIP to uploads/media/ on disk.
  * Returns a map of { zipPath: '/uploads/media/filename.ext' }.
  */
-const saveZipImages = (images) => {
-  const mediaDir = path.resolve(config.upload.dir, 'media');
-  if (!fs.existsSync(mediaDir)) {
-    fs.mkdirSync(mediaDir, { recursive: true });
-  }
-
+/**
+ * Save image files extracted from a ZIP to S3.
+ * Returns a map of { zipPath: '/api/portal/media/s3Key' }.
+ */
+const saveZipImages = async (images) => {
   const srcMap = {};
   for (const img of images) {
-    const hash = crypto.createHash('md5').update(img.content).digest('hex');
-    const ext = img.filename.toLowerCase().split('.').pop();
-    const savedName = `${hash}.${ext}`;
-    const savedPath = path.join(mediaDir, savedName);
-    if (!fs.existsSync(savedPath)) {
-      fs.writeFileSync(savedPath, img.content);
-    }
-    srcMap[img.zipPath] = `/uploads/media/${savedName}`;
+    // We use sha256 for CAS keys (matching the background worker)
+    const hash = crypto.createHash('sha256').update(img.content).digest('hex');
+    const ext = path.extname(img.filename);
+    const key = extractedCasKey(hash, ext);
+
+    if (!key) continue;
+
+    // Upload to S3 (putObject handles dedup check internally or we just overwrite
+    // since it's content-addressed anyway).
+    await putObject({
+      bucket: config.s3.extractedBucket,
+      key,
+      body: img.content,
+    });
+
+    // The frontend/portal uses the /api/portal/media proxy to serve these.
+    srcMap[img.zipPath] = `/api/portal/media/${key}`;
   }
   return srcMap;
 };
@@ -677,7 +689,7 @@ async function parseZipToCandidates(file, doc) {
   // saveZipImages happens up here (not in the legacy savePaligoTopics
   // post-pass) so the imageSrcMap is available at candidate-build time
   // and rewrites land on the html BEFORE we hash it.
-  const imageSrcMap = saveZipImages(images);
+  const imageSrcMap = await saveZipImages(images);
 
   const paligoRoot = detectPaligoRoot(files);
   if (paligoRoot) {

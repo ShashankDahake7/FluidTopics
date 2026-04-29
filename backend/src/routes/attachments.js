@@ -7,19 +7,12 @@ const Attachment = require('../models/Attachment');
 const config = require('../config/env');
 const { auth, requireRole } = require('../middleware/auth');
 
+const { putFile, getObjectStream, deleteOne } = require('../services/storage/s3Service');
+
 const router = express.Router();
 
-const ATTACHMENT_DIR = path.resolve(config.upload.dir, 'attachments');
-fs.mkdirSync(ATTACHMENT_DIR, { recursive: true });
-
 const upload = multer({
-  storage: multer.diskStorage({
-    destination: (_req, _file, cb) => cb(null, ATTACHMENT_DIR),
-    filename: (_req, file, cb) => {
-      const ext = path.extname(file.originalname);
-      cb(null, `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`);
-    },
-  }),
+  dest: path.resolve(config.upload.dir, 'tmp'),
   limits: { fileSize: config.upload.maxFileSize },
 });
 
@@ -87,24 +80,48 @@ router.get('/:id', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// GET /api/attachments/:id/download — binary download.
+// GET /api/attachments/:id/download — binary download from S3.
 router.get('/:id/download', async (req, res, next) => {
   try {
     if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: 'Invalid id' });
     const a = await Attachment.findById(req.params.id).lean();
     if (!a) return res.status(404).json({ error: 'Not found' });
-    const filePath = path.resolve(config.upload.dir, a.path);
-    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File missing on disk' });
-    res.setHeader('Content-Type', a.mimeType);
-    res.setHeader('Content-Disposition', `attachment; filename="${a.filename}"`);
-    fs.createReadStream(filePath).pipe(res);
+
+    try {
+      const stream = await getObjectStream({
+        bucket: config.s3.extractedBucket,
+        key: a.path,
+      });
+
+      res.setHeader('Content-Type', a.mimeType);
+      res.setHeader('Content-Disposition', `attachment; filename="${a.filename}"`);
+      stream.pipe(res);
+    } catch (err) {
+      const status = err?.$metadata?.httpStatusCode || err?.statusCode;
+      if (status === 404 || err?.name === 'NotFound' || err?.name === 'NoSuchKey') {
+        return res.status(404).json({ error: 'File missing in storage' });
+      }
+      throw err;
+    }
   } catch (err) { next(err); }
 });
 
-// POST /api/attachments — admin upload.  Optionally tied to a document.
+// POST /api/attachments — admin upload to S3.
 router.post('/', auth, requireRole('admin', 'editor'), upload.single('file'), async (req, res, next) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'file is required' });
+
+    const s3Key = `attachments/${Date.now()}-${req.file.originalname}`;
+    await putFile({
+      bucket: config.s3.extractedBucket,
+      key: s3Key,
+      filePath: req.file.path,
+      contentType: req.file.mimetype,
+    });
+
+    // Cleanup local temp file
+    try { fs.unlinkSync(req.file.path); } catch (_) { /* ignore */ }
+
     const a = await Attachment.create({
       documentId:     req.body.documentId     || null,
       unstructuredId: req.body.unstructuredId || null,
@@ -113,10 +130,13 @@ router.post('/', auth, requireRole('admin', 'editor'), upload.single('file'), as
       filename:       req.file.originalname,
       mimeType:       req.file.mimetype,
       size:           req.file.size,
-      path:           `attachments/${path.basename(req.file.path)}`,
+      path:           s3Key,
     });
     res.status(201).json({ attachment: presentRow(a.toObject()) });
-  } catch (err) { next(err); }
+  } catch (err) {
+    if (req.file?.path) try { fs.unlinkSync(req.file.path); } catch (_) { /* ignore */ }
+    next(err);
+  }
 });
 
 // DELETE /api/attachments/:id — admin only.
@@ -125,8 +145,12 @@ router.delete('/:id', auth, requireRole('admin', 'editor'), async (req, res, nex
     if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: 'Invalid id' });
     const a = await Attachment.findByIdAndDelete(req.params.id);
     if (!a) return res.status(404).json({ error: 'Not found' });
-    // Best-effort delete from disk; ignore errors.
-    try { fs.unlinkSync(path.resolve(config.upload.dir, a.path)); } catch { /* noop */ }
+
+    // Delete from S3
+    try {
+      await deleteOne({ bucket: config.s3.extractedBucket, key: a.path });
+    } catch { /* noop */ }
+
     res.json({ message: 'Attachment deleted' });
   } catch (err) { next(err); }
 });

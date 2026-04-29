@@ -8,19 +8,12 @@ const Feedback = require('../models/Feedback');
 const config = require('../config/env');
 const { auth, requireRole } = require('../middleware/auth');
 
+const { putFile, getObjectStream, deleteOne } = require('../services/storage/s3Service');
+
 const router = express.Router();
 
-const UPLOAD_DIR = path.resolve(config.upload.dir, 'unstructured');
-fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-
 const upload = multer({
-  storage: multer.diskStorage({
-    destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
-    filename:    (_req, file, cb) => {
-      const ext = path.extname(file.originalname);
-      cb(null, `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`);
-    },
-  }),
+  dest: path.resolve(config.upload.dir, 'tmp'),
   limits: { fileSize: config.upload.maxFileSize },
 });
 
@@ -86,7 +79,7 @@ router.get('/:id/metadata', async (req, res, next) => {
 });
 
 // GET /api/khub/documents/:id/content — raw HTML preview if rendered, else
-// the original file.
+// the original file from S3.
 router.get('/:id/content', async (req, res, next) => {
   try {
     if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: 'Invalid id' });
@@ -101,11 +94,21 @@ router.get('/:id/content', async (req, res, next) => {
       return res.send(d.contentHtml);
     }
     if (d.filePath) {
-      const filePath = path.resolve(config.upload.dir, d.filePath);
-      if (fs.existsSync(filePath)) {
+      try {
+        const stream = await getObjectStream({
+          bucket: config.s3.extractedBucket,
+          key: d.filePath,
+        });
+
         res.setHeader('Content-Type', d.mimeType);
         res.setHeader('Content-Disposition', `inline; filename="${d.title}"`);
-        return fs.createReadStream(filePath).pipe(res);
+        return stream.pipe(res);
+      } catch (err) {
+        const status = err?.$metadata?.httpStatusCode || err?.statusCode;
+        if (status === 404 || err?.name === 'NotFound' || err?.name === 'NoSuchKey') {
+          return res.status(404).json({ error: 'File missing in storage' });
+        }
+        throw err;
       }
     }
     res.status(404).json({ error: 'No content available' });
@@ -139,10 +142,22 @@ router.post('/:id/feedback', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// POST /api/khub/documents — upload a new unstructured doc.
+// POST /api/khub/documents — upload a new unstructured doc to S3.
 router.post('/', auth, requireRole('admin', 'editor'), upload.single('file'), async (req, res, next) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'file is required' });
+
+    const s3Key = `unstructured/${Date.now()}-${req.file.originalname}`;
+    await putFile({
+      bucket: config.s3.extractedBucket,
+      key: s3Key,
+      filePath: req.file.path,
+      contentType: req.file.mimetype,
+    });
+
+    // Cleanup local temp file
+    try { fs.unlinkSync(req.file.path); } catch (_) { /* ignore */ }
+
     const { title, description, language, product, version, author, tags } = req.body;
     const tagList = (tags || '').split(',').map((s) => s.trim()).filter(Boolean);
     const d = await UnstructuredDocument.create({
@@ -150,7 +165,7 @@ router.post('/', auth, requireRole('admin', 'editor'), upload.single('file'), as
       description: description || '',
       mimeType:    req.file.mimetype,
       size:        req.file.size,
-      filePath:    `unstructured/${path.basename(req.file.path)}`,
+      filePath:    s3Key,
       contentText: '',
       contentHtml: '',
       metadata: {
@@ -163,7 +178,10 @@ router.post('/', auth, requireRole('admin', 'editor'), upload.single('file'), as
       uploaderId: req.user.id,
     });
     res.status(201).json({ document: presentMeta(d.toObject()) });
-  } catch (err) { next(err); }
+  } catch (err) {
+    if (req.file?.path) try { fs.unlinkSync(req.file.path); } catch (_) { /* ignore */ }
+    next(err);
+  }
 });
 
 // DELETE /api/khub/documents/:id
@@ -173,7 +191,9 @@ router.delete('/:id', auth, requireRole('admin', 'editor'), async (req, res, nex
     const d = await UnstructuredDocument.findByIdAndDelete(req.params.id);
     if (!d) return res.status(404).json({ error: 'Not found' });
     if (d.filePath) {
-      try { fs.unlinkSync(path.resolve(config.upload.dir, d.filePath)); } catch { /* noop */ }
+      try {
+        await deleteOne({ bucket: config.s3.extractedBucket, key: d.filePath });
+      } catch { /* noop */ }
     }
     res.json({ message: 'Deleted' });
   } catch (err) { next(err); }

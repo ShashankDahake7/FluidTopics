@@ -637,4 +637,46 @@ router.get('/topics/:id', optionalAuth, async (req, res, next) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// GET /api/portal/media/* — Proxy media from S3.
+// Allows serving images/media stored in the CAS S3 bucket (extracted/)
+// without local disk storage or presigned URLs in the DB.
+// ---------------------------------------------------------------------------
+router.get('/media/*', async (req, res, next) => {
+  try {
+    const { getObjectStream } = require('../services/storage/s3Service');
+    const mime = require('mime-types');
+
+    // The wildcard '*' is captured in req.params[0]
+    const key = req.params[0];
+    if (!key || key.includes('..')) {
+      return res.status(400).send('Invalid media key');
+    }
+
+    // Try to stream from S3.
+    try {
+      const stream = await getObjectStream({
+        bucket: config.s3.extractedBucket,
+        key: key,
+      });
+
+      const contentType = mime.lookup(key) || 'application/octet-stream';
+      res.setHeader('Content-Type', contentType);
+      // Cache media for 30 days — these are content-addressed (CAS), so
+      // the same key never changes its content.
+      res.setHeader('Cache-Control', 'public, max-age=2592000, immutable');
+
+      stream.pipe(res);
+    } catch (err) {
+      const status = err?.$metadata?.httpStatusCode || err?.statusCode;
+      if (status === 404 || err?.name === 'NotFound' || err?.name === 'NoSuchKey') {
+        return res.status(404).send('Media not found');
+      }
+      throw err;
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;

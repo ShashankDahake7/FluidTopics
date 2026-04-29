@@ -9,6 +9,8 @@ const EmailSettings = require('../models/EmailSettings');
 const emailService = require('../services/email/emailService');
 const { writeAudit, diffContext } = require('../services/users/auditService');
 
+const { putFile, deleteOne } = require('../services/storage/s3Service');
+
 const router = express.Router();
 
 // ---------------------------------------------------------------------------
@@ -67,45 +69,28 @@ function publicSettings(s) {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Upload pipeline for the Logo. Lives next to the avatar uploads under
-// uploads/portal-assets/ — `portalAssets.js` serves them publicly so the
-// outgoing emails can embed them.
-// ---------------------------------------------------------------------------
-const ASSET_ROOT = path.resolve(config.upload.dir, 'portal-assets');
-fs.mkdirSync(ASSET_ROOT, { recursive: true });
-
-const ALLOWED_IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg']);
-const ALLOWED_IMAGE_MIME = new Set([
-  'image/png',
-  'image/jpeg',
-  'image/jpg',
-  'image/webp',
-  'image/gif',
-  'image/svg+xml',
-]);
-
 const logoUpload = multer({
-  storage: multer.diskStorage({
-    destination: (req, file, cb) => cb(null, ASSET_ROOT),
-    filename: (req, file, cb) => {
-      const ext = path.extname(file.originalname).toLowerCase();
-      cb(null, `email-logo-${uuidv4()}${ext}`);
-    },
-  }),
+  dest: path.resolve(config.upload.dir, 'tmp'),
   fileFilter: (req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
+    const ALLOWED_IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg']);
+    const ALLOWED_IMAGE_MIME = new Set([
+      'image/png',
+      'image/jpeg',
+      'image/jpg',
+      'image/webp',
+      'image/gif',
+      'image/svg+xml',
+    ]);
     if (ALLOWED_IMAGE_EXT.has(ext) || ALLOWED_IMAGE_MIME.has(file.mimetype)) return cb(null, true);
     cb(new Error('Only PNG, JPG, GIF, WEBP or SVG images are accepted.'));
   },
   limits: { fileSize: 2 * 1024 * 1024 }, // 2 MB
 });
 
-function emailLogoPublicUrl(filename) {
-  // portalAssets exposes /api/portal-asset/email-logo by filename (see
-  // portalAssets.js). We store the canonical URL so the frontend doesn't
-  // need to know the asset-root layout.
-  return `/api/portal-asset/${path.basename(filename)}`;
+function emailLogoPublicUrl(s3Key) {
+  // Use the portal media proxy to serve from S3
+  return `/api/portal/media/${s3Key}`;
 }
 
 function safeRemove(p) {
@@ -254,31 +239,48 @@ router.put('/', requirePortalOrAdmin, async (req, res, next) => {
 });
 
 // ---------------------------------------------------------------------------
-// POST /api/admin/email/logo — upload a new email-header logo.
+// POST /api/admin/email/logo — upload a new email-header logo to S3.
 // ---------------------------------------------------------------------------
 router.post('/logo', requirePortalOrAdmin, logoUpload.single('logo'), async (req, res, next) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No image uploaded.' });
     const cfg = await EmailSettings.getSingleton();
 
-    const previousFilename = (cfg.logoUrl || '').split('/').pop();
-    if (previousFilename && previousFilename.startsWith('email-logo-')) {
-      safeRemove(path.join(ASSET_ROOT, previousFilename));
+    // Previous logo cleanup from S3
+    const previousUrl = cfg.logoUrl || '';
+    if (previousUrl.includes('/api/portal/media/')) {
+      const previousKey = previousUrl.split('/api/portal/media/').pop();
+      if (previousKey) {
+        try { await deleteOne({ bucket: config.s3.extractedBucket, key: previousKey }); } catch { /* ignore */ }
+      }
     }
 
-    cfg.logoUrl = emailLogoPublicUrl(req.file.filename);
+    const ext = path.extname(req.file.originalname).toLowerCase();
+    const s3Key = `portal-assets/email-logo-${uuidv4()}${ext}`;
+
+    await putFile({
+      bucket: config.s3.extractedBucket,
+      key: s3Key,
+      filePath: req.file.path,
+      contentType: req.file.mimetype,
+    });
+
+    // Cleanup local temp file
+    try { fs.unlinkSync(req.file.path); } catch (_) { /* ignore */ }
+
+    cfg.logoUrl = emailLogoPublicUrl(s3Key);
     cfg.updatedByEmail = req.user?.email || '';
     await cfg.save();
 
     await writeAudit(req, {
       action:  'email-settings.logo.upload',
       summary: `Uploaded email logo (${req.file.originalname})`,
-      context: { filename: req.file.filename, originalName: req.file.originalname },
+      context: { s3Key, originalName: req.file.originalname },
     });
 
     res.json({ settings: publicSettings(cfg) });
   } catch (err) {
-    if (req.file?.path) safeRemove(req.file.path);
+    if (req.file?.path) try { fs.unlinkSync(req.file.path); } catch (_) { /* ignore */ }
     next(err);
   }
 });
