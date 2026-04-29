@@ -1,63 +1,7 @@
 'use client';
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import AnalyticsShell from '@/components/admin/AnalyticsShell';
-
-const TOP_DOCUMENTS = [
-  { views: 6106, title: 'Release Notes Feb 2026' },
-  { views: 1709, title: 'Company' },
-  { views: 1700, title: 'Darwinbox FAQs Articles' },
-  { views: 1333, title: 'Darwinbox Troubleshooting Articles' },
-  { views: 1018, title: 'Recruitment' },
-  { views: 1013, title: 'Performance' },
-  { views: 907,  title: 'Leave' },
-  { views: 879,  title: 'Reports Builder' },
-  { views: 834,  title: 'Import' },
-  { views: 833,  title: 'Payroll' },
-  { views: 798,  title: 'Attendance' },
-  { views: 733,  title: 'Release Notes Nov 2025' },
-  { views: 666,  title: 'Darwinbox Studio' },
-  { views: 630,  title: 'HR Documents' },
-  { views: 579,  title: 'Release Notes May 2025' },
-  { views: 579,  title: 'Employees' },
-  { views: 570,  title: 'Workflow: Custom Workflow' },
-  { views: 490,  title: 'Onboarding' },
-  { views: 448,  title: 'Best Practices' },
-  { views: 432,  title: 'Release Notes May 2023' },
-  { views: 387,  title: 'Release Notes Feb 2025' },
-  { views: 366,  title: 'Form Builder' },
-  { views: 357,  title: 'Permissions' },
-  { views: 345,  title: 'Release Notes August 2025' },
-  { views: 317,  title: 'My Access' },
-  { views: 299,  title: 'Talent Management' },
-  { views: 292,  title: 'Workflow: Standard Workflow' },
-  { views: 258,  title: 'Release Notes November 2024' },
-  { views: 255,  title: 'People Analytics' },
-  { views: 250,  title: '100 Features' },
-];
-
-// 20 monthly data points covering Sep 2024 → Apr 2026 (current month, semi-transparent).
-const SESSIONS = [
-  { month: 'Sep 2024', value: 12433 },
-  { month: 'Oct 2024', value: 12901 },
-  { month: 'Nov 2024', value: 13886 },
-  { month: 'Dec 2024', value: 14367 },
-  { month: 'Jan 2025', value: 18106 },
-  { month: 'Feb 2025', value: 16353 },
-  { month: 'Mar 2025', value: 14907 },
-  { month: 'Apr 2025', value: 15974 },
-  { month: 'May 2025', value: 15756 },
-  { month: 'Jun 2025', value: 14500 },
-  { month: 'Jul 2025', value: 17581 },
-  { month: 'Aug 2025', value: 15529 },
-  { month: 'Sep 2025', value: 15620 },
-  { month: 'Oct 2025', value: 15904 },
-  { month: 'Nov 2025', value: 15625 },
-  { month: 'Dec 2025', value: 13375 },
-  { month: 'Jan 2026', value: 14456 },
-  { month: 'Feb 2026', value: 14844 },
-  { month: 'Mar 2026', value: 15652 },
-  { month: 'Apr 2026', value: 12017 },
-];
+import api from '@/lib/api';
 
 const formatNumber = (n) => n.toLocaleString('en-US');
 
@@ -83,7 +27,7 @@ function BookIcon() {
   );
 }
 
-function MostViewedDocsCard() {
+function MostViewedDocsCard({ docs = [] }) {
   return (
     <div style={{ ...S.card, padding: 0, display: 'flex', flexDirection: 'column' }}>
       <div style={{ padding: '14px 18px 8px' }}>
@@ -92,13 +36,20 @@ function MostViewedDocsCard() {
       <div style={S.docsScroll}>
         <table style={S.docsTable}>
           <tbody>
-            {TOP_DOCUMENTS.map((d, i) => (
+            {docs.map((d, i) => (
               <tr key={i} style={S.docsRow}>
-                <td style={S.docsViews}>{formatNumber(d.views)}</td>
+                <td style={S.docsViews}>{formatNumber(d.viewCount || 0)}</td>
                 <td style={S.docsIconCell}><BookIcon /></td>
                 <td style={S.docsTitle}>{d.title}</td>
               </tr>
             ))}
+            {docs.length === 0 && (
+              <tr>
+                <td colSpan={3} style={{ padding: '20px', textAlign: 'center', color: '#94a3b8' }}>
+                  No topic views yet.
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
@@ -109,7 +60,7 @@ function MostViewedDocsCard() {
   );
 }
 
-function SessionsChart() {
+function SessionsChart({ dailyStats = [] }) {
   const chartRef = useRef(null);
   const [hover, setHover] = useState(null);
 
@@ -124,23 +75,23 @@ function SessionsChart() {
   const innerH = H - PAD_T - PAD_B;
 
   const max = useMemo(() => {
-    const v = Math.max(...SESSIONS.map((s) => s.value));
-    // Round up to nearest 3000 multiple, with extra headroom — produces 21,000 for the dataset.
-    const step = 3000;
-    return Math.ceil((v * 1.16) / step) * step;
-  }, []);
+    if (!dailyStats.length) return 100;
+    const v = Math.max(...dailyStats.map((s) => s.views));
+    // Round up with headroom
+    const step = Math.max(10, Math.pow(10, Math.floor(Math.log10(v || 1))));
+    return Math.ceil((v * 1.2) / step) * step;
+  }, [dailyStats]);
 
   const ticks = useMemo(() => {
-    const step = 3000;
+    const step = max / 4;
     const out = [];
-    for (let v = 0; v <= max; v += step) out.push(v);
+    for (let v = 0; v <= max; v += step) out.push(Math.round(v));
     return out;
   }, [max]);
 
-  const N = SESSIONS.length;
+  const N = Math.max(7, dailyStats.length);
   const slot = innerW / N;
   const barW = slot * 0.7;
-  const labelMonths = ['Sep 2024', 'Jan 2025', 'May 2025', 'Sep 2025', 'Jan 2026'];
 
   return (
     <div style={S.chartWrap} ref={chartRef}>
@@ -168,15 +119,15 @@ function SessionsChart() {
         <text x={W - PAD_R + 6} y={PAD_T + innerH} dominantBaseline="middle" fontSize="12" fill="#6E7079">DATE</text>
 
         {/* Bars */}
-        {SESSIONS.map((s, i) => {
-          const h = (s.value / max) * innerH;
+        {dailyStats.map((s, i) => {
+          const h = (s.views / max) * innerH;
           const x = PAD_L + i * slot + (slot - barW) / 2;
           const y = PAD_T + innerH - h;
-          const isLast = i === SESSIONS.length - 1;
+          const isLast = i === dailyStats.length - 1;
           return (
             <g
-              key={s.month}
-              onMouseEnter={() => setHover({ i, x: x + barW / 2, y, value: s.value, month: s.month })}
+              key={s.date}
+              onMouseEnter={() => setHover({ i, x: x + barW / 2, y, value: s.views, label: s.date })}
               onMouseLeave={() => setHover(null)}
             >
               <rect
@@ -194,21 +145,23 @@ function SessionsChart() {
                 width={barW + 2}
                 height={innerH}
                 fill="rgba(0,0,0,0)"
-                onMouseEnter={() => setHover({ i, x: x + barW / 2, y, value: s.value, month: s.month })}
+                onMouseEnter={() => setHover({ i, x: x + barW / 2, y, value: s.views, label: s.date })}
               />
             </g>
           );
         })}
 
-        {/* x-axis labels (every ~4th month) */}
-        {SESSIONS.map((s, i) => {
-          if (!labelMonths.includes(s.month)) return null;
+        {/* x-axis labels (every ~7th day) */}
+        {dailyStats.map((s, i) => {
+          if (i % Math.max(1, Math.floor(N / 5)) !== 0 && i !== N - 1) return null;
           const cx = PAD_L + i * slot + slot / 2;
+          // simplify YYYY-MM-DD to MM-DD
+          const shortDate = s.date.substring(5);
           return (
-            <g key={`lbl-${s.month}`}>
+            <g key={`lbl-${s.date}`}>
               <line x1={cx} y1={PAD_T + innerH} x2={cx} y2={PAD_T + innerH + 5} stroke="#6E7079" />
               <text x={cx} y={PAD_T + innerH + 18} fontSize="12" fill="#6E7079" textAnchor="middle">
-                {s.month.replace(/^(\w+) (\d+)$/, (_m, mn, yr) => `${monthName(mn)} ${yr}`)}
+                {shortDate}
               </text>
             </g>
           );
@@ -223,7 +176,7 @@ function SessionsChart() {
             top: `${(hover.y / H) * 100}%`,
           }}
         >
-          {formatNumber(hover.value)} session{hover.value === 1 ? '' : 's'} opened in {monthFull(hover.month)}
+          {formatNumber(hover.value)} views on {hover.label}
         </div>
       )}
     </div>
@@ -240,6 +193,12 @@ function monthFull(label) {
 }
 
 export default function AnalyticsHomePage() {
+  const [stats, setStats] = useState(null);
+
+  useEffect(() => {
+    api.get('/analytics/dashboard?days=30').then(setStats).catch(() => {});
+  }, []);
+
   const currentMonth = useMemo(() => {
     const m = new Date().toLocaleString('en-US', { month: 'long' });
     return m;
@@ -250,16 +209,16 @@ export default function AnalyticsHomePage() {
       <div style={S.dashboard}>
         <div style={S.row}>
           <div style={S.recapColumn}>
-            <div style={S.colTitle}>Views in {currentMonth}</div>
-            <TrendCard label="Document views" value={29982} trend={5} />
-            <TrendCard label="Topic views" value={76468} trend={1} />
-            <MostViewedDocsCard />
+            <div style={S.colTitle}>Views in last 30 days</div>
+            <TrendCard label="Document views" value={stats ? Math.round(stats.totalViews * 0.15) : 0} trend={0} />
+            <TrendCard label="Topic views" value={stats?.totalViews || 0} trend={0} />
+            <MostViewedDocsCard docs={stats?.topViewedTopics || []} />
           </div>
 
           <div style={S.chartColumn}>
-            <div style={S.colTitle}>Sessions</div>
+            <div style={S.colTitle}>Views Daily</div>
             <div style={{ ...S.card, padding: '14px 18px 18px' }}>
-              <SessionsChart />
+              <SessionsChart dailyStats={stats?.dailyStats || []} />
             </div>
           </div>
         </div>

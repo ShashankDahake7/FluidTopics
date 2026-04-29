@@ -1,6 +1,7 @@
 'use client';
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import AdminShell from '@/components/admin/AdminShell';
+import api from '@/lib/api';
 
 const INITIAL = {
   trustedOrigins: '',
@@ -12,15 +13,38 @@ export default function SecurityPage() {
   const [baseline, setBaseline] = useState(INITIAL);
   const [importOpen, setImportOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api.get('/security-config')
+      .then((data) => {
+        const merged = { ...INITIAL, ...data };
+        setState(merged);
+        setBaseline(merged);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
 
   const dirty   = useMemo(() => JSON.stringify(state) !== JSON.stringify(baseline), [state, baseline]);
   const update  = (patch) => setState((s) => ({ ...s, ...patch }));
   const onCancel = () => setState(baseline);
-  const onSave   = () => setBaseline(state);
+  const onSave   = async () => {
+    try {
+      const data = await api.put('/security-config', state);
+      setState(data);
+      setBaseline(data);
+      alert('Settings saved successfully');
+    } catch (e) {
+      alert('Failed to save: ' + e.message);
+    }
+  };
 
   const addCertificate = (cert) => update({ certificates: [...state.certificates, cert] });
   const removeCertificate = (id) =>
     update({ certificates: state.certificates.filter((c) => c.id !== id) });
+
+  if (loading) return null;
 
   return (
     <AdminShell

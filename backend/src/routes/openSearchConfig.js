@@ -1,6 +1,7 @@
 const express = require('express');
 const OpenSearchConfig = require('../models/OpenSearchConfig');
 const { auth, requireRole } = require('../middleware/auth');
+const { logConfigChange } = require('../services/configAudit');
 
 const router = express.Router();
 
@@ -33,6 +34,7 @@ router.put('/', async (req, res, next) => {
   try {
     const patch = req.body;
     let config = await OpenSearchConfig.findOne();
+    const before = config ? config.toObject() : {};
     if (!config) {
       config = new OpenSearchConfig(patch);
       await config.save();
@@ -40,6 +42,13 @@ router.put('/', async (req, res, next) => {
       Object.assign(config, patch);
       await config.save();
     }
+    await logConfigChange({
+      category: 'OpenSearch',
+      author: req.user.name || req.user.email,
+      authorEmail: req.user.email,
+      before,
+      after: config.toObject(),
+    });
     res.json(config);
   } catch (err) {
     next(err);

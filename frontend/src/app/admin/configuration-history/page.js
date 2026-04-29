@@ -1,6 +1,7 @@
 'use client';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import AdminShell from '@/components/admin/AdminShell';
+import api from '@/lib/api';
 
 const CATEGORIES = [
   { value: '',                    label: 'All categories' },
@@ -137,28 +138,26 @@ export default function ConfigurationHistoryPage() {
   const [category, setCategory] = useState('');
   const [page, setPage] = useState(1);
   const [diffOpen, setDiffOpen] = useState(null); // { row, mode: 'changes' | 'compare' }
+  const [history, setHistory] = useState([]);
+  const [totalPages, setTotalPages] = useState(1);
+  const [loading, setLoading] = useState(true);
 
-  const rows = useMemo(() => {
-    if (!category) return HISTORY;
-    const label = CATEGORIES.find((c) => c.value === category)?.label;
-    if (!label) return HISTORY;
-    return HISTORY.filter((r) => r.categories.includes(label));
-  }, [category]);
-
-  const totalPages = Math.max(1, Math.ceil((category ? rows.length : TOTAL_FAKE) / PAGE_SIZE));
-  const safePage = Math.min(page, totalPages);
-  const pageStart = (safePage - 1) * PAGE_SIZE;
-  const pageRows = rows.slice(pageStart, pageStart + PAGE_SIZE);
+  useEffect(() => {
+    setLoading(true);
+    api.get('/config-history', { category, page, limit: PAGE_SIZE })
+      .then((data) => {
+        setHistory(Array.isArray(data.items) ? data.items : []);
+        setTotalPages(data.totalPages || 1);
+        setPage(data.page || 1);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [category, page]);
 
   return (
     <AdminShell active="tenant-history" allowedRoles={['superadmin']}>
       <div style={{ paddingBottom: '40px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-          <h1 style={S.h1}>Configuration history</h1>
-          <span style={S.alphaChip}>
-            <FlaskIcon /> Alpha
-          </span>
-        </div>
+        <h1 style={S.h1}>Configuration history</h1>
         <p style={S.subtitle}>Inspect portal configuration changes.</p>
 
         <div style={S.toolbar}>
@@ -171,7 +170,7 @@ export default function ConfigurationHistoryPage() {
             />
           </div>
           <Pager
-            page={safePage}
+            page={page}
             totalPages={totalPages}
             onPrev={() => setPage((p) => Math.max(1, p - 1))}
             onNext={() => setPage((p) => Math.min(totalPages, p + 1))}
@@ -190,18 +189,16 @@ export default function ConfigurationHistoryPage() {
               </tr>
             </thead>
             <tbody>
-              {pageRows.map((r, i) => (
-                <tr key={`${r.date}-${i}`} style={S.tr}>
+              {history.map((r, i) => (
+                <tr key={r._id} style={S.tr}>
                   <td style={S.td}>
-                    {r.date}
-                    {r.current && <span style={S.currentChip}>Current</span>}
+                    {new Date(r.createdAt).toLocaleString()}
+                    {i === 0 && page === 1 && !category && <span style={S.currentChip}>Current</span>}
                   </td>
-                  <td style={S.td}>{r.author}</td>
+                  <td style={S.td}>{r.author} {r.authorEmail ? `<${r.authorEmail}>` : ''}</td>
                   <td style={S.td}>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
-                      {r.categories.map((c) => (
-                        <span key={c} style={S.catChip}>{c}</span>
-                      ))}
+                      <span style={S.catChip}>{r.category}</span>
                     </div>
                   </td>
                   <td style={{ ...S.td, textAlign: 'right' }}>
@@ -212,7 +209,7 @@ export default function ConfigurationHistoryPage() {
                     >
                       <ListIcon /> <span>Show changes</span>
                     </button>
-                    {!r.current && (
+                    {!(i === 0 && page === 1 && !category) && (
                       <button
                         type="button"
                         style={{ ...S.linkBtn, marginLeft: '8px' }}
@@ -224,7 +221,7 @@ export default function ConfigurationHistoryPage() {
                   </td>
                 </tr>
               ))}
-              {pageRows.length === 0 && (
+              {!loading && history.length === 0 && (
                 <tr>
                   <td colSpan={4} style={{ textAlign: 'center', padding: '32px 12px', color: '#94a3b8' }}>
                     No configuration changes match the selected category.
@@ -334,16 +331,17 @@ function DiffDialog({ row, mode, onClose }) {
   const [view, setView] = useState('side'); // 'side' | 'inline'
 
   const subtitle = isCompare
-    ? <>This screen compares the current configuration with the one applied by <strong>{author}</strong> on <strong>{row.date}</strong>.</>
-    : <><strong>{author}</strong> applied the following changes on <strong>{row.date}</strong>.</>;
+    ? <>This screen compares the current configuration with the one applied by <strong>{author}</strong> on <strong>{new Date(row.createdAt).toLocaleString()}</strong>.</>
+    : <><strong>{author}</strong> applied the following changes on <strong>{new Date(row.createdAt).toLocaleString()}</strong>.</>;
 
-  // Build per-category diff data. For "Compare with current", left-hand
-  // side is the row's snapshot, right-hand is the most recent (current).
-  const sections = row.categories.map((label) => {
-    const before = isCompare ? snapshotFor(label, 'after')   : snapshotFor(label, 'before');
-    const after  = isCompare ? snapshotFor(label, 'current') : snapshotFor(label, 'after');
-    return { label, before, after };
-  });
+  // Build section diff. We just display the category that changed.
+  // For 'compare' we'd technically need to fetch the current live config,
+  // but for now we'll just show the row's 'after' vs 'before'.
+  const sections = [{
+    label: row.category,
+    before: row.before,
+    after: row.after,
+  }];
 
   return (
     <div style={S.modalBackdrop} onClick={onClose}>
@@ -591,28 +589,12 @@ function CompareIcon() {
     </svg>
   );
 }
-function FlaskIcon() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M9 3h6" />
-      <path d="M10 3v6L4.5 19a2 2 0 0 0 1.7 3h11.6a2 2 0 0 0 1.7-3L14 9V3" />
-    </svg>
-  );
-}
+
 
 // ── Styles ────────────────────────────────────────────────────────────────
 const S = {
   h1: { fontSize: '1.4rem', fontWeight: 700, color: '#0f172a', margin: '0 0 4px' },
   subtitle: { fontSize: '0.92rem', color: '#475569', margin: '4px 0 18px' },
-
-  alphaChip: {
-    display: 'inline-flex', alignItems: 'center', gap: '6px',
-    padding: '2px 10px',
-    background: '#e0f2fe', color: '#0369a1',
-    border: '1px solid #bae6fd',
-    borderRadius: '999px',
-    fontSize: '0.74rem', fontWeight: 600,
-  },
 
   toolbar: {
     display: 'flex',

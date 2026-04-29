@@ -1,47 +1,65 @@
 'use client';
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import AdminShell from '@/components/admin/AdminShell';
+import api from '@/lib/api';
 
 export default function ImportConfigurationPage() {
   const [portals, setPortals] = useState([]);
   const [imports, setImports] = useState([]);
   const [addOpen, setAddOpen]   = useState(false);
-  const [confirmRm, setConfirmRm] = useState(null); // portal id
+  const [confirmRm, setConfirmRm] = useState(null);
+  const [loading, setLoading] = useState(true);
 
-  const onAddPortal = ({ baseUrl, apiKey }) => {
-    const portal = {
-      id: `p_${Date.now()}`,
-      baseUrl: baseUrl.trim(),
-      apiKey,
-      addedOn: new Date().toLocaleDateString(),
-    };
-    setPortals((p) => [...p, portal]);
-    setAddOpen(false);
+  useEffect(() => {
+    Promise.all([
+      api.get('/import-config/portals').catch(() => []),
+      api.get('/import-config/imports').catch(() => []),
+    ]).then(([p, im]) => {
+      setPortals(Array.isArray(p) ? p : []);
+      setImports(Array.isArray(im) ? im : []);
+    }).finally(() => setLoading(false));
+  }, []);
+
+  const onAddPortal = async ({ baseUrl, apiKey }) => {
+    try {
+      const portal = await api.post('/import-config/portals', { baseUrl: baseUrl.trim(), apiKey });
+      setPortals((p) => [...p, portal]);
+      setAddOpen(false);
+    } catch (e) {
+      alert('Failed to add portal: ' + e.message);
+    }
   };
 
-  const onRemovePortal = (id) => {
-    setPortals((p) => p.filter((x) => x.id !== id));
-    setImports((im) => im.filter((x) => x.portalId !== id));
-    setConfirmRm(null);
+  const onRemovePortal = async (id) => {
+    try {
+      await api.delete(`/import-config/portals/${id}`);
+      setPortals((p) => p.filter((x) => x._id !== id));
+      setImports((im) => im.filter((x) => x.portalId !== id));
+      setConfirmRm(null);
+    } catch (e) {
+      alert('Failed to remove portal: ' + e.message);
+    }
   };
 
-  const onCopyConfig = (portal) => {
-    const newImport = {
-      id: `im_${Date.now()}`,
-      portalId: portal.id,
-      date: new Date().toLocaleString('en-US', {
-        month: 'numeric', day: 'numeric', year: 'numeric',
-        hour: 'numeric', minute: '2-digit', hour12: true,
-      }),
-      author: 'You',
-      url: portal.baseUrl,
-      status: 'pending',
-    };
-    setImports((im) => [newImport, ...im]);
-    window.setTimeout(() => {
-      setImports((im) => im.map((x) => (x.id === newImport.id ? { ...x, status: 'done' } : x)));
-    }, 1200);
+  const onCopyConfig = async (portal) => {
+    try {
+      const record = await api.post('/import-config/imports', { portalId: portal._id });
+      setImports((im) => [record, ...im]);
+      // Poll for status update
+      const poll = setInterval(async () => {
+        try {
+          const updated = await api.get('/import-config/imports');
+          setImports(Array.isArray(updated) ? updated : []);
+          const rec = updated.find(r => r._id === record._id);
+          if (rec && rec.status !== 'retrieving') clearInterval(poll);
+        } catch { clearInterval(poll); }
+      }, 2000);
+    } catch (e) {
+      alert('Failed to start import: ' + e.message);
+    }
   };
+
+  if (loading) return null;
 
   return (
     <AdminShell active="tenant-import" allowedRoles={['superadmin']}>
@@ -49,9 +67,6 @@ export default function ImportConfigurationPage() {
         <div style={S.header}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
             <h1 style={S.h1}>Import configuration</h1>
-            <span style={S.alphaChip}>
-              <FlaskIcon /> Alpha
-            </span>
             <a
               href="https://doc.fluidtopics.com/r/Fluid-Topics-Configuration-and-Administration-Guide/Configure-a-Fluid-Topics-tenant/My-tenant/Import-configuration"
               target="_blank"
@@ -75,13 +90,13 @@ export default function ImportConfigurationPage() {
         ) : (
           <div style={S.cardsGrid}>
             {portals.map((p) => (
-              <div key={p.id} style={S.portalCard}>
+              <div key={p._id} style={S.portalCard}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', alignItems: 'flex-start' }}>
                   <div style={{ minWidth: 0 }}>
                     <div style={S.portalUrl} title={p.baseUrl}>{p.baseUrl}</div>
-                    <div style={S.portalAdded}>Added on {p.addedOn}</div>
+                    <div style={S.portalAdded}>Added on {new Date(p.createdAt).toLocaleDateString()}</div>
                   </div>
-                  <button type="button" style={S.iconBtnDanger} onClick={() => setConfirmRm(p.id)} title="Remove portal">
+                  <button type="button" style={S.iconBtnDanger} onClick={() => setConfirmRm(p._id)} title="Remove portal">
                     <TrashIcon />
                   </button>
                 </div>
@@ -120,8 +135,8 @@ export default function ImportConfigurationPage() {
                 </tr>
               ) : (
                 imports.map((im) => (
-                  <tr key={im.id} style={S.tr}>
-                    <td style={S.td}>{im.date}</td>
+                  <tr key={im._id} style={S.tr}>
+                    <td style={S.td}>{new Date(im.createdAt).toLocaleString()}</td>
                     <td style={S.td}>{im.author}</td>
                     <td style={S.td}>{im.url}</td>
                     <td style={S.td}>
@@ -416,14 +431,7 @@ function InfoIcon() {
     </svg>
   );
 }
-function FlaskIcon() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M9 3h6" />
-      <path d="M10 3v6L4.5 19a2 2 0 0 0 1.7 3h11.6a2 2 0 0 0 1.7-3L14 9V3" />
-    </svg>
-  );
-}
+
 function DownloadIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -461,14 +469,6 @@ const S = {
   h1: { fontSize: '1.4rem', fontWeight: 700, color: '#0f172a', margin: 0 },
   h2: { fontSize: '1.05rem', fontWeight: 600, color: '#0f172a', margin: '20px 0 8px' },
 
-  alphaChip: {
-    display: 'inline-flex', alignItems: 'center', gap: '6px',
-    padding: '2px 10px',
-    background: '#e0f2fe', color: '#0369a1',
-    border: '1px solid #bae6fd',
-    borderRadius: '999px',
-    fontSize: '0.74rem', fontWeight: 600,
-  },
   infoIcon: {
     display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
     width: '24px', height: '24px',

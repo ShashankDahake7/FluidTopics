@@ -6,6 +6,8 @@ const config = require('./config/env');
 const connectDB = require('./config/db');
 const { initAtlasSearch } = require('./config/atlasSearch');
 const errorHandler = require('./middleware/errorHandler');
+const securityHeaders = require('./middleware/securityHeaders');
+const apiKeyAuth = require('./middleware/apiKeyAuth');
 
 // Route imports
 const authRoutes = require('./routes/auth');
@@ -51,6 +53,11 @@ const authAdminRoutes     = require('./routes/authAdmin');
 const emailAdminRoutes    = require('./routes/emailAdmin');
 const feedbackAdminRoutes = require('./routes/feedbackAdmin');
 const notificationsAdminRoutes = require('./routes/notificationsAdmin');
+const securityConfigRoutes = require('./routes/securityConfig');
+const SecurityConfig = require('./models/SecurityConfig');
+const apiKeysRoutes = require('./routes/apiKeys');
+const importConfigRoutes = require('./routes/importConfig');
+const configHistoryRoutes = require('./routes/configHistory');
 
 const app = express();
 
@@ -59,17 +66,50 @@ const app = express();
 // cover the typical Next.js ports.
 const corsOrigins = (process.env.CORS_ORIGINS || 'http://localhost:3000,http://localhost:3001')
   .split(',').map((s) => s.trim()).filter(Boolean);
+
+// Cache trusted origins from the database, refreshed every 60s.
+let _trustedOrigins = [];
+let _trustedOriginsAt = 0;
+async function getTrustedOrigins() {
+  if (Date.now() - _trustedOriginsAt < 60_000) return _trustedOrigins;
+  try {
+    const cfg = await SecurityConfig.findOne().lean();
+    _trustedOrigins = cfg && cfg.trustedOrigins
+      ? cfg.trustedOrigins.split(',').map(s => s.trim()).filter(Boolean)
+      : [];
+  } catch { _trustedOrigins = []; }
+  _trustedOriginsAt = Date.now();
+  return _trustedOrigins;
+}
+
 app.use(cors({
-  origin: (origin, cb) => {
-    // Allow same-origin / curl (no Origin header) and anything in the allow-list.
+  origin: async (origin, cb) => {
     if (!origin || corsOrigins.includes(origin)) return cb(null, true);
+    const trusted = await getTrustedOrigins();
+    // Check exact match or wildcard sub-domain match
+    const allowed = trusted.some(t => {
+      if (t === '*') return true;
+      if (t.startsWith('https://*.') || t.startsWith('http://*.')) {
+        const domain = t.replace(/^https?:\/\/\*\./, '');
+        try {
+          const u = new URL(origin);
+          return u.hostname === domain || u.hostname.endsWith('.' + domain);
+        } catch { return false; }
+      }
+      return t === origin;
+    });
+    if (allowed) return cb(null, true);
     return cb(new Error(`Origin ${origin} not allowed by CORS`));
   },
   credentials: true,
 }));
+app.use(securityHeaders());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan('dev'));
+
+// API key auth — runs before all routes, after CORS/body parsing
+app.use(apiKeyAuth);
 
 // Static files (uploaded media)
 app.use('/uploads', express.static(path.resolve(config.upload.dir)));
@@ -125,6 +165,10 @@ app.use('/api/enrich-rules',     enrichRulesRoutes);
 app.use('/api/legal-terms',      legalTermsRoutes);
 app.use('/api/seo-config',       seoConfigRoutes);
 app.use('/api/opensearch-config', openSearchConfigRoutes);
+app.use('/api/security-config',  securityConfigRoutes);
+app.use('/api/api-keys',         apiKeysRoutes);
+app.use('/api/import-config',    importConfigRoutes);
+app.use('/api/config-history',   configHistoryRoutes);
 app.use('/',                     openSearchPublicRoutes);
 app.use('/',                     seoPublicRoutes);
 

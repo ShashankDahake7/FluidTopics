@@ -1,21 +1,18 @@
 const express = require('express');
-const SeoConfig = require('../models/SeoConfig');
+const SecurityConfig = require('../models/SecurityConfig');
 const { auth, requireRole } = require('../middleware/auth');
 const { logConfigChange } = require('../services/configAudit');
 
 const router = express.Router();
 
-// Only superadmins (or KHUB_ADMIN) can access
 router.use(auth, requireRole('superadmin', 'admin'));
 
+// GET  /api/security-config
 router.get('/', async (req, res, next) => {
   try {
-    let config = await SeoConfig.findOne();
+    let config = await SecurityConfig.findOne();
     if (!config) {
-      config = await SeoConfig.create({
-        crawlingAllowed: true,
-        titleTags: [{ id: 'title-base', label: 'Title (topic or document)', metadata: 'ft:title', locked: true }]
-      });
+      config = await SecurityConfig.create({ trustedOrigins: '', certificates: [] });
     }
     res.json(config);
   } catch (err) {
@@ -23,20 +20,21 @@ router.get('/', async (req, res, next) => {
   }
 });
 
+// PUT  /api/security-config
 router.put('/', async (req, res, next) => {
   try {
-    const patch = req.body;
-    let config = await SeoConfig.findOne();
+    const { trustedOrigins, certificates } = req.body;
+    let config = await SecurityConfig.findOne();
     const before = config ? config.toObject() : {};
     if (!config) {
-      config = new SeoConfig(patch);
-      await config.save();
+      config = new SecurityConfig({ trustedOrigins, certificates });
     } else {
-      Object.assign(config, patch);
-      await config.save();
+      if (trustedOrigins !== undefined) config.trustedOrigins = trustedOrigins;
+      if (certificates !== undefined) config.certificates = certificates;
     }
+    await config.save();
     await logConfigChange({
-      category: 'Web search engines',
+      category: 'Integration security',
       author: req.user.name || req.user.email,
       authorEmail: req.user.email,
       before,

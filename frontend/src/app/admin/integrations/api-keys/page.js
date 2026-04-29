@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import AdminShell from '@/components/admin/AdminShell';
+import api from '@/lib/api';
 
 // All available roles (matches the chips visible across rows in the reference).
 const ALL_ROLES = [
@@ -141,75 +142,68 @@ function genSecret() {
 }
 
 export default function ApiKeysPage() {
-  const [keys, setKeys] = useState(SEED_KEYS);
-  const [baseline, setBaseline] = useState(SEED_KEYS);
+  const [keys, setKeys] = useState([]);
   const [newName, setNewName] = useState('');
   const [editing, setEditing] = useState(null); // key id being edited
   const [copiedId, setCopiedId] = useState(null);
+  const [loading, setLoading] = useState(true);
   const newRef = useRef(null);
 
-  const dirty = useMemo(
-    () => JSON.stringify(keys) !== JSON.stringify(baseline),
-    [keys, baseline],
-  );
+  useEffect(() => {
+    api.get('/api-keys')
+      .then((data) => setKeys(Array.isArray(data) ? data : []))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
   const canCreate = newName.trim().length > 0
+    && /^[a-zA-Z0-9_-]+$/.test(newName.trim())
     && !keys.some((k) => k.name.toLowerCase() === newName.trim().toLowerCase());
 
-  const onCancel = () => { setKeys(baseline); setEditing(null); };
-  const onSave   = () => setBaseline(keys);
-
-  const onCreate = () => {
+  const onCreate = async () => {
     if (!canCreate) return;
-    const k = {
-      id: `k_new_${Date.now()}`,
-      name: newName.trim(),
-      createdOn: todayShort(),
-      lastActivity: '—',
-      groups: [],
-      roles: [],
-      ipRestrictions: '',
-      secret: genSecret(),
-    };
-    setKeys((ks) => [...ks, k]);
-    setNewName('');
-    setEditing(k.id);
+    try {
+      const k = await api.post('/api-keys', { name: newName.trim() });
+      setKeys((ks) => [...ks, k]);
+      setNewName('');
+      setEditing(k._id);
+    } catch (e) {
+      alert('Failed to create: ' + e.message);
+    }
   };
 
   const onCopy = async (k) => {
     try { await navigator.clipboard.writeText(k.secret); }
     catch { /* clipboard unavailable */ }
-    setCopiedId(k.id);
+    setCopiedId(k._id);
     window.clearTimeout(onCopy._t);
     onCopy._t = window.setTimeout(() => setCopiedId(null), 1400);
   };
-  const onDelete = (id) => setKeys((ks) => ks.filter((k) => k.id !== id));
-  const onUpdate = (id, patch) =>
-    setKeys((ks) => ks.map((k) => (k.id === id ? { ...k, ...patch } : k)));
+
+  const onDelete = async (id) => {
+    try {
+      await api.delete(`/api-keys/${id}`);
+      setKeys((ks) => ks.filter((k) => k._id !== id));
+    } catch (e) {
+      alert('Failed to delete: ' + e.message);
+    }
+  };
+
+  const onUpdate = async (id, patch) => {
+    try {
+      const updated = await api.put(`/api-keys/${id}`, patch);
+      setKeys((ks) => ks.map((k) => (k._id === id ? updated : k)));
+    } catch (e) {
+      alert('Failed to update: ' + e.message);
+    }
+  };
+
+  if (loading) return null;
 
   return (
     <AdminShell
       active="integ-api-keys"
       allowedRoles={['superadmin']}
-      footer={
-        <>
-          <button
-            type="button"
-            style={{ ...S.btnCancel, opacity: dirty ? 1 : 0.6, cursor: dirty ? 'pointer' : 'default' }}
-            onClick={onCancel}
-            disabled={!dirty}
-          >
-            <CrossIcon /> <span>Cancel</span>
-          </button>
-          <button
-            type="button"
-            style={{ ...S.btnSave, opacity: dirty ? 1 : 0.5, cursor: dirty ? 'pointer' : 'default' }}
-            onClick={onSave}
-            disabled={!dirty}
-          >
-            <CheckIcon /> <span>Save</span>
-          </button>
-        </>
-      }
     >
       <div style={{ paddingBottom: '40px' }}>
         <h1 style={S.h1}>API keys</h1>
@@ -233,10 +227,10 @@ export default function ApiKeysPage() {
               </thead>
               <tbody>
                 {keys.map((k) => (
-                  <tr key={k.id} style={S.tr}>
+                  <tr key={k._id} style={S.tr}>
                     <td style={S.td}>{k.name}</td>
-                    <td style={S.td}>{k.createdOn}</td>
-                    <td style={S.td}>{k.lastActivity}</td>
+                    <td style={S.td}>{k.createdOn || new Date(k.createdAt).toLocaleDateString()}</td>
+                    <td style={S.td}>{k.lastActivity ? new Date(k.lastActivity).toLocaleString() : '—'}</td>
                     <td style={S.td}>
                       <ChipList values={k.groups} variant="group" />
                     </td>
@@ -251,17 +245,17 @@ export default function ApiKeysPage() {
                         type="button"
                         style={S.iconBtn}
                         onClick={() => onCopy(k)}
-                        title={copiedId === k.id ? 'Copied!' : 'Copy API key to clipboard'}
+                        title={copiedId === k._id ? 'Copied!' : 'Copy API key to clipboard'}
                         aria-label="Copy API key to clipboard"
                       >
-                        {copiedId === k.id ? <CheckIcon /> : <ClipboardIcon />}
+                        {copiedId === k._id ? <CheckIcon /> : <ClipboardIcon />}
                       </button>
                     </td>
                     <td style={S.tdAction}>
                       <button
                         type="button"
                         style={S.iconBtn}
-                        onClick={() => setEditing(k.id)}
+                        onClick={() => setEditing(k._id)}
                         title="Edit"
                         aria-label="Edit"
                       >
@@ -272,7 +266,7 @@ export default function ApiKeysPage() {
                       <button
                         type="button"
                         style={S.iconBtnDanger}
-                        onClick={() => onDelete(k.id)}
+                        onClick={() => onDelete(k._id)}
                         title="Delete"
                         aria-label="Delete"
                       >
@@ -315,7 +309,7 @@ export default function ApiKeysPage() {
 
       {editing && (
         <EditKeyDrawer
-          api={keys.find((k) => k.id === editing)}
+          api={keys.find((k) => k._id === editing)}
           onClose={() => setEditing(null)}
           onChange={(patch) => onUpdate(editing, patch)}
         />

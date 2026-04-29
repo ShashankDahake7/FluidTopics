@@ -398,8 +398,10 @@ export default function VocabulariesPage() {
                 ) : filteredSorted.length === 0 ? (
                   <tr>
                     <td colSpan={6} style={S.emptyCell}>
-                      <EmptyIllustration />
-                      <span style={S.emptyText}>No vocabularies to display</span>
+                      <div style={S.emptyInner}>
+                        <EmptyIllustration />
+                        <span style={S.emptyText}>No vocabularies to display</span>
+                      </div>
                     </td>
                   </tr>
                 ) : filteredSorted.map((r) => (
@@ -936,6 +938,8 @@ const S = {
   emptyCell: {
     padding: '60px 16px', textAlign: 'center',
     color: '#94a3b8',
+  },
+  emptyInner: {
     display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px',
   },
   emptyText: { fontSize: '0.92rem', color: '#64748b' },

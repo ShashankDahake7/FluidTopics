@@ -7,6 +7,9 @@ const config = require('../config/env');
 // applicable, `req.actor` (the admin behind an impersonation) and `req.session`.
 const auth = async (req, res, next) => {
   try {
+    // If the API-key middleware already authenticated this request, skip JWT.
+    if (req.user && req.apiKey) return next();
+
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({ error: 'Access denied. No token provided.' });
