@@ -5,6 +5,7 @@ const User = require('../models/User');
 const Session = require('../models/Session');
 const config = require('../config/env');
 const { auth } = require('../middleware/auth');
+const emailService = require('../services/email/emailService');
 
 const router = express.Router();
 
@@ -67,12 +68,18 @@ const issueSession = async (user, req, actorId = null) => {
   return { accessToken, refreshToken: refresh, session };
 };
 
-// Lightweight stand-in for an email service. In production, replace this with
-// SES / SendGrid / SMTP. In dev we just log so the token can be lifted from
-// the server console (and we also include the token in API responses when
-// nodeEnv !== 'production' so the flow can be exercised end-to-end).
-const sendEmail = (to, subject, body) => {
-  console.log(`📧 [email-stub] to=${to} subject="${subject}"\n${body}\n`);
+// Send an email using the configured email service (SendGrid / SMTP / etc.).
+// Falls back to console logging when delivery fails so the flow isn't blocked
+// in dev. In production the error propagates to the caller.
+const sendEmail = async (to, subject, html) => {
+  try {
+    await emailService.sendMail({ to, subject, html });
+  } catch (err) {
+    // In non-production we log the failure but don't reject — this allows
+    // the token to still be returned in the dev-only response payload.
+    console.warn(`[auth] email delivery failed for ${to}: ${err.message}`);
+    if (config.nodeEnv === 'production') throw err;
+  }
 };
 const includeTokenInResponse = () => config.nodeEnv !== 'production';
 
@@ -371,8 +378,17 @@ router.post('/forgot-password', async (req, res, next) => {
     await user.save();
 
     const resetUrl = `${req.protocol}://${req.get('host')}/reset-password/${raw}`;
-    sendEmail(user.email, 'Reset your password',
-      `Click to reset your password (valid 1 hour): ${resetUrl}`);
+    const resetHtml = `
+      <div style="font-family: system-ui, -apple-system, sans-serif; color: #0f172a;">
+        <h2>Reset Your Password</h2>
+        <p>We received a request to reset your password. Click the button below to set a new one:</p>
+        <p style="margin: 24px 0;">
+          <a href="${resetUrl}" style="background: #2563eb; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600;">Reset Password</a>
+        </p>
+        <p style="font-size: 13px; color: #64748b;">This link expires in 1 hour. If you didn't request this, you can safely ignore this email.</p>
+        <p style="font-size: 12px; color: #94a3b8; margin-top: 32px;">Link: ${resetUrl}</p>
+      </div>`;
+    await sendEmail(user.email, 'Reset your password', resetHtml);
 
     const payload = { message: 'If that account exists, a reset link has been sent.' };
     if (includeTokenInResponse()) payload.token = raw; // dev only
@@ -414,7 +430,16 @@ router.post('/send-verification', auth, async (req, res, next) => {
     await user.save();
 
     const verifyUrl = `${req.protocol}://${req.get('host')}/verify-email/${raw}`;
-    sendEmail(user.email, 'Verify your email', `Click to verify: ${verifyUrl}`);
+    const verifyHtml = `
+      <div style="font-family: system-ui, -apple-system, sans-serif; color: #0f172a;">
+        <h2>Verify Your Email</h2>
+        <p>Please confirm your email address by clicking the button below:</p>
+        <p style="margin: 24px 0;">
+          <a href="${verifyUrl}" style="background: #2563eb; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600;">Verify Email</a>
+        </p>
+        <p style="font-size: 12px; color: #94a3b8; margin-top: 32px;">Link: ${verifyUrl}</p>
+      </div>`;
+    await sendEmail(user.email, 'Verify your email', verifyHtml);
 
     const payload = { message: 'Verification email sent' };
     if (includeTokenInResponse()) payload.token = raw;

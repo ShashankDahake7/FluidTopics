@@ -37,7 +37,7 @@ router.use(auth);
 // ---------------------------------------------------------------------------
 // Sanitisers — secrets never leave the backend.
 // ---------------------------------------------------------------------------
-const SECRET_KEYS = ['dkimPrivateKey', 'smtpPassword'];
+const SECRET_KEYS = ['dkimPrivateKey', 'smtpPassword', 'sendgridApiKey'];
 const REDACTED = '__redacted__';
 
 function publicSettings(s) {
@@ -61,6 +61,9 @@ function publicSettings(s) {
     smtpTransport:     obj.smtpTransport || 'SMTP',
     smtpUser:          obj.smtpUser || '',
     smtpPassword:      obj.smtpPassword ? REDACTED : '',
+
+    sendgridApiKey:    obj.sendgridApiKey ? REDACTED : '',
+    sendgridFromAddress: obj.sendgridFromAddress || '',
 
     lastTestSentTo:    obj.lastTestSentTo || '',
     lastTestSentAt:    obj.lastTestSentAt,
@@ -132,7 +135,7 @@ router.put('/', requirePortalOrAdmin, async (req, res, next) => {
       cfg.logoUrl = String(body.logoUrl || '');
     }
     if (body.sendingMethod !== undefined) {
-      if (!['internal', 'spfdkim', 'smtp'].includes(body.sendingMethod)) {
+      if (!['internal', 'spfdkim', 'smtp', 'sendgrid'].includes(body.sendingMethod)) {
         return res.status(400).json({ error: 'Invalid sending method.' });
       }
       cfg.sendingMethod = body.sendingMethod;
@@ -197,6 +200,18 @@ router.put('/', requirePortalOrAdmin, async (req, res, next) => {
       cfg.smtpPassword = String(body.smtpPassword || '');
     }
 
+    // SendGrid block
+    if (body.sendgridApiKey !== undefined && body.sendgridApiKey !== REDACTED) {
+      cfg.sendgridApiKey = String(body.sendgridApiKey || '');
+    }
+    if (body.sendgridFromAddress !== undefined) {
+      const v = String(body.sendgridFromAddress || '').trim();
+      if (v && !emailService.isLikelyEmail(v)) {
+        return res.status(400).json({ error: 'SendGrid From address must be a valid email.' });
+      }
+      cfg.sendgridFromAddress = v;
+    }
+
     // Per-method save-time validations.
     if (cfg.sendingMethod === 'spfdkim') {
       if (!emailService.isLikelyEmail(cfg.dkimFromAddress)) {
@@ -219,6 +234,17 @@ router.put('/', requirePortalOrAdmin, async (req, res, next) => {
         return res.status(400).json({ error: 'SMTP username and password are required.' });
       }
     }
+    if (cfg.sendingMethod === 'sendgrid') {
+      // API key may come from env var; only require it explicitly if neither is set.
+      const effectiveKey = cfg.sendgridApiKey || (require('../../config/env').sendgrid?.apiKey || '');
+      if (!effectiveKey) {
+        return res.status(400).json({ error: 'SendGrid API key is required (set in settings or SENDGRID_API_KEY env var).' });
+      }
+      const fromAddr = cfg.sendgridFromAddress || (require('../../config/env').sendgrid?.defaultFrom || '');
+      if (!emailService.isLikelyEmail(fromAddr)) {
+        return res.status(400).json({ error: 'A valid SendGrid From address is required.' });
+      }
+    }
 
     cfg.updatedByEmail = req.user?.email || '';
     await cfg.save();
@@ -231,6 +257,7 @@ router.put('/', requirePortalOrAdmin, async (req, res, next) => {
         'replyToAddress', 'logoUrl', 'sendingMethod',
         'dkimFromAddress', 'dkimSelector',
         'smtpFromAddress', 'smtpHost', 'smtpPort', 'smtpTransport', 'smtpUser',
+        'sendgridFromAddress',
       ]),
     });
 

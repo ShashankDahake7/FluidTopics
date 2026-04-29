@@ -51,6 +51,10 @@ const config = {
     forcePathStyle:  String(process.env.S3_FORCE_PATH_STYLE || '').toLowerCase() === 'true',
     presignExpires:  parseInt(process.env.S3_PRESIGN_EXPIRES, 10) || 900,
   },
+  sendgrid: {
+    apiKey:      process.env.SENDGRID_API_KEY      || '',
+    defaultFrom: process.env.SENDGRID_FROM_EMAIL   || 'noreply@fluidtopics.net',
+  },
   publishing: {
     // Cap on a single extracted zip-entry. Anything over this aborts the
     // extraction and is logged as `entry_too_large`.

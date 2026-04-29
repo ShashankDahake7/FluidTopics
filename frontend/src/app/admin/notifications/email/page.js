@@ -595,8 +595,8 @@ export default function EmailNotificationsPage() {
                     value={settings.smtpTransport}
                     onChange={(v) => set({ smtpTransport: v })}
                     options={[
-                      { value: 'SMTP',     label: 'SMTP' },
-                      { value: 'SMTPS',    label: 'SMTPS' },
+                      { value: 'SMTP', label: 'SMTP' },
+                      { value: 'SMTPS', label: 'SMTPS' },
                       { value: 'SMTP_TLS', label: 'SMTP TLS' },
                     ]}
                   />

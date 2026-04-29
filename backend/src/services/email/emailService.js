@@ -1,6 +1,8 @@
 const nodemailer = require('nodemailer');
+const sgMail = require('@sendgrid/mail');
 const dns = require('dns').promises;
 const EmailSettings = require('../../models/EmailSettings');
+const config = require('../../config/env');
 
 // ---------------------------------------------------------------------------
 // emailService — single source of truth for sending notification emails
@@ -19,6 +21,11 @@ const EmailSettings = require('../../models/EmailSettings');
 //   smtp      →  External SMTP relay (Sendgrid, Mailgun, etc.). Transport
 //                strategy SMTP/SMTPS/SMTP_TLS picks the right combination of
 //                `secure` + `requireTLS` flags as Nodemailer expects.
+//
+//   sendgrid  →  SendGrid Web API v3 via the @sendgrid/mail SDK. Avoids
+//                SMTP entirely; uses an API key for auth. The key can come
+//                from the admin UI (EmailSettings.sendgridApiKey) or from
+//                the SENDGRID_API_KEY env var (admin UI takes precedence).
 //
 // All operations log a sanitised summary to console (never the password /
 // private key) so that "Send a test email" failures can be diagnosed from
@@ -39,12 +46,36 @@ function looksLikePemPrivateKey(s) {
 }
 
 // ---------------------------------------------------------------------------
+// Resolve the SendGrid API key. Admin-stored value takes precedence over the
+// environment variable so that multi-tenant setups can override per portal.
+// ---------------------------------------------------------------------------
+function resolveSendgridApiKey(cfg) {
+  return cfg.sendgridApiKey || config.sendgrid.apiKey || '';
+}
+
+function resolveSendgridFrom(cfg) {
+  return cfg.sendgridFromAddress || config.sendgrid.defaultFrom || INTERNAL_FROM;
+}
+
+// ---------------------------------------------------------------------------
 // Build a Nodemailer transport for the current configuration. Throws an Error
 // (with a user-friendly message) when the configuration is incomplete; the
 // route layer surfaces those messages to the admin UI.
+//
+// For the `sendgrid` method this returns `null` — the caller (sendMail)
+// bypasses Nodemailer entirely and uses the SendGrid SDK.
 // ---------------------------------------------------------------------------
 async function buildTransporter(cfgOverride = null) {
   const cfg = cfgOverride || (await EmailSettings.getSingleton());
+
+  if (cfg.sendingMethod === 'sendgrid') {
+    const apiKey = resolveSendgridApiKey(cfg);
+    if (!apiKey) throw new Error('SendGrid API key is required. Set it in the admin UI or via SENDGRID_API_KEY env var.');
+    const fromAddress = resolveSendgridFrom(cfg);
+    if (!isLikelyEmail(fromAddress)) throw new Error('A valid SendGrid From address is required.');
+    // No Nodemailer transport needed — sendMail() will use the SDK directly.
+    return { transport: null, fromAddress, sendgrid: true };
+  }
 
   if (cfg.sendingMethod === 'smtp') {
     if (!cfg.smtpHost) throw new Error('SMTP host is required.');
@@ -96,12 +127,43 @@ async function buildTransporter(cfgOverride = null) {
   return { transport, fromAddress: INTERNAL_FROM };
 }
 
-async function sendMail({ to, subject, html, text, headers = {} }, cfgOverride = null) {
+async function sendMail({ to, subject, html, text, attachments = [], headers = {} }, cfgOverride = null) {
   if (!isLikelyEmail(to)) throw new Error('Recipient email address is invalid.');
   const cfg = cfgOverride || (await EmailSettings.getSingleton());
-  const { transport, fromAddress } = await buildTransporter(cfg);
+  const built = await buildTransporter(cfg);
 
   const replyTo = isLikelyEmail(cfg.replyToAddress) ? cfg.replyToAddress : undefined;
+
+  // ── SendGrid path ──────────────────────────────────────────────────────
+  if (built.sendgrid) {
+    const apiKey = resolveSendgridApiKey(cfg);
+    sgMail.setApiKey(apiKey);
+
+    const msg = {
+      to,
+      from: built.fromAddress,
+      subject: subject || '(no subject)',
+      html: html || undefined,
+      text: text || (html ? html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() : ''),
+      ...(replyTo && { replyTo }),
+      ...(attachments.length > 0 && { attachments }),
+    };
+
+    const [response] = await sgMail.send(msg);
+    console.log(`[emailService] SendGrid → ${to} (status ${response.statusCode})`);
+
+    return {
+      messageId:   response.headers?.['x-message-id'] || '',
+      accepted:    [to],
+      rejected:    [],
+      response:    `${response.statusCode}`,
+      via:         'sendgrid',
+      fromAddress: built.fromAddress,
+    };
+  }
+
+  // ── Nodemailer path (internal / spfdkim / smtp) ────────────────────────
+  const { transport, fromAddress } = built;
 
   const info = await transport.sendMail({
     from:    fromAddress,
@@ -128,7 +190,11 @@ async function sendMail({ to, subject, html, text, headers = {} }, cfgOverride =
 // be persistable. Returns { ok, error }.
 async function verifyTransport(cfgOverride = null) {
   try {
-    const { transport } = await buildTransporter(cfgOverride);
+    const built = await buildTransporter(cfgOverride);
+    // SendGrid has no "verify" handshake — if the API key is present we
+    // consider the configuration nominally valid.
+    if (built.sendgrid) return { ok: true, error: '' };
+    const { transport } = built;
     if (typeof transport.verify === 'function') {
       await transport.verify();
     }

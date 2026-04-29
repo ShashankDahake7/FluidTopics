@@ -27,7 +27,7 @@ const emailSettingsSchema = new mongoose.Schema(
     // Sending method selector
     sendingMethod:      {
       type: String,
-      enum: ['internal', 'spfdkim', 'smtp'],
+      enum: ['internal', 'spfdkim', 'smtp', 'sendgrid'],
       default: 'internal',
     },
 
@@ -50,6 +50,10 @@ const emailSettingsSchema = new mongoose.Schema(
     },
     smtpUser:           { type: String, default: '' },
     smtpPassword:       { type: String, default: '' },
+
+    // SendGrid API
+    sendgridApiKey:     { type: String, default: '' },
+    sendgridFromAddress: { type: String, default: '' },
 
     // Last successful test send (for the "Test configuration" UI)
     lastTestSentTo:     { type: String, default: '' },
