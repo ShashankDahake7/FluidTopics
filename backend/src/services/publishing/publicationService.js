@@ -526,6 +526,16 @@ async function runValidationInBackground(publicationId) {
     const pub = await Publication.findById(publicationId);
     if (!pub) return;
 
+    // Resolve the Source type so the validation worker can adjust strictness
+    // for binary/attachment-oriented sources (UD, MapAttachments, etc.).
+    let sourceType = null;
+    if (pub.sourceId) {
+      try {
+        const source = await Source.findById(pub.sourceId).select('type').lean();
+        sourceType = source?.type || null;
+      } catch (_) { /* best-effort */ }
+    }
+
     // ValidationCache short-circuit: a previous run against this exact
     // zip body already produced a summary. The summary is purely a
     // function of the extracted manifest, which is purely a function of
@@ -568,6 +578,7 @@ async function runValidationInBackground(publicationId) {
         publicationId: String(pub._id),
         extracted: { bucket: pub.extracted.bucket, prefix: pub.extracted.prefix },
         manifest: pub.extracted.manifest.map((m) => ({ path: m.path, key: m.key })),
+        sourceType,
       }, { publicationId: pub._id, phase: 'validate' });
       summary = result.summary || {};
     }
@@ -577,6 +588,7 @@ async function runValidationInBackground(publicationId) {
     const brokenLinkCount        = summary.brokenLinkCount        || 0;
     const unresolvedXrefCount    = summary.unresolvedXrefCount    || 0;
     const hasParseableContent    = summary.hasParseableContent !== false;
+    const hasBinaryContent       = summary.hasBinaryContent === true;
     const totalIssues =
       missingTopicCount +
       missingAttachmentCount +
@@ -614,6 +626,7 @@ async function runValidationInBackground(publicationId) {
                 brokenLinkCount,
                 unresolvedXrefCount,
                 hasParseableContent,
+                hasBinaryContent,
               },
               validatedAt: new Date(),
               hitCount: 0,
@@ -626,13 +639,25 @@ async function runValidationInBackground(publicationId) {
       }
     }
 
-    // Only publish into the portal/dashboard once validation is *clean* AND
-    // the zip actually carries something the ingester can render. The
-    // `hasParseableContent` flag is the safety net for source types whose
-    // zips can validate as "0 issues" while containing only PDFs or other
-    // non-parseable assets (PDF_open, UD, partial DITA exports). Without
-    // this, the dashboard would link to a Document with 0 topics.
-    if (totalIssues === 0 && hasParseableContent && !fresh.documentId) {
+    // Determine whether to auto-publish into the portal. Three tracks:
+    //
+    //   1. Structured source (Paligo, DITA, Confluence, etc.) with clean
+    //      validation and parseable HTML/XML topics → publish normally.
+    //
+    //   2. Binary/attachment source (UD, MapAttachments, External, etc.)
+    //      with clean validation → publish even when there are no
+    //      parseable HTML topics, as long as binary content exists.
+    //      These sources carry PDFs/Office docs that the portal can
+    //      render as download links.
+    //
+    //   3. Any source with validation issues → skip publish, log why.
+    const { BINARY_SOURCE_TYPES } = require('../../utils/helpers');
+    const isBinarySource = sourceType && BINARY_SOURCE_TYPES.has(sourceType);
+    const canPublish = totalIssues === 0
+      && (hasParseableContent || (isBinarySource && hasBinaryContent))
+      && !fresh.documentId;
+
+    if (canPublish) {
       await ingestValidatedPublication(fresh);
     } else if (totalIssues > 0) {
       await appendLog(publicationId, 'validate', {
@@ -641,12 +666,19 @@ async function runValidationInBackground(publicationId) {
         message: `Skipping portal publish: validation found ${totalIssues} issue${totalIssues === 1 ? '' : 's'} (${missingTopicCount} missing topics, ${missingAttachmentCount} missing attachments, ${unresolvedXrefCount} unresolved xrefs, ${brokenLinkCount} broken links). Fix the source and re-validate.`,
         context: { missingTopicCount, missingAttachmentCount, unresolvedXrefCount, brokenLinkCount },
       });
-    } else if (!hasParseableContent) {
+    } else if (!hasParseableContent && !hasBinaryContent) {
       await appendLog(publicationId, 'validate', {
         level: 'warn',
         code: 'publish_skipped',
-        message: 'Skipping portal publish: extracted zip has no HTML/XML/DITA topics for this source type.',
-        context: { missingTopicCount, missingAttachmentCount, unresolvedXrefCount, brokenLinkCount },
+        message: 'Skipping portal publish: extracted zip has no HTML/XML/DITA topics and no binary content for this source type.',
+        context: { missingTopicCount, missingAttachmentCount, unresolvedXrefCount, brokenLinkCount, sourceType: sourceType || 'unknown' },
+      });
+    } else if (!hasParseableContent && hasBinaryContent && !isBinarySource) {
+      await appendLog(publicationId, 'validate', {
+        level: 'warn',
+        code: 'publish_skipped',
+        message: `Skipping portal publish: extracted zip has no HTML/XML/DITA topics. It contains binary files, but source type "${sourceType}" expects parseable content.`,
+        context: { missingTopicCount, missingAttachmentCount, unresolvedXrefCount, brokenLinkCount, sourceType: sourceType || 'unknown' },
       });
     }
   } catch (err) {

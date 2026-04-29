@@ -313,7 +313,7 @@ export default function PrettyUrlPage() {
 
   if (loading) {
     return (
-      <AdminShell active="khub-pretty-url" allowedRoles={['superadmin']}>
+      <AdminShell active="khub-pretty-url" allowedRoles={['superadmin']} fullWidth>
         <div style={S.page}>
           <div style={{ padding: 24, color: '#475569' }}>Loading Pretty URL configuration…</div>
         </div>
@@ -326,7 +326,7 @@ export default function PrettyUrlPage() {
   const lastApplyAllDisplay = lastJob?.finishedAt ? formatDate(lastJob.finishedAt) : null;
 
   return (
-    <AdminShell active="khub-pretty-url" allowedRoles={['superadmin']}>
+    <AdminShell active="khub-pretty-url" allowedRoles={['superadmin']} fullWidth>
       <div style={S.page}>
         {error && (
           <Notice variant="warning">

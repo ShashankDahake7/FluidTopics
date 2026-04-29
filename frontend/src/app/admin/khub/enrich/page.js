@@ -230,7 +230,7 @@ export default function EnrichAndCleanPage() {
   const reprocessInFlight = job && (job.status === 'queued' || job.status === 'running');
 
   return (
-    <AdminShell active="khub-enrich" allowedRoles={['superadmin']}>
+    <AdminShell active="khub-enrich" allowedRoles={['superadmin']} fullWidth>
       <div style={S.page}>
         <header style={S.headerRow}>
           <h1 style={S.h1}>Enrich and Clean</h1>

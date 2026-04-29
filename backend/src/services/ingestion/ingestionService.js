@@ -81,6 +81,11 @@ const ingestFile = async (file, userId = null) => {
         // Generic ZIP — use existing pipeline
         const fileTopicResults = [];
         for (const zipFile of files) {
+          // Skip binary files (pdf, pptx, etc.) — they are recognised by
+          // zipHandler for manifest counting but have no parseable topic
+          // content. Attempting parseByFormat on them would throw.
+          if (zipFile.isBinary || zipFile.format === 'binary') continue;
+
           const parsed = await parseByFormat(zipFile.format, zipFile.content, zipFile.filename);
           const transformed = await transformContent(parsed, zipFile.filename, zipFile.path);
           const topicIds = await saveTopics(transformed, doc._id);
@@ -691,6 +696,11 @@ async function parseZipToCandidates(file, doc) {
   const fileTopicResults = []; // { sourcePath, candidates: [{ stableId, … }] }
   const docMetaPieces = []; // collect parser-emitted doc metadata
   for (const zipFile of files) {
+    // Skip binary files (pdf, pptx, etc.) — they are recognised by
+    // zipHandler for manifest counting but have no parseable topic
+    // content. Attempting parseByFormat on them would throw.
+    if (zipFile.isBinary || zipFile.format === 'binary') continue;
+
     const parsed = await parseByFormat(zipFile.format, zipFile.content, zipFile.filename);
     const transformed = await transformContent(parsed, zipFile.filename, zipFile.path);
     if (transformed?.metadata) docMetaPieces.push(transformed.metadata);

@@ -328,7 +328,23 @@ export default function DocumentReader({ documentId, initialTopicId = null, allD
 
   const handleSelect = useCallback((topicId) => {
     setSelectedId(topicId);
-  }, []);
+
+    // Update the browser address bar to show the topic's own pretty URL
+    // when available, so the user sees /r/Attendance/Shifts instead of
+    // /r/Attendance for every topic. We use replaceState so clicking
+    // through the TOC doesn't pollute the back button history.
+    if (typeof window !== 'undefined') {
+      const topicData = topics.find((t) => String(t._id) === String(topicId));
+      if (topicData?.prettyUrl) {
+        const path = topicData.prettyUrl.startsWith('/') ? topicData.prettyUrl : '/' + topicData.prettyUrl;
+        window.history.replaceState(null, '', `/r${path}`);
+      } else if (doc?.prettyUrl) {
+        // Topic doesn't have its own pretty URL — show doc URL + topic query param
+        const docPath = doc.prettyUrl.startsWith('/') ? doc.prettyUrl : '/' + doc.prettyUrl;
+        window.history.replaceState(null, '', `/r${docPath}?topic=${topicId}`);
+      }
+    }
+  }, [topics, doc]);
 
   useEffect(() => {
     if (!selectedId) { setBookmarked(false); return; }

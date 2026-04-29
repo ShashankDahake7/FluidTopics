@@ -22,6 +22,9 @@ const RESERVED_TO_FIELD = {
   // fields. Anything not in this map falls through to metadata.custom
   // (lower-cased lookup).
   $title: ['title'],
+  '$ft:title': ['title'],
+  '$ft:prettyurl': ['prettyUrl'],
+  '$document.ft:prettyurl': ['prettyUrl'],
   $author: ['metadata', 'author'],
   $product: ['metadata', 'product'],
   $language: ['language'],
@@ -146,12 +149,32 @@ function resolveVariable(key, { document, topic, source }) {
   // Reserved fields short-circuit to first-class document/topic fields.
   if (RESERVED_TO_FIELD[lowerKey]) {
     const path = RESERVED_TO_FIELD[lowerKey];
-    const fromDoc = document ? readPath(document, path) : undefined;
-    if (fromDoc != null && fromDoc !== '') return Array.isArray(fromDoc) ? fromDoc[0] : fromDoc;
-    if (topic) {
-      // Some reserved keys also exist on topics ($title most notably).
-      const fromTopic = readPath(topic, path);
-      if (fromTopic != null && fromTopic !== '') return Array.isArray(fromTopic) ? fromTopic[0] : fromTopic;
+
+    // When `source` is 'topic' (i.e. we're rendering a topic-scope
+    // template), prefer topic-level values for fields that topics share
+    // with documents — most importantly `title`. Without this, every
+    // topic inside a document would inherit the document title.
+    //
+    // Variables that explicitly reference the document (prefixed with
+    // "document.") always read from the document regardless of source.
+    const isDocumentScoped = lowerKey.startsWith('$document.');
+
+    if (!isDocumentScoped && (source === 'topic' || (!document && topic))) {
+      // Topic-first: try topic, then document as fallback
+      if (topic) {
+        const fromTopic = readPath(topic, path);
+        if (fromTopic != null && fromTopic !== '') return Array.isArray(fromTopic) ? fromTopic[0] : fromTopic;
+      }
+      const fromDoc = document ? readPath(document, path) : undefined;
+      if (fromDoc != null && fromDoc !== '') return Array.isArray(fromDoc) ? fromDoc[0] : fromDoc;
+    } else {
+      // Document-first (default for doc-scope templates)
+      const fromDoc = document ? readPath(document, path) : undefined;
+      if (fromDoc != null && fromDoc !== '') return Array.isArray(fromDoc) ? fromDoc[0] : fromDoc;
+      if (topic) {
+        const fromTopic = readPath(topic, path);
+        if (fromTopic != null && fromTopic !== '') return Array.isArray(fromTopic) ? fromTopic[0] : fromTopic;
+      }
     }
     return null;
   }
@@ -251,7 +274,7 @@ function tryRender(template, { document, topic, requirements = [], config }) {
         continue;
       }
       const bare = t.key.toLowerCase().replace(/^\$/, '');
-      const src = sourceOverride.get(bare) || (topic && !document ? 'topic' : 'document');
+      const src = sourceOverride.get(bare) || (topic ? 'topic' : 'document');
       const val = resolveVariable(t.key, { document, topic, source: src });
       if (val == null || val === '') {
         if (requiredSet.has(bare) || requirements.length === 0) {
@@ -263,6 +286,22 @@ function tryRender(template, { document, topic, requirements = [], config }) {
         }
         parts.push('');
       } else {
+        // If the resolved value is itself a URL path (contains slashes),
+        // e.g. {document.ft:prettyUrl} resolving to "/docs/manual/foo",
+        // we need to split it on '/' and add each segment separately so
+        // the slash structure is preserved rather than collapsed to dashes.
+        const strVal = String(val);
+        if (bare.includes('prettyurl') && strVal.includes('/')) {
+          const pathParts = strVal.replace(/^\/+/, '').split('/').filter(Boolean);
+          // Push each segment of the prettyUrl as a separate rendered
+          // segment (skipping the current one). We slugify each part
+          // individually to keep the path structure intact.
+          for (const pp of pathParts) {
+            renderedSegments.push(slugifyFragment(pp, norm));
+          }
+          // Mark this segment's parts as empty so it collapses
+          continue;
+        }
         parts.push(slugifyFragment(val, norm));
       }
     }

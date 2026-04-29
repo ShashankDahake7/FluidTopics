@@ -181,7 +181,7 @@ export default function MetadataConfigPage() {
     : 'Reprocessing started…';
 
   return (
-    <AdminShell active="khub-metadata" allowedRoles={['superadmin']}>
+    <AdminShell active="khub-metadata" allowedRoles={['superadmin']} fullWidth>
       <div style={S.page}>
         <header style={S.headerRow}>
           <div>

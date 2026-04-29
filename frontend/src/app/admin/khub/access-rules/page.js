@@ -196,6 +196,7 @@ export default function AccessRulesPage() {
         active="khub-access"
         allowedRoles={['superadmin', 'admin']}
         allowedAdminRoles={['KHUB_ADMIN']}
+        fullWidth
       >
         <div style={{ padding: 40, textAlign: 'center' }}><div className="spinner" /></div>
       </AdminShell>
@@ -211,6 +212,7 @@ export default function AccessRulesPage() {
       active="khub-access"
       allowedRoles={['superadmin', 'admin']}
       allowedAdminRoles={['KHUB_ADMIN']}
+      fullWidth
     >
       <div style={S.page}>
         <header style={S.headerRow}>

@@ -36,7 +36,17 @@ async function streamToString(readable) {
 const HTML_RX        = /\.(html?|xhtml)$/i;
 const DITA_RX        = /\.(dita|ditamap|bookmap)$/i;
 const XML_RX         = /\.xml$/i;
+const BINARY_RX      = /\.(pdf|pptx?|xlsx?|csv|rtf|odt|ods|odp|epub)$/i;
 const ATTACHMENT_RX  = /^attachments\//i;
+
+// Source types whose zips carry primarily binary/attachment content.
+// These get relaxed validation — no "no parseable content" error.
+const BINARY_SOURCE_TYPES = new Set([
+  'UnstructuredDocuments',
+  'MapAttachments',
+  'ExternalDocument',
+  'External',
+]);
 
 // Server-absolute refs that point at *application routes* rather than at files
 // inside the zip. Cross-document links exported from Confluence/Paligo
@@ -94,7 +104,8 @@ function loadXml(text) {
 }
 
 async function run() {
-  const { publicationId, extracted, manifest } = workerData;
+  const { publicationId, extracted, manifest, sourceType } = workerData;
+  const isBinarySource = BINARY_SOURCE_TYPES.has(sourceType);
 
   if (!publicationId || !extracted?.bucket || !Array.isArray(manifest)) {
     send({ type: 'error', message: 'validateRefsWorker: missing required workerData fields' });
@@ -130,29 +141,39 @@ async function run() {
   // extension; OPF/META-INF would be matched here but they declare hrefs we
   // do want to validate).
   const xmlFiles  = manifest.filter((m) => XML_RX.test(m.path));
+  const binaryFiles = manifest.filter((m) => BINARY_RX.test(m.path));
 
   const parseableFiles = [...htmlFiles, ...ditaFiles, ...xmlFiles];
   const total = parseableFiles.length;
+  const hasBinaryContent = binaryFiles.length > 0;
 
   // Hard guard: if there's nothing in the zip we can render, fail validation
-  // loudly. This is the safety net that prevents "0 issues → publish empty
-  // Document" for PDF-only / asset-only / corrupt zips and is the single
-  // most common reason the dashboard used to render a broken document for
-  // certain source types (PDF_open, UD, partial DITA exports).
+  // loudly — UNLESS this is a binary/attachment source type (UD,
+  // MapAttachments, ExternalDocument, External) where the zip is expected
+  // to carry only PDFs/Office docs/etc. For those sources, having binary
+  // content is sufficient; they don't need HTML/XML topics.
   if (manifest.length === 0) {
     logEntry('error', 'no_parseable_content',
       'Extracted zip is empty — nothing to validate.',
-      { fileCount: 0 });
+      { fileCount: 0, sourceType: sourceType || 'unknown' });
     brokenLinkCount += 1;
   } else if (total === 0) {
     const sampleExt = manifest
       .slice(0, 5)
       .map((m) => (m.path.split('.').pop() || '').toLowerCase())
       .filter(Boolean);
-    logEntry('warn', 'no_parseable_content',
-      `No HTML/XML/DITA topics found in extracted zip (${manifest.length} files, e.g. .${sampleExt.join(', .')}). The publication will not be rendered in the portal.`,
-      { fileCount: manifest.length, sampleExtensions: sampleExt });
-    brokenLinkCount += 1;
+    if (isBinarySource && hasBinaryContent) {
+      // Binary-content source with binary files is perfectly fine.
+      logEntry('info', 'binary_content_only',
+        `No HTML/XML/DITA topics found, but ${binaryFiles.length} binary file(s) detected (e.g. .${sampleExt.join(', .')}). This is expected for source type "${sourceType}".`,
+        { fileCount: manifest.length, binaryFileCount: binaryFiles.length, sampleExtensions: sampleExt, sourceType });
+    } else {
+      // Structured source with no parseable content — this is a real problem.
+      logEntry('warn', 'no_parseable_content',
+        `No HTML/XML/DITA topics found in extracted zip (${manifest.length} files, e.g. .${sampleExt.join(', .')}). The publication will not be rendered in the portal.`,
+        { fileCount: manifest.length, sampleExtensions: sampleExt, sourceType: sourceType || 'unknown' });
+      brokenLinkCount += 1;
+    }
   }
 
   let processed = 0;
@@ -330,11 +351,14 @@ async function run() {
     brokenLinkCount,
     unresolvedXrefCount,
     hasParseableContent: total > 0,
+    hasBinaryContent,
     parseableFileCount: total,
+    binaryFileCount: binaryFiles.length,
+    sourceType: sourceType || null,
   });
   logEntry('info', 'validate_complete',
-    `Validation complete: ${missingTopicCount} missing topics, ${missingAttachmentCount} missing attachments, ${unresolvedXrefCount} unresolved xrefs, ${brokenLinkCount} other broken links`,
-    { missingTopicCount, missingAttachmentCount, unresolvedXrefCount, brokenLinkCount });
+    `Validation complete: ${missingTopicCount} missing topics, ${missingAttachmentCount} missing attachments, ${unresolvedXrefCount} unresolved xrefs, ${brokenLinkCount} other broken links${hasBinaryContent ? `, ${binaryFiles.length} binary file(s)` : ''}`,
+    { missingTopicCount, missingAttachmentCount, unresolvedXrefCount, brokenLinkCount, binaryFileCount: binaryFiles.length, sourceType: sourceType || null });
   send({ type: 'done' });
 }
 

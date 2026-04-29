@@ -202,7 +202,7 @@ export default function SourcesPage() {
   };
 
   return (
-    <AdminShell active="khub-sources" allowedRoles={['superadmin']}>
+    <AdminShell active="khub-sources" allowedRoles={['superadmin']} fullWidth>
       <div style={S.headerRow}>
         <h1 style={S.h1}>Sources</h1>
         <div style={{ display: 'inline-flex', gap: '12px' }}>

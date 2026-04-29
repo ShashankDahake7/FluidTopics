@@ -33,6 +33,28 @@ const truncate = (str, length = 200) => {
 // Anything that isn't here is silently ignored by handleZip(); we keep the
 // list deliberately broad so DITA / Author-it / FTML / Confluence exports do
 // not slip through as "0 content files".
+// Source types whose zips carry primarily binary/attachment content rather than
+// HTML/XML topic trees. These need relaxed validation (no "no parseable
+// content" warning) and may bypass the full topic-extraction pipeline.
+const BINARY_SOURCE_TYPES = new Set([
+  'UnstructuredDocuments',
+  'MapAttachments',
+  'ExternalDocument',
+  'External',
+]);
+
+// Source types where we expect a full topic/TOC tree (HTML, DITA, XML).
+// Validation should be strict for these.
+const STRUCTURED_SOURCE_TYPES = new Set([
+  'Dita',
+  'Paligo',
+  'Confluence',
+  'Authorit',
+  'AuthoritMagellan',
+  'Html',
+  'Ftml',
+]);
+
 const detectFormat = (filename) => {
   const ext = filename.toLowerCase().split('.').pop();
   const formatMap = {
@@ -51,6 +73,21 @@ const detectFormat = (filename) => {
     docx: 'docx',
     zip: 'zip',
     txt: 'markdown',
+    // Binary / attachment formats — recognised so they aren't silently
+    // dropped by zipHandler. The ingestion pipeline treats these as opaque
+    // blobs (no topic extraction) but they count toward "has content" for
+    // source types like UnstructuredDocuments and MapAttachments.
+    pdf:  'binary',
+    pptx: 'binary',
+    xlsx: 'binary',
+    xls:  'binary',
+    ppt:  'binary',
+    csv:  'binary',
+    rtf:  'binary',
+    odt:  'binary',
+    ods:  'binary',
+    odp:  'binary',
+    epub: 'binary',
   };
   return formatMap[ext] || null;
 };
@@ -61,4 +98,6 @@ module.exports = {
   stripHtml,
   truncate,
   detectFormat,
+  BINARY_SOURCE_TYPES,
+  STRUCTURED_SOURCE_TYPES,
 };

@@ -64,8 +64,12 @@ const handleZip = (zipPath) => {
       filename,
       path: entry.entryName,
       format,
-      content: format === 'docx' ? content : content.toString('utf-8'),
+      // Binary formats (pdf, pptx, etc.) stay as Buffers — they won't be
+      // parsed for topics but their presence counts toward the manifest and
+      // satisfies the "has content" check for unstructured source types.
+      content: format === 'docx' || format === 'binary' ? content : content.toString('utf-8'),
       size: entry.header.size,
+      isBinary: format === 'binary',
     });
   });
 
