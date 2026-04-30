@@ -1480,6 +1480,7 @@ export default function AdminUsersPage() {
       active="manage-users-list"
       allowedRoles={['superadmin', 'admin']}
       allowedAdminRoles={['USERS_ADMIN']}
+      fullWidth
     >
       <ManageUsersInner />
     </AdminShell>

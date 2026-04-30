@@ -62,7 +62,7 @@ export default function ImportConfigurationPage() {
   if (loading) return null;
 
   return (
-    <AdminShell active="tenant-import" allowedRoles={['superadmin']}>
+    <AdminShell active="tenant-import" allowedRoles={['superadmin']} fullWidth>
       <div style={{ paddingBottom: '40px' }}>
         <div style={S.header}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>

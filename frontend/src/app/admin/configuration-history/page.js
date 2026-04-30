@@ -155,7 +155,7 @@ export default function ConfigurationHistoryPage() {
   }, [category, page]);
 
   return (
-    <AdminShell active="tenant-history" allowedRoles={['superadmin']}>
+    <AdminShell active="tenant-history" allowedRoles={['superadmin']} fullWidth>
       <div style={{ paddingBottom: '40px' }}>
         <h1 style={S.h1}>Configuration history</h1>
         <p style={S.subtitle}>Inspect portal configuration changes.</p>
