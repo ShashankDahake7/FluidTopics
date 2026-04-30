@@ -67,7 +67,7 @@ function useTileContextMenu() {
     e.preventDefault();
     const PAD = 6;
     const MENU_W = 180;
-    const MENU_H = 44;
+    const MENU_H = 140;
     const vw = typeof window !== 'undefined' ? window.innerWidth : 1024;
     const vh = typeof window !== 'undefined' ? window.innerHeight : 768;
     const x = Math.min(e.clientX, vw - MENU_W - PAD);
@@ -78,8 +78,9 @@ function useTileContextMenu() {
   return { menu, menuRef, open, close };
 }
 
-/* Single danger-styled "Delete" item used by both template and doc tiles. */
-function DeleteContextMenu({ menu, menuRef, label, onDelete }) {
+/* Context menu for tiles — shows Upload Icon, Remove Icon (if custom icon
+ * exists), and Delete. Only rendered for superadmins. */
+function TileContextMenu({ menu, menuRef, label, hasCustomIcon, onUploadIcon, onRemoveIcon, onDelete }) {
   if (!menu) return null;
   return (
     <div
@@ -88,6 +89,25 @@ function DeleteContextMenu({ menu, menuRef, label, onDelete }) {
       aria-label={label}
       style={{ ...styles.contextMenu, top: 0, left: 0, transform: `translate(${menu.x}px, ${menu.y}px)`, position: 'fixed' }}
     >
+      <button type="button" role="menuitem" style={styles.contextMenuItem} onClick={onUploadIcon}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <rect x="3" y="3" width="18" height="18" rx="2" />
+          <circle cx="8.5" cy="8.5" r="1.5" />
+          <path d="M21 15l-5-5L5 21" />
+        </svg>
+        <span>Upload Icon</span>
+      </button>
+      {hasCustomIcon && (
+        <button type="button" role="menuitem" style={styles.contextMenuItem} onClick={onRemoveIcon}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M21 4H8l-7 8 7 8h13a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z" />
+            <line x1="18" y1="9" x2="12" y2="15" />
+            <line x1="12" y1="9" x2="18" y2="15" />
+          </svg>
+          <span>Remove Icon</span>
+        </button>
+      )}
+      <div style={styles.contextMenuDivider} />
       <button type="button" role="menuitem" style={styles.contextMenuItemDanger} onClick={onDelete}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <polyline points="3 6 5 6 21 6" />
@@ -102,9 +122,10 @@ function DeleteContextMenu({ menu, menuRef, label, onDelete }) {
   );
 }
 
-function TemplateTile({ tpl, canDelete, onRequestDelete }) {
+function TemplateTile({ tpl, canDelete, customIconUrl, onRequestDelete, onUploadIcon, onRemoveIcon }) {
   const Icon = tpl.icon || GenericDocIcon;
   const ctx = useTileContextMenu();
+  const hasCustomIcon = !!customIconUrl;
 
   const handleContextMenu = (e) => {
     if (!canDelete) return;
@@ -116,23 +137,31 @@ function TemplateTile({ tpl, canDelete, onRequestDelete }) {
       <Link href={`/dashboard/templates/${tpl.slug}`} style={styles.tile}>
         <div style={styles.tileBox}>
           <div style={styles.tileIconBox}>
-            <Icon />
+            {hasCustomIcon ? (
+              <img src={customIconUrl} alt={tpl.title} style={styles.tileIconImg} />
+            ) : (
+              <Icon />
+            )}
           </div>
         </div>
         <div style={styles.tileLabel}>{tpl.title}</div>
       </Link>
-      <DeleteContextMenu
+      <TileContextMenu
         menu={ctx.menu}
         menuRef={ctx.menuRef}
         label={`Actions for ${tpl.title}`}
+        hasCustomIcon={hasCustomIcon}
+        onUploadIcon={() => { ctx.close(); onUploadIcon('template', tpl.slug); }}
+        onRemoveIcon={() => { ctx.close(); onRemoveIcon('template', tpl.slug); }}
         onDelete={() => { ctx.close(); onRequestDelete(tpl); }}
       />
     </div>
   );
 }
 
-function DocTile({ doc, canDelete, onRequestDelete }) {
+function DocTile({ doc, canDelete, customIconUrl, onRequestDelete, onUploadIcon, onRemoveIcon }) {
   const ctx = useTileContextMenu();
+  const hasCustomIcon = !!customIconUrl;
 
   const handleContextMenu = (e) => {
     if (!canDelete) return;
@@ -144,15 +173,22 @@ function DocTile({ doc, canDelete, onRequestDelete }) {
       <Link href={hrefForDoc(doc)} style={styles.tile}>
         <div style={styles.tileBox}>
           <div style={styles.tileIconBox}>
-            <GenericDocIcon />
+            {hasCustomIcon ? (
+              <img src={customIconUrl} alt={doc.title} style={styles.tileIconImg} />
+            ) : (
+              <GenericDocIcon />
+            )}
           </div>
         </div>
         <div style={styles.tileLabel}>{doc.title}</div>
       </Link>
-      <DeleteContextMenu
+      <TileContextMenu
         menu={ctx.menu}
         menuRef={ctx.menuRef}
         label={`Actions for ${doc.title}`}
+        hasCustomIcon={hasCustomIcon}
+        onUploadIcon={() => { ctx.close(); onUploadIcon('document', doc._id); }}
+        onRemoveIcon={() => { ctx.close(); onRemoveIcon('document', doc._id); }}
         onDelete={() => { ctx.close(); onRequestDelete(doc); }}
       />
     </div>
@@ -169,6 +205,11 @@ export default function PortalHomeContent() {
   const [pendingDelete, setPendingDelete] = useState(null);
   const [deleteError, setDeleteError] = useState('');
   const [deleting, setDeleting] = useState(false);
+
+  // Custom tile icons — keyed by "template:slug" or "document:_id"
+  const [tileIcons, setTileIcons] = useState({});
+  const fileInputRef = useRef(null);
+  const pendingUploadRef = useRef(null); // { tileType, tileKey }
   const { t } = useTranslation();
 
   const loadDocs = () => {
@@ -181,8 +222,23 @@ export default function PortalHomeContent() {
 
   useEffect(() => { loadDocs(); }, []);
 
+  // Load all custom tile icons in one request
+  const loadTileIcons = useCallback(() => {
+    api.get('/tile-icons')
+      .then((data) => {
+        const map = {};
+        (data.icons || []).forEach((i) => {
+          // Append cache-bust so the browser refetches after upload
+          map[`${i.tileType}:${i.tileKey}`] = `${i.url}?t=${Date.now()}`;
+        });
+        setTileIcons(map);
+      })
+      .catch(() => {}); // icons are optional, don't block UI
+  }, []);
+
   useEffect(() => {
     setMounted(true);
+    loadTileIcons();
     const sync = () => {
       setUser(getStoredUser());
       setHiddenTemplates(readHiddenTemplates());
@@ -196,7 +252,7 @@ export default function PortalHomeContent() {
       window.removeEventListener('focus', sync);
       window.removeEventListener('ft-auth', sync);
     };
-  }, []);
+  }, [loadTileIcons]);
 
   const isSuperadmin = mounted && user?.role === 'superadmin';
 
@@ -237,8 +293,48 @@ export default function PortalHomeContent() {
     }
   };
 
+  // ── Icon upload / remove handlers ──
+  const handleUploadIcon = (tileType, tileKey) => {
+    pendingUploadRef.current = { tileType, tileKey };
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+      fileInputRef.current.click();
+    }
+  };
+
+  const handleFileSelected = async (e) => {
+    const file = e.target.files?.[0];
+    const target = pendingUploadRef.current;
+    if (!file || !target) return;
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      await api.upload(`/tile-icons/${target.tileType}/${target.tileKey}`, formData);
+      loadTileIcons();
+    } catch (err) {
+      console.error('Icon upload failed:', err);
+    }
+  };
+
+  const handleRemoveIcon = async (tileType, tileKey) => {
+    try {
+      await api.delete(`/tile-icons/${tileType}/${tileKey}`);
+      loadTileIcons();
+    } catch (err) {
+      console.error('Icon removal failed:', err);
+    }
+  };
+
   return (
     <div style={styles.page}>
+      {/* Hidden file input for icon uploads */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        style={{ display: 'none' }}
+        onChange={handleFileSelected}
+      />
       <section style={styles.hero}>
         <div style={styles.heroInner}>
           <img src="/Group 79.png" alt="evolve. Everyday" style={styles.heroEvolve} />
@@ -267,7 +363,10 @@ export default function PortalHomeContent() {
                 key={tpl.slug}
                 tpl={tpl}
                 canDelete={isSuperadmin}
+                customIconUrl={tileIcons[`template:${tpl.slug}`] || null}
                 onRequestDelete={(t) => setPendingDelete({ kind: 'template', tpl: t })}
+                onUploadIcon={handleUploadIcon}
+                onRemoveIcon={handleRemoveIcon}
               />
             ))}
             {filtered.map((doc) => (
@@ -275,7 +374,10 @@ export default function PortalHomeContent() {
                 key={doc._id}
                 doc={doc}
                 canDelete={isSuperadmin}
+                customIconUrl={tileIcons[`document:${doc._id}`] || null}
                 onRequestDelete={(d) => setPendingDelete({ kind: 'doc', doc: d })}
+                onUploadIcon={handleUploadIcon}
+                onRemoveIcon={handleRemoveIcon}
               />
             ))}
           </div>
@@ -482,6 +584,26 @@ const styles = {
     padding: '4px',
     zIndex: 1000,
   },
+  contextMenuItem: {
+    width: '100%',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    padding: '8px 12px',
+    border: 'none',
+    background: 'transparent',
+    color: '#334155',
+    fontSize: '0.875rem',
+    fontWeight: 500,
+    borderRadius: '6px',
+    cursor: 'pointer',
+    textAlign: 'left',
+  },
+  contextMenuDivider: {
+    height: '1px',
+    background: '#e2e8f0',
+    margin: '4px 8px',
+  },
   contextMenuItemDanger: {
     width: '100%',
     display: 'flex',
@@ -496,6 +618,12 @@ const styles = {
     borderRadius: '6px',
     cursor: 'pointer',
     textAlign: 'left',
+  },
+  tileIconImg: {
+    width: '100%',
+    height: '100%',
+    objectFit: 'cover',
+    borderRadius: '8px',
   },
 
   dialogBackdrop: {

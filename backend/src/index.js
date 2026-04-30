@@ -58,6 +58,7 @@ const SecurityConfig = require('./models/SecurityConfig');
 const apiKeysRoutes = require('./routes/apiKeys');
 const importConfigRoutes = require('./routes/importConfig');
 const configHistoryRoutes = require('./routes/configHistory');
+const tileIconsRoutes = require('./routes/tileIcons');
 
 const app = express();
 
@@ -169,6 +170,7 @@ app.use('/api/security-config',  securityConfigRoutes);
 app.use('/api/api-keys',         apiKeysRoutes);
 app.use('/api/import-config',    importConfigRoutes);
 app.use('/api/config-history',   configHistoryRoutes);
+app.use('/api/tile-icons',       tileIconsRoutes);
 app.use('/',                     openSearchPublicRoutes);
 app.use('/',                     seoPublicRoutes);
 
