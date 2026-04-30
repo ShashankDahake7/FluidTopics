@@ -359,7 +359,7 @@ async function getVocabularyDownloadStream(id) {
 async function safeS3Delete(key) {
   if (!key) return;
   try {
-    await s3.deleteOne({ bucket: BUCKET(), key });
+    await s3.deleteFromAllBuckets(key);
   } catch (err) {
     console.warn('vocabularyService: failed to delete S3 object', key, err.message);
   }

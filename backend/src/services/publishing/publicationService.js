@@ -962,7 +962,15 @@ async function listPublications({ search, status, source, from, to, page = 1, li
     const rx = new RegExp(escapeRegex(search), 'i');
     q.$or = [{ name: rx }, { originalFilename: rx }, { sourceLabel: rx }];
   }
-  if (status && status !== 'all') q.status = status;
+  if (status && status !== 'all') {
+    if (status === 'running') {
+      q.status = { $in: ['uploaded', 'extracting', 'validating'] };
+    } else if (status.includes(',')) {
+      q.status = { $in: status.split(',').map((s) => s.trim()) };
+    } else {
+      q.status = status;
+    }
+  }
   if (source) {
     // Resolve the wire `source` query value to the canonical `sourceId` ref
     // when possible — so the Sources page "publications count" link can pass
@@ -1143,17 +1151,85 @@ async function presignFile(id, relPath) {
   });
 }
 
+async function cleanHistory() {
+  const query = { status: { $nin: ['uploaded', 'extracting', 'validating'] } };
+  const cursor = Publication.find(query).cursor();
+  let count = 0;
+  for await (const pub of cursor) {
+    await deletePublication(pub._id);
+    count++;
+  }
+  return { deletedCount: count };
+}
+
 async function deletePublication(id) {
   const pub = await Publication.findById(id);
   if (!pub) return false;
 
+  // 1. Clean up the raw zip.
+  // For CAS zips (raw/<hash>...), we only delete from S3 if no other
+  // publication references the same contentHash. Legacy zips (per-pub
+  // layout) are always deleted.
   if (pub.raw?.key) {
-    try { await s3.deleteOne({ bucket: pub.raw.bucket, key: pub.raw.key }); }
-    catch (err) { console.warn('deletePublication raw cleanup warning:', err.message); }
+    const isCas = pub.raw.key.startsWith('raw/');
+    let shouldDeleteRaw = true;
+    if (isCas && pub.contentHash) {
+      const others = await Publication.countDocuments({
+        contentHash: pub.contentHash,
+        _id: { $ne: pub._id },
+      });
+      if (others > 0) shouldDeleteRaw = false;
+    }
+    if (shouldDeleteRaw) {
+      try {
+        await s3.deleteFromAllBuckets(pub.raw.key);
+      } catch (err) {
+        console.warn('deletePublication raw cleanup warning:', err.message);
+      }
+    }
   }
+
+  // 2. Clean up extracted files.
+  // Two tracks: CAS-ed blobs (shared across publications) and legacy
+  // per-publication files.
+  const manifest = pub.extracted?.manifest || [];
+  let ExtractedFileBlob;
+  try {
+    ExtractedFileBlob = require('../../models/ExtractedFileBlob');
+  } catch (_) {
+    /* fallback to legacy-only cleanup if model is missing */
+  }
+
+  if (ExtractedFileBlob) {
+    for (const entry of manifest) {
+      if (entry.key && entry.key.startsWith('extracted/')) {
+        // Atomic decrement of the shared refcount. Only delete from S3
+        // when this was the last publication holding the blob.
+        try {
+          const blob = await ExtractedFileBlob.findOneAndUpdate(
+            { key: entry.key },
+            { $inc: { refCount: -1 } },
+            { new: true }
+          );
+          if (blob && blob.refCount <= 0) {
+            await s3.deleteFromAllBuckets(entry.key);
+            await ExtractedFileBlob.deleteOne({ _id: blob._id });
+          }
+        } catch (err) {
+          console.warn('deletePublication CAS cleanup warning:', err.message);
+        }
+      }
+    }
+  }
+
+  // Legacy cleanup: wipe the entire per-publication prefix in all buckets.
+  // This catches files from older versions that didn't use CAS.
   if (pub.extracted?.prefix) {
-    try { await s3.deletePrefix({ bucket: pub.extracted.bucket, prefix: pub.extracted.prefix }); }
-    catch (err) { console.warn('deletePublication extracted cleanup warning:', err.message); }
+    try {
+      await s3.deletePrefixFromAllBuckets(pub.extracted.prefix);
+    } catch (err) {
+      console.warn('deletePublication extracted cleanup warning:', err.message);
+    }
   }
 
   // Cascade: drop the parsed Document/Topic graph the upload pipeline created
@@ -1284,4 +1360,5 @@ module.exports = {
   presignArchive,
   presignFile,
   deletePublication,
+  cleanHistory,
 };

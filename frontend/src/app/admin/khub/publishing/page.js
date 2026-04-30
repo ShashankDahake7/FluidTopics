@@ -94,6 +94,7 @@ export default function PublishingPage() {
 
   // Live API state. `rows` mirrors the original local shape via mapApiRow().
   const [rows, setRows] = useState([]);
+  const [ongoingJobs, setOngoingJobs] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState('');
@@ -105,7 +106,6 @@ export default function PublishingPage() {
 
   // Drawers / modals
   const [selectedJob, setSelectedJob] = useState(null);
-  const [scheduleOpen, setScheduleOpen] = useState(false);
   const [cleanOpen, setCleanOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
   const [popoverOpen, setPopoverOpen] = useState(false);
@@ -154,6 +154,29 @@ export default function PublishingPage() {
 
     return () => { cancelled = true; };
   }, [search, date, status, page, pageSize, sortKey, sortDir, refreshKey]);
+
+  // Auto-refresh while any publication in the current page OR any ongoing
+  // job globally is still running.
+  useEffect(() => {
+    const hasInflight = rows.some((r) => r.status === 'run') || ongoingJobs.length > 0;
+    if (!hasInflight) return undefined;
+
+    const t = setInterval(refresh, 5000);
+    return () => clearInterval(t);
+  }, [rows, ongoingJobs]);
+
+  // Fetch ongoing jobs separately so they can be shown in the 'Jobs' section
+  // regardless of the History table's paging/filtering.
+  useEffect(() => {
+    let cancelled = false;
+    api.get('/publications?status=running&limit=50')
+      .then((data) => {
+        if (cancelled) return;
+        setOngoingJobs(Array.isArray(data?.items) ? data.items.map(mapApiRow) : []);
+      })
+      .catch(() => { if (!cancelled) setOngoingJobs([]); });
+    return () => { cancelled = true; };
+  }, [refreshKey]);
 
   // Type column is purely cosmetic right now (everything is "Publication");
   // applying the filter client-side avoids a server-side enum that doesn't
@@ -214,13 +237,6 @@ export default function PublishingPage() {
           <p style={S.subtitle}>Publish content, track ongoing jobs, and view job history.</p>
         </div>
         <div style={{ display: 'inline-flex', gap: '12px' }}>
-          <button type="button" style={S.linkBtn} onClick={() => setScheduleOpen(true)}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M21 12a9 9 0 1 1-3-6.7L21 8" />
-              <polyline points="21 3 21 8 16 8" />
-            </svg>
-            <span>Schedule a reprocess</span>
-          </button>
           <button type="button" style={S.primaryBtn} onClick={() => setPublishOpen(true)}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <line x1="12" y1="5" x2="12" y2="19" />
@@ -234,7 +250,34 @@ export default function PublishingPage() {
       {/* Jobs section */}
       <section style={{ marginTop: '12px' }}>
         <h2 style={S.h2}>Jobs</h2>
-        <div style={S.emptyState}>There are no ongoing jobs.</div>
+        {ongoingJobs.length === 0 ? (
+          <div style={S.emptyState}>There are no ongoing jobs.</div>
+        ) : (
+          <div style={S.tableWrap}>
+            <table style={S.table}>
+              <thead>
+                <tr>
+                  <th style={{ ...S.th, width: '70px' }}>Status</th>
+                  <th style={S.th}>Started</th>
+                  <th style={S.th}>Name</th>
+                  <th style={S.th}>Source</th>
+                  <th style={S.th}>User</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ongoingJobs.map((j) => (
+                  <tr key={j.id} style={S.tr} onClick={() => setSelectedJob(j)}>
+                    <td style={S.td}><StatusIcon kind="run" /></td>
+                    <td style={S.td}>{j.started}</td>
+                    <td style={{ ...S.td, color: '#0f172a' }}>{j.name}</td>
+                    <td style={S.td}>{j.source}</td>
+                    <td style={S.td}>{j.user}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
 
       {/* History section */}
@@ -374,7 +417,6 @@ export default function PublishingPage() {
         onClose={() => setSelectedJob(null)}
         onChanged={refresh}
       />
-      <ScheduleReprocessDrawer open={scheduleOpen} onClose={() => setScheduleOpen(false)} />
 
       <ConfirmModal
         open={cleanOpen}
@@ -382,7 +424,16 @@ export default function PublishingPage() {
         body="All reports will be deleted. This action cannot be undone. This will not cancel jobs in progress or scheduled."
         confirmLabel="Clean"
         onCancel={() => setCleanOpen(false)}
-        onConfirm={() => { setCleanOpen(false); refresh(); }}
+        onConfirm={async () => {
+          try {
+            await api.post('/publications/clean');
+            setCleanOpen(false);
+            refresh();
+          } catch (e) {
+            console.error('Failed to clean history:', e);
+            setCleanOpen(false);
+          }
+        }}
       />
 
       <PublishContentModal
@@ -1457,101 +1508,7 @@ function InfoCell({ label, value, copyable }) {
 }
 
 // ── Schedule reprocess drawer ───────────────────────────────────────────────
-function ScheduleReprocessDrawer({ open, onClose }) {
-  const [date, setDate] = useState('');
-  const [hour, setHour] = useState('');
-  const [pending, setPending] = useState([]);
-  const [delIdx, setDelIdx] = useState(null);
 
-  const hours = useMemo(() => Array.from({ length: 24 }, (_, h) => {
-    const ampm = h < 12 ? 'AM' : 'PM';
-    const hh = h % 12 === 0 ? 12 : h % 12;
-    return { value: String(h), label: `${String(hh).padStart(2, '0')}:00 ${ampm}` };
-  }), []);
-
-  const canSchedule = !!date && hour !== '' && pending.length < 5;
-
-  const schedule = () => {
-    if (!canSchedule) return;
-    setPending([...pending, {
-      date,
-      hour: hours.find((h) => h.value === hour)?.label || hour,
-      user: 'Super Admin',
-    }]);
-    setDate(''); setHour('');
-  };
-
-  return (
-    <>
-      <RightDrawer open={open} title="Scheduled reprocess" width={1100} onClose={onClose}>
-        <div style={{ display: 'flex', alignItems: 'flex-end', gap: '14px', marginBottom: '24px' }}>
-          <div style={{ flex: 2 }}>
-            <label style={{ fontSize: '0.78rem', color: '#94a3b8', display: 'block', marginBottom: '4px' }}>Pick a reprocess date</label>
-            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={S.dateInput} />
-          </div>
-          <div style={{ flex: 1, position: 'relative' }}>
-            <label style={{ fontSize: '0.78rem', color: '#94a3b8', display: 'block', marginBottom: '4px' }}>Select hour</label>
-            <select disabled={!date} value={hour} onChange={(e) => setHour(e.target.value)} style={{ ...S.dateInput, paddingRight: '28px', appearance: 'none', cursor: date ? 'pointer' : 'not-allowed' }}>
-              <option value="">Select hour</option>
-              {hours.map((h) => <option key={h.value} value={h.value}>{h.label}</option>)}
-            </select>
-            <span aria-hidden="true" style={{ position: 'absolute', right: '10px', top: '34px', color: '#94a3b8', pointerEvents: 'none' }}>▾</span>
-          </div>
-          <button type="button" disabled={!canSchedule} onClick={schedule}
-                  style={{ ...S.primaryBtn, height: '42px', opacity: canSchedule ? 1 : 0.55, cursor: canSchedule ? 'pointer' : 'not-allowed' }}>
-            Schedule
-          </button>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-          <h3 style={S.drawerSectionTitle}>Pending scheduled reprocess</h3>
-          <span style={{ fontSize: '0.85rem', color: '#94a3b8' }}>Maximum 5 scheduled reprocesses allowed</span>
-        </div>
-        <div style={S.tableWrap}>
-          <table style={S.table}>
-            <thead>
-              <tr>
-                <th style={S.th}>Date</th>
-                <th style={S.th}>User</th>
-                <th style={{ ...S.th, width: '100px' }}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {pending.length === 0 ? (
-                <tr><td colSpan={3} style={S.emptyTableCell}>No scheduled processing found</td></tr>
-              ) : pending.map((p, i) => (
-                <tr key={i} style={S.tr}>
-                  <td style={S.td}>{p.date} {p.hour}</td>
-                  <td style={S.td}>{p.user}</td>
-                  <td style={{ ...S.td, textAlign: 'center' }}>
-                    <button type="button" aria-label="Delete" onClick={() => setDelIdx(i)} style={{ ...S.iconBtn, color: '#a21caf' }}>
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <polyline points="3 6 5 6 21 6" />
-                        <path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6" />
-                      </svg>
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </RightDrawer>
-
-      <ConfirmModal
-        open={delIdx !== null}
-        title="Delete scheduled reprocess?"
-        body="This cannot be undone."
-        confirmLabel="Delete"
-        onCancel={() => setDelIdx(null)}
-        onConfirm={() => {
-          setPending((p) => p.filter((_, i) => i !== delIdx));
-          setDelIdx(null);
-        }}
-      />
-    </>
-  );
-}
 
 // ── Styles ──────────────────────────────────────────────────────────────────
 const S = {

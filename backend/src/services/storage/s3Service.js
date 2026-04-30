@@ -194,6 +194,25 @@ async function deleteOne({ bucket, key }) {
   }));
 }
 
+/**
+ * Deletes a single key from all configured buckets simultaneously.
+ * Useful when the caller doesn't want to track which bucket owns the object.
+ */
+async function deleteFromAllBuckets(key) {
+  if (!key) return;
+  const buckets = Array.from(new Set([config.s3.rawBucket, config.s3.extractedBucket])).filter(Boolean);
+  await Promise.all(buckets.map(bucket => deleteOne({ bucket, key }).catch(() => {})));
+}
+
+/**
+ * Deletes every object under a prefix from all configured buckets.
+ */
+async function deletePrefixFromAllBuckets(prefix) {
+  if (!prefix) return;
+  const buckets = Array.from(new Set([config.s3.rawBucket, config.s3.extractedBucket])).filter(Boolean);
+  await Promise.all(buckets.map(bucket => deletePrefix({ bucket, prefix }).catch(() => {})));
+}
+
 // ── Presign ────────────────────────────────────────────────────────────────
 async function presignDownload({ bucket, key, filename, expiresInSeconds }) {
   assertS3Configured();
@@ -235,5 +254,7 @@ module.exports = {
   listAllObjects,
   deletePrefix,
   deleteOne,
+  deleteFromAllBuckets,
+  deletePrefixFromAllBuckets,
   presignDownload,
 };

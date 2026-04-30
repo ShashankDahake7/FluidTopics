@@ -3,6 +3,7 @@ const upload = require('../middleware/upload');
 const { auth, requireRole } = require('../middleware/auth');
 const { ingestFile } = require('../services/ingestion/ingestionService');
 const Document = require('../models/Document');
+const publicationService = require('../services/publishing/publicationService');
 
 const router = express.Router();
 
@@ -106,11 +107,23 @@ router.delete('/:id', auth, requireRole('admin'), async (req, res, next) => {
 
     const Topic = require('../models/Topic');
     // Topic deletes propagate to the Atlas Search index automatically.
+    // If this document was created via the publishing pipeline, we should
+    // use the publicationService to clean up all associated S3 storage,
+    // including raw archives and extracted CAS blobs.
+    const Publication = require('../models/Publication');
+    const linkedPubs = await Publication.find({ documentId: doc._id });
+    for (const pub of linkedPubs) {
+      await publicationService.deletePublication(pub._id);
+    }
+
+    // Secondary cleanup: if there are topics not caught by the publication
+    // cascade (e.g. from legacy manual uploads), drop them now.
     await Topic.deleteMany({ documentId: doc._id });
 
+    // Finally, drop the document record.
     await Document.findByIdAndDelete(doc._id);
 
-    res.json({ message: 'Document and associated topics deleted', id: doc._id });
+    res.json({ message: 'Document and all associated topics and storage removed', id: doc._id });
   } catch (error) {
     next(error);
   }

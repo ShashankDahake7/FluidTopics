@@ -160,6 +160,14 @@ router.get('/:id/files', auth, adminOrEditor, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// DELETE /api/publications/clean — wipes all non-running publications.
+router.post('/clean', auth, requireRole('admin'), async (req, res, next) => {
+  try {
+    const { deletedCount } = await publicationService.cleanHistory();
+    res.json({ message: `Cleaned ${deletedCount} publications`, deletedCount });
+  } catch (err) { next(err); }
+});
+
 // DELETE /api/publications/:id — wipes the raw zip, the extracted prefix,
 // and all log rows. Restricted to admins.
 router.delete('/:id', auth, requireRole('admin'), async (req, res, next) => {

@@ -8,7 +8,7 @@ const Feedback = require('../models/Feedback');
 const config = require('../config/env');
 const { auth, requireRole } = require('../middleware/auth');
 
-const { putFile, getObjectStream, deleteOne } = require('../services/storage/s3Service');
+const { putFile, getObjectStream, deleteFromAllBuckets } = require('../services/storage/s3Service');
 
 const router = express.Router();
 
@@ -192,7 +192,7 @@ router.delete('/:id', auth, requireRole('admin', 'editor'), async (req, res, nex
     if (!d) return res.status(404).json({ error: 'Not found' });
     if (d.filePath) {
       try {
-        await deleteOne({ bucket: config.s3.extractedBucket, key: d.filePath });
+        await deleteFromAllBuckets(d.filePath);
       } catch { /* noop */ }
     }
     res.json({ message: 'Deleted' });
