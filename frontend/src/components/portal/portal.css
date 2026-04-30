@@ -827,9 +827,6 @@ nav mark {
 .portal-signin-card-logo {
   height: 38px;
   width: auto;
-  /* The source logo is white-on-transparent (designed for the dark header/footer);
-     invert it so the wordmark reads as dark on the white sign-in card. */
-  filter: invert(1);
 }
 
 .portal-signin-roles {
@@ -869,7 +866,9 @@ nav mark {
 
 .portal-signin-role-icon {
   flex-shrink: 0;
-  color: #1976d2;
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
 }
 
 .portal-signin-title {

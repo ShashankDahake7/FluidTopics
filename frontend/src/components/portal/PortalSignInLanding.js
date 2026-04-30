@@ -13,10 +13,7 @@ const ROLES = [
 
 function DbIcon() {
   return (
-    <svg className="portal-signin-role-icon" width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
-      <rect x="3" y="3" width="18" height="18" rx="3" fill="none" stroke="currentColor" strokeWidth="1.6" />
-      <path d="M8 8h8M8 12h5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-    </svg>
+    <img src="/image.png" alt="" className="portal-signin-role-icon" />
   );
 }
 
@@ -72,7 +69,7 @@ export default function PortalSignInLanding({ onSuccess }) {
       <div className="portal-signin-body">
         <div className="portal-signin-card">
           <div className="portal-signin-card-brand">
-            <img src="/ft-header-logo.png" alt="Darwinbox" className="portal-signin-card-logo" />
+            <img src="/Darwinbox-blue-black-1536x354.png" alt="Darwinbox" className="portal-signin-card-logo" />
           </div>
 
           <div className="portal-signin-roles" role="group" aria-label="Sign-in context">

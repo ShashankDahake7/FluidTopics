@@ -123,6 +123,20 @@ async function buildTransporter(cfgOverride = null) {
 
   // sendingMethod === 'internal' → JSON transport. Records the message body
   // in `info.message` (a JSON string) without performing any network I/O.
+  if (config.nodeEnv !== 'production') {
+    const testAccount = await nodemailer.createTestAccount();
+    const transport = nodemailer.createTransport({
+      host: 'smtp.ethereal.email',
+      port: 587,
+      secure: false,
+      auth: {
+        user: testAccount.user,
+        pass: testAccount.pass,
+      },
+    });
+    return { transport, fromAddress: testAccount.user, isEthereal: true };
+  }
+
   const transport = nodemailer.createTransport({ jsonTransport: true });
   return { transport, fromAddress: INTERNAL_FROM };
 }
@@ -174,6 +188,13 @@ async function sendMail({ to, subject, html, text, attachments = [], headers = {
     html:    html || undefined,
     headers,
   });
+
+  if (built.isEthereal) {
+    console.log('\n----------------------------------------------------');
+    console.log('✉️  REAL EMAIL PREVIEW: Click the link below to view the email');
+    console.log(nodemailer.getTestMessageUrl(info));
+    console.log('----------------------------------------------------\n');
+  }
 
   return {
     messageId:   info.messageId || '',
