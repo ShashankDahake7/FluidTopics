@@ -46,7 +46,7 @@ function MostViewedDocsCard({ docs = [] }) {
             {docs.length === 0 && (
               <tr>
                 <td colSpan={3} style={{ padding: '20px', textAlign: 'center', color: '#94a3b8' }}>
-                  No topic views yet.
+                  No document views yet.
                 </td>
               </tr>
             )}
@@ -60,7 +60,7 @@ function MostViewedDocsCard({ docs = [] }) {
   );
 }
 
-function SessionsChart({ dailyStats = [] }) {
+function SessionsChart({ statsData = [], type = 'daily' }) {
   const chartRef = useRef(null);
   const [hover, setHover] = useState(null);
 
@@ -75,12 +75,13 @@ function SessionsChart({ dailyStats = [] }) {
   const innerH = H - PAD_T - PAD_B;
 
   const max = useMemo(() => {
-    if (!dailyStats.length) return 100;
-    const v = Math.max(...dailyStats.map((s) => s.views));
+    if (!statsData.length) return 10;
+    const v = Math.max(...statsData.map((s) => s.views));
+    if (v === 0) return 10;
     // Round up with headroom
     const step = Math.max(10, Math.pow(10, Math.floor(Math.log10(v || 1))));
-    return Math.ceil((v * 1.2) / step) * step;
-  }, [dailyStats]);
+    return Math.max(10, Math.ceil((v * 1.2) / step) * step);
+  }, [statsData]);
 
   const ticks = useMemo(() => {
     const step = max / 4;
@@ -89,7 +90,7 @@ function SessionsChart({ dailyStats = [] }) {
     return out;
   }, [max]);
 
-  const N = Math.max(7, dailyStats.length);
+  const N = Math.max(7, statsData.length);
   const slot = innerW / N;
   const barW = slot * 0.7;
 
@@ -119,15 +120,16 @@ function SessionsChart({ dailyStats = [] }) {
         <text x={W - PAD_R + 6} y={PAD_T + innerH} dominantBaseline="middle" fontSize="12" fill="#6E7079">DATE</text>
 
         {/* Bars */}
-        {dailyStats.map((s, i) => {
+        {statsData.map((s, i) => {
           const h = (s.views / max) * innerH;
           const x = PAD_L + i * slot + (slot - barW) / 2;
           const y = PAD_T + innerH - h;
-          const isLast = i === dailyStats.length - 1;
+          const isLast = i === statsData.length - 1;
+          const label = type === 'daily' ? s.date : s.month;
           return (
             <g
-              key={s.date}
-              onMouseEnter={() => setHover({ i, x: x + barW / 2, y, value: s.views, label: s.date })}
+              key={label}
+              onMouseEnter={() => setHover({ i, x: x + barW / 2, y, value: s.views, label })}
               onMouseLeave={() => setHover(null)}
             >
               <rect
@@ -145,23 +147,32 @@ function SessionsChart({ dailyStats = [] }) {
                 width={barW + 2}
                 height={innerH}
                 fill="rgba(0,0,0,0)"
-                onMouseEnter={() => setHover({ i, x: x + barW / 2, y, value: s.views, label: s.date })}
+                onMouseEnter={() => setHover({ i, x: x + barW / 2, y, value: s.views, label })}
               />
             </g>
           );
         })}
 
-        {/* x-axis labels (every ~7th day) */}
-        {dailyStats.map((s, i) => {
-          if (i % Math.max(1, Math.floor(N / 5)) !== 0 && i !== N - 1) return null;
+        {/* x-axis labels */}
+        {statsData.map((s, i) => {
+          if (i % Math.max(1, Math.floor(N / 6)) !== 0 && i !== N - 1) return null;
           const cx = PAD_L + i * slot + slot / 2;
-          // simplify YYYY-MM-DD to MM-DD
-          const shortDate = s.date.substring(5);
+          
+          let displayLabel = '';
+          if (type === 'daily') {
+            displayLabel = s.date.substring(5); // MM-DD
+          } else {
+            // s.month is YYYY-MM
+            const [yr, mn] = s.month.split('-');
+            const shortMn = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][parseInt(mn, 10) - 1];
+            displayLabel = `${shortMn} ${yr}`;
+          }
+
           return (
-            <g key={`lbl-${s.date}`}>
+            <g key={`lbl-${type === 'daily' ? s.date : s.month}`}>
               <line x1={cx} y1={PAD_T + innerH} x2={cx} y2={PAD_T + innerH + 5} stroke="#6E7079" />
               <text x={cx} y={PAD_T + innerH + 18} fontSize="12" fill="#6E7079" textAnchor="middle">
-                {shortDate}
+                {displayLabel}
               </text>
             </g>
           );
@@ -194,6 +205,7 @@ function monthFull(label) {
 
 export default function AnalyticsHomePage() {
   const [stats, setStats] = useState(null);
+  const [chartType, setChartType] = useState('daily'); // 'daily' or 'monthly'
 
   useEffect(() => {
     api.get('/analytics/dashboard?days=30').then(setStats).catch(() => {});
@@ -210,15 +222,34 @@ export default function AnalyticsHomePage() {
         <div style={S.row}>
           <div style={S.recapColumn}>
             <div style={S.colTitle}>Views in last 30 days</div>
-            <TrendCard label="Document views" value={stats ? Math.round(stats.totalViews * 0.15) : 0} trend={0} />
+            <TrendCard label="Document views" value={stats?.documentViews || 0} trend={0} />
             <TrendCard label="Topic views" value={stats?.totalViews || 0} trend={0} />
-            <MostViewedDocsCard docs={stats?.topViewedTopics || []} />
+            <MostViewedDocsCard docs={stats?.topViewedDocuments || []} />
           </div>
 
           <div style={S.chartColumn}>
-            <div style={S.colTitle}>Views Daily</div>
+            <div style={S.chartHeader}>
+              <div style={S.colTitle}>Sessions</div>
+              <div style={S.toggleWrapper}>
+                <button
+                  style={{ ...S.toggleBtn, ...(chartType === 'daily' ? S.toggleBtnActive : {}) }}
+                  onClick={() => setChartType('daily')}
+                >
+                  Daily
+                </button>
+                <button
+                  style={{ ...S.toggleBtn, ...(chartType === 'monthly' ? S.toggleBtnActive : {}) }}
+                  onClick={() => setChartType('monthly')}
+                >
+                  Monthly
+                </button>
+              </div>
+            </div>
             <div style={{ ...S.card, padding: '14px 18px 18px' }}>
-              <SessionsChart dailyStats={stats?.dailyStats || []} />
+              <SessionsChart
+                statsData={chartType === 'daily' ? (stats?.dailyStats || []) : (stats?.monthlyStats || [])}
+                type={chartType}
+              />
             </div>
           </div>
         </div>
@@ -340,5 +371,32 @@ const S = {
     pointerEvents: 'none',
     whiteSpace: 'nowrap',
     boxShadow: '0 1px 8px rgba(0, 0, 0, 0.18)',
+  },
+  chartHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  toggleWrapper: {
+    display: 'flex',
+    background: '#e2e8f0',
+    borderRadius: '6px',
+    padding: '2px',
+  },
+  toggleBtn: {
+    background: 'transparent',
+    border: 'none',
+    padding: '4px 12px',
+    fontSize: '0.8rem',
+    fontWeight: 600,
+    color: '#475569',
+    cursor: 'pointer',
+    borderRadius: '4px',
+    transition: 'all 0.2s',
+  },
+  toggleBtnActive: {
+    background: '#ffffff',
+    color: '#0f172a',
+    boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
   },
 };

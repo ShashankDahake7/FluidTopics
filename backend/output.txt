@@ -1,0 +1,500 @@
+Structured Documents: [
+  {
+    title: 'Attendance (4)',
+    _id: new ObjectId('69f0abf48e501c96cd2b058d')
+  },
+  {
+    title: 'Attendance (4)',
+    _id: new ObjectId('69f0d9bff507bf097d4d40b0')
+  },
+  {
+    title: 'Attendance (4)',
+    _id: new ObjectId('69f0dab80337d8a82f6a9168')
+  },
+  {
+    title: 'Attendance (4)',
+    _id: new ObjectId('69f0dbc72689e11e453d0b9c')
+  },
+  {
+    title: 'Attendance (4)',
+    _id: new ObjectId('69f0dd56496bdfad7a32a9fc')
+  },
+  {
+    title: 'Attendance (4)',
+    _id: new ObjectId('69f0e41823ea55e941d9cc11')
+  },
+  {
+    title: 'Attendance (4)',
+    _id: new ObjectId('69f0e430d980304d797f59c3')
+  },
+  {
+    title: 'Attendance (4)',
+    _id: new ObjectId('69f0e5f201f39e332086b46e')
+  },
+  {
+    title: 'Attendance (4)',
+    _id: new ObjectId('69f0e70fe8487ff03ed14b3d')
+  },
+  {
+    title: 'Attendance (4)',
+    _id: new ObjectId('69f0e8a3675813c7c5566fc5')
+  },
+  {
+    title: 'Attendance (4)',
+    _id: new ObjectId('69f0eb9685942dac82f16d44')
+  },
+  {
+    title: 'Attendance',
+    _id: new ObjectId('69f1a155c85c385d1680f520')
+  }
+]
+Document: Attendance (4), Total Topic Views: 0
+Document: Attendance (4), Total Topic Views: 0
+Document: Attendance (4), Total Topic Views: 0
+Document: Attendance (4), Total Topic Views: 0
+Document: Attendance (4), Total Topic Views: 0
+Document: Attendance (4), Total Topic Views: 0
+Document: Attendance (4), Total Topic Views: 0
+Document: Attendance (4), Total Topic Views: 0
+Document: Attendance (4), Total Topic Views: 0
+Document: Attendance (4), Total Topic Views: 0
+Document: Attendance (4), Total Topic Views: 0
+Document: Attendance, Total Topic Views: 0
+Unstructured Documents: []
+Topics named Attendance: [
+  {
+    title: 'Attendance',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Attendance Policies',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Create an Attendance Policy',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Edit an Attendance Policy',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'View Attendance Policy Assignment',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Export Attendance Policies',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Clone an Attendance Policy',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Delete an Attendance Policy',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Attendance Policy General Settings',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Set Assignment Type for an Attendance Policy',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Marking Attendance By',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Attendance Regularization',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Configure Weekly Off Limits in an Attendance Policy',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Attendance Policy Break Settings',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Attendance Policy Leave Deduction Settings',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: "Employees' Attendance Page View and Request Settings",
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Attendance Page View Settings',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Attendance Request Settings',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Attendance Regularization',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Shift Change and Attendance Request',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Attendance Settings',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Configure Attendance Settings',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Attendance Settings Fields',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Configure Attendance Settings',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Restrict Overlapping Attendance Punches',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Export Attendance Settings',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Extended Attendance Settings',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Create an Extended Attendance Setting',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Extended Attendance Settings Fields',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Set the Assignment Type for an Extended Attendance Setting',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Restrict Attendance Regularization',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Set Freeze Date for Leave and Attendance',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Edit an Extended Attendance Setting',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Enable an Extended Attendance Setting',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Disable an Extended Attendance Setting',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Clone an Extended Attendance Setting',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Delete an Extended Attendance Setting',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Attendance Reasons',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Enable Attendance Reason Autonumbering',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Download Attendance Reasons',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Archive Attendance Reasons',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Attendance Import',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Attendance Overtime Threshold Import',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Attendance Overtime Threshold Import',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Attendance Import',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Attendance Fields',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Attendance Back Dated',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Attendance Back Dated Fields',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Attendance Notifications',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Attendance Reports',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Generate an Attendance Report',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Types of Attendance Reports',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'All Attendance Punches Details Report Fields',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Attendance Assignments Report Fields',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Attendance Location Summary Report Fields',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Attendance Policy Variance Report Fields',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Fields in the Daily Attendance Roster Summary Report',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'New Datewise Attendance Status Report Fields',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Attendance Overtime Threshold Report Fields',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Export an Attendance Report',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'FAQs - Attendance',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: "Display Short Leave Duration in Employee's Attendance Page",
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Restrict Overtime and Comp Off Generation on Days with Specific Attendance Request Types',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: "Bulk Regularize an Employee's Attendance as an Admin",
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Configure Attendance Setting to Synchronize with Pay Group Settings',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Assign Codes Manually or Through Autonumbering for Leave, Attendance, and Timesheet Policies',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Duplicate Attendance, Leave, and Timesheet Policies',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Generate an Attendance Summary Report',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Viewing the Attendance Register',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Record Break Duration Through Attendance Requests',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Clock Out when Break Deviations and Attestations are Enabled in Attendance Policy',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'View the Attendance Register',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Raise On Behalf Attendance Requests',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: "Employee's Time Management Attendance Page",
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'How to Enable Attendance Requests for Future Date',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Attendance Master Report',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Attendance Request Approval Section',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Attendance Troubleshooting Guides',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'How to allow employees to raise requests for revoke of approved attendance request?',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: "How to check an Employee's Attendance Punch Details for the Month?",
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'How to fetch attendance status report for a Duration/Custom range?',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'How to fetch changes in attendance policy assigned to an employee?',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'How to Stop future dated Attendance Requests from employees?',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Manager is Unable to Edit Back-Dated Attendance',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Managers are unable to apply for attendance requests on behalf of their reportees',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'Unable to apply for attendance request for the past days',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  },
+  {
+    title: 'What is Mark Attendance Based On used for?',
+    viewCount: 0,
+    docId: new ObjectId('69f1a155c85c385d1680f520')
+  }
+]

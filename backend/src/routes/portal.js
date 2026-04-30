@@ -201,6 +201,9 @@ router.get('/documents/:id', optionalAuth, async (req, res, next) => {
 
     if (!doc) return res.status(404).json({ error: 'Not found' });
 
+    // Increment document view count independently from topics
+    Document.updateOne({ _id: req.params.id }, { $inc: { viewCount: 1 } }).catch(() => {});
+
     const topicQuery = { documentId: req.params.id };
     const filters = getUserFilters(req);
     // If the user picked specific topics, restrict the TOC to those — but
@@ -630,6 +633,19 @@ router.get('/topics/:id', optionalAuth, async (req, res, next) => {
     if (topic.accessLevel === 'admin' && !['admin', 'superadmin'].includes(req.user?.role)) {
       return res.status(403).json({ error: 'Insufficient permissions' });
     }
+
+    // Increment view count
+    Topic.updateOne({ _id: req.params.id }, { $inc: { viewCount: 1 } }).catch(() => {});
+    
+    // Track view event
+    const { trackEvent } = require('../services/analytics/analyticsService');
+    trackEvent({
+      eventType: 'view',
+      userId: req.user?._id || null,
+      data: { topicId: topic._id, documentId: topic.documentId },
+      userAgent: req.headers['user-agent'],
+      ip: req.ip,
+    }).catch(() => {});
 
     res.json({ topic });
   } catch (err) {

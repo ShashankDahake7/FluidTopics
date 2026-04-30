@@ -1,6 +1,7 @@
 'use client';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import AnalyticsShell from '@/components/admin/AnalyticsShell';
+import api from '@/lib/api';
 
 /* ------------------------------ Constants ------------------------------ */
 
@@ -22,39 +23,11 @@ const MONTH_LABELS = [
  * Mock value series are derived from the chart geometry shown in the blueprint
  * (Y-axis 0–18,000, last bucket = ongoing partial period).
  */
-const SOURCE_TYPES = [
-  {
-    key: 'direct',
-    label: 'Direct',
-    color: '#9D207B',
-    description:
-      'Unknown origin, mainly clicked browser bookmarks or URL typed manually into the browser.',
-    values: [13120, 9017, 10177, 11020, 13632, 12691, 11223, 13721, 14033, 10929, 14375, 11328, 10857, 11778, 11815, 10201, 9779, 12292, 16841, 9335],
-  },
-  {
-    key: 'organic',
-    label: 'Organic',
-    color: '#CFB017',
-    description:
-      'Unpaid search result, via a search engine such as Google, Bing, Yahoo, etc.',
-    values: [267, 165, 140, 199, 475, 185, 274, 201, 213, 239, 301, 345, 273, 252, 300, 265, 289, 312, 326, 292],
-  },
-  {
-    key: 'referral',
-    label: 'Referral',
-    color: '#361FAD',
-    description:
-      'Paid search ads (SEA), or websites that are not search engines nor social media.',
-    values: [3302, 3389, 3505, 3873, 5440, 4320, 3164, 3340, 4314, 4023, 4031, 3732, 3128, 4350, 4223, 2290, 3639, 2750, 3848, 2923],
-  },
-  {
-    key: 'social',
-    label: 'Social',
-    color: '#45A191',
-    description:
-      'Social network platform such as Facebook, Twitter, LinkedIn, etc.',
-    values: [0, 0, 0, 0, 0, 3, 2, 0, 0, 0, 0, 1, 2, 0, 0, 0, 0, 0, 1, 0],
-  },
+const SOURCE_TYPE_META = [
+  { key: 'direct',   label: 'Direct',   color: '#9D207B', description: 'Unknown origin, mainly clicked browser bookmarks or URL typed manually into the browser.' },
+  { key: 'organic',  label: 'Organic',  color: '#CFB017', description: 'Unpaid search result, via a search engine such as Google, Bing, Yahoo, etc.' },
+  { key: 'referral', label: 'Referral', color: '#361FAD', description: 'Paid search ads (SEA), or websites that are not search engines nor social media.' },
+  { key: 'social',   label: 'Social',   color: '#45A191', description: 'Social network platform such as Facebook, Twitter, LinkedIn, etc.' },
 ];
 
 const PERIOD_OPTIONS = [
@@ -250,18 +223,25 @@ export default function SourcesPage() {
   const [language, setLanguage] = useState('en-US');
   const [authStatus, setAuthStatus] = useState('all');
 
+  // --- Real data state ---
+  const [evoData, setEvoData] = useState(null);
+  const [destData, setDestData] = useState(null);
+  const [detailData, setDetailData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState(null);
+
   const [selectedSources, setSelectedSources] = useState(
-    () => new Set(SOURCE_TYPES.map((s) => s.key)),
+    () => new Set(SOURCE_TYPE_META.map((s) => s.key)),
   );
   const [selectedTargets, setSelectedTargets] = useState(
     () => new Set(ALL_TARGET_KEYS),
   );
 
-  const allSourcesOn = selectedSources.size === SOURCE_TYPES.length;
+  const allSourcesOn = selectedSources.size === SOURCE_TYPE_META.length;
   const noneSources  = selectedSources.size === 0;
 
   const toggleAllSources = () => {
-    setSelectedSources(allSourcesOn ? new Set() : new Set(SOURCE_TYPES.map((s) => s.key)));
+    setSelectedSources(allSourcesOn ? new Set() : new Set(SOURCE_TYPE_META.map((s) => s.key)));
   };
 
   const toggleSource = (key) => {
@@ -300,9 +280,58 @@ export default function SourcesPage() {
     });
   };
 
+  // Fetch real data
+  const groupByPeriod = period === 'DAILY' ? 'day' : period === 'WEEKLY' ? 'week' : 'month';
+  const dateRange = useMemo(() => {
+    const now = new Date();
+    const start = new Date(now);
+    start.setMonth(start.getMonth() - (groupByPeriod === 'day' ? 2 : 20));
+    return { startDate: start.toISOString().split('T')[0], endDate: now.toISOString().split('T')[0] };
+  }, [groupByPeriod]);
+
+  const fetchAll = useCallback(async () => {
+    setLoading(true);
+    setErrorMsg(null);
+    try {
+      const [evo, dest, detail] = await Promise.all([
+        api.post('/analytics/v1/traffic/sources/evolution', { ...dateRange, groupByPeriod, filters: { sourceTypes: ['direct','organic','referral','social'] } }),
+        api.post('/analytics/v1/traffic/sources/destination', { ...dateRange }),
+        api.post('/analytics/v1/traffic/sources/detail', { ...dateRange }),
+      ]);
+      setEvoData(evo);
+      setDestData(dest);
+      setDetailData(detail);
+    } catch (e) {
+      console.error(e);
+      setErrorMsg(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [dateRange, groupByPeriod]);
+
+  useEffect(() => { fetchAll(); }, [fetchAll]);
+
+  // Transform evolution API data into the shape the chart expects
+  const { dynamicMonths, sourceSeries } = useMemo(() => {
+    if (!evoData?.results?.length) return { dynamicMonths: [], sourceSeries: [] };
+    const firstResult = evoData.results[0];
+    const months = firstResult.periods.map(p =>
+      new Date(p.periodStartDate).toLocaleDateString('en-US', {
+        month: groupByPeriod === 'day' ? 'short' : 'long',
+        year: 'numeric',
+        ...(groupByPeriod === 'day' && { day: 'numeric' })
+      })
+    );
+    const series = evoData.results.map(r => {
+      const meta = SOURCE_TYPE_META.find(m => m.key === r.name) || { key: r.name, label: r.name, color: '#888' };
+      return { ...meta, values: r.periods.map(p => p.count) };
+    });
+    return { dynamicMonths: months, sourceSeries: series };
+  }, [evoData, groupByPeriod]);
+
   const visibleSeries = useMemo(
-    () => SOURCE_TYPES.filter((s) => selectedSources.has(s.key)),
-    [selectedSources],
+    () => sourceSeries.filter((s) => selectedSources.has(s.key)),
+    [selectedSources, sourceSeries],
   );
 
   return (
@@ -419,33 +448,85 @@ export default function SourcesPage() {
               </header>
 
               <section style={PS.body}>
-                <div style={PS.chartCard}>
-                  <SourcesChart
-                    series={visibleSeries}
-                    stacked={stacked}
-                    logScale={logScale}
-                    empty={noneSources}
-                  />
-                </div>
+                {loading ? (
+                  <div style={{ padding: '60px', textAlign: 'center', color: '#64748b' }}>Loading…</div>
+                ) : errorMsg ? (
+                  <div style={{ padding: '40px', color: '#dc2626' }}>Error: {errorMsg}</div>
+                ) : (
+                  <div style={PS.chartCard}>
+                    <SourcesChart
+                      series={visibleSeries}
+                      months={dynamicMonths}
+                      stacked={stacked}
+                      logScale={logScale}
+                      empty={noneSources}
+                    />
+                  </div>
+                )}
               </section>
             </>
           )}
 
           {activeTab === 'destination' && (
-            <section style={PS.placeholder}>
-              <h3 style={PS.placeholderTitle}>Destination flow</h3>
-              <p style={PS.placeholderText}>
-                Coming soon — a Sankey diagram of how external sources flow into target pages.
-              </p>
+            <section style={PS.body}>
+              {loading ? (
+                <div style={{ padding: '60px', textAlign: 'center', color: '#64748b' }}>Loading…</div>
+              ) : !destData?.results?.length ? (
+                <div style={{ padding: '40px', color: '#64748b' }}>No destination data available.</div>
+              ) : (
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={TBL.table}>
+                    <thead><tr>
+                      <th style={TBL.th}>Source Type</th>
+                      <th style={TBL.th}>Source</th>
+                      <th style={TBL.th}>Target Page</th>
+                      <th style={{...TBL.th, textAlign:'right'}}>Count</th>
+                    </tr></thead>
+                    <tbody>
+                      {destData.results.slice(0, 50).map((r, i) => (
+                        <tr key={i} style={i % 2 ? TBL.rowAlt : {}}>
+                          <td style={TBL.td}>{r.type}</td>
+                          <td style={{...TBL.td, maxWidth:'260px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{r.source}</td>
+                          <td style={TBL.td}>{r.targetPageType}</td>
+                          <td style={{...TBL.td, textAlign:'right', fontWeight:600}}>{r.count.toLocaleString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </section>
           )}
 
           {activeTab === 'details' && (
-            <section style={PS.placeholder}>
-              <h3 style={PS.placeholderTitle}>Source details</h3>
-              <p style={PS.placeholderText}>
-                Coming soon — a sunburst diagram breaking down each source by referrer host.
-              </p>
+            <section style={PS.body}>
+              {loading ? (
+                <div style={{ padding: '60px', textAlign: 'center', color: '#64748b' }}>Loading…</div>
+              ) : !detailData?.results?.length ? (
+                <div style={{ padding: '40px', color: '#64748b' }}>No detail data available.</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+                  {detailData.results.map((cat) => (
+                    <div key={cat.name} style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '16px 20px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+                        <span style={{ width: 10, height: 10, borderRadius: '50%', background: (SOURCE_TYPE_META.find(m=>m.key===cat.name)||{}).color || '#888' }} />
+                        <span style={{ fontWeight: 700, fontSize: '0.95rem', color: '#0f172a', textTransform: 'capitalize' }}>{cat.name}</span>
+                        <span style={{ fontSize: '0.82rem', color: '#64748b' }}>({(cat.value||0).toLocaleString()} visits)</span>
+                      </div>
+                      {cat.children?.length > 0 && (
+                        <ul style={{ listStyle: 'none', margin: 0, padding: '0 0 0 20px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                          {cat.children.map((ch) => (
+                            <li key={ch.name} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', color: '#334155', padding: '3px 0' }}>
+                              <span>{ch.name}</span>
+                              <span style={{ fontWeight: 600 }}>{(ch.value||0).toLocaleString()}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </section>
           )}
         </main>
@@ -497,7 +578,7 @@ export default function SourcesPage() {
               </div>
 
               <ul style={{ ...PS.list, paddingLeft: '28px' }}>
-                {SOURCE_TYPES.map((s) => (
+                {SOURCE_TYPE_META.map((s) => (
                   <li key={s.key}>
                     <label style={PS.checkRow}>
                       <Checkbox
@@ -624,7 +705,7 @@ function SourceTypesPopover() {
             </button>
           </div>
           <ul style={POP.list}>
-            {SOURCE_TYPES.map((s) => (
+            {SOURCE_TYPE_META.map((s) => (
               <li key={s.key} style={POP.item}>
                 <span style={{ ...POP.dot, background: s.color }} aria-hidden="true" />
                 <span style={POP.itemLabel}>{s.label}:</span>
@@ -720,7 +801,7 @@ function Checkbox({ checked, indeterminate, onChange }) {
 
 /* ------------------------------ Chart ------------------------------ */
 
-function SourcesChart({ series, stacked, logScale, empty }) {
+function SourcesChart({ series, months = [], stacked, logScale, empty }) {
   const width = 1100;
   const height = 360;
   const padL = 80;
@@ -739,7 +820,8 @@ function SourcesChart({ series, stacked, logScale, empty }) {
     ? Math.log10(yTicks[yTicks.length - 1])
     : yTicks[yTicks.length - 1];
 
-  const xStep = innerW / (MONTHS.length - 1);
+  const N = months.length || 1;
+  const xStep = N > 1 ? innerW / (N - 1) : innerW;
   const xPos = (i) => padL + i * xStep;
   const yPos = (v) => {
     const t = transform(v);
@@ -750,7 +832,7 @@ function SourcesChart({ series, stacked, logScale, empty }) {
 
   const stackedSeries = useMemo(() => {
     if (!stacked) return series;
-    const running = MONTHS.map(() => 0);
+    const running = months.map(() => 0);
     return series.map(({ label, color, key, values }) => {
       const stackedVals = values.map((v, i) => {
         running[i] += v;
@@ -760,13 +842,17 @@ function SourcesChart({ series, stacked, logScale, empty }) {
     });
   }, [series, stacked]);
 
-  const labelTickIdx = useMemo(
-    () => MONTH_LABELS.map((label) => MONTHS.indexOf(label)).filter((i) => i >= 0),
-    [],
-  );
+  // Show a subset of x labels to avoid overlap
+  const labelCount = Math.max(1, Math.floor(innerW / 130));
+  const labelStep = Math.max(1, Math.ceil(N / labelCount));
+  const labelTickIdx = useMemo(() => {
+    const idx = [];
+    for (let i = 0; i < N; i += labelStep) idx.push(i);
+    return idx;
+  }, [N, labelStep]);
 
-  const ongoingX = xPos(MONTHS.length - 1);
-  const lastTickX = xPos(MONTHS.length - 2);
+  const ongoingX = N > 1 ? xPos(N - 1) : padL + innerW;
+  const lastTickX = N > 2 ? xPos(N - 2) : padL;
 
   const formatY = (v) => (v >= 1000 ? v.toLocaleString('en-US') : String(v));
 
@@ -796,7 +882,7 @@ function SourcesChart({ series, stacked, logScale, empty }) {
             <g key={idx}>
               <line x1={xPos(idx)} y1={padT + innerH} x2={xPos(idx)} y2={padT + innerH + 5} stroke="#6e7079" />
               <text x={xPos(idx)} y={padT + innerH + 18} fontSize="11" fill="#6e7079" textAnchor="middle" fontFamily="Inter, sans-serif">
-                {MONTHS[idx]}
+                {months[idx]}
               </text>
             </g>
           ))}
@@ -823,7 +909,7 @@ function SourcesChart({ series, stacked, logScale, empty }) {
                     strokeWidth="1"
                     opacity={i === values.length - 1 ? 0.55 : 1}
                   >
-                    <title>{`${label} — ${MONTHS[i]}: ${v.toLocaleString('en-US')}`}</title>
+                    <title>{`${label} — ${months[i] || ''}: ${v.toLocaleString('en-US')}`}</title>
                   </circle>
                 ))}
               </g>
@@ -1236,4 +1322,11 @@ const CK = {
     background: '#ffffff',
     borderRadius: '1px',
   },
+};
+
+const TBL = {
+  table: { width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem', color: '#1f2937' },
+  th: { textAlign: 'left', padding: '10px 14px', borderBottom: '2px solid #e5e7eb', fontWeight: 600, color: '#475569', fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.3px' },
+  td: { padding: '9px 14px', borderBottom: '1px solid #f1f5f9' },
+  rowAlt: { background: '#f8fafc' },
 };

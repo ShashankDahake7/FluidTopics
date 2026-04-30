@@ -1,6 +1,8 @@
 'use client';
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect, useRef } from 'react';
 import AnalyticsShell from '@/components/admin/AnalyticsShell';
+
+import api from '@/lib/api';
 
 /* ---------------------- Series + dataset ---------------------- */
 
@@ -10,23 +12,6 @@ const COLOR = {
   articles: '#361FAD',
   topics: '#45A191',
   attachments: '#BD0F49',
-};
-
-// 20 monthly data points covering Sep 2024 → Apr 2026 (last is the ongoing period).
-const MONTHS = [
-  'Sep 2024', 'Oct 2024', 'Nov 2024', 'Dec 2024', 'Jan 2025', 'Feb 2025',
-  'Mar 2025', 'Apr 2025', 'May 2025', 'Jun 2025', 'Jul 2025', 'Aug 2025',
-  'Sep 2025', 'Oct 2025', 'Nov 2025', 'Dec 2025', 'Jan 2026', 'Feb 2026',
-  'Mar 2026', 'Apr 2026',
-];
-
-// Reverse-engineered from the reference chart geometry.
-const SERIES = {
-  books:        [52, 54, 53, 53, 54, 53, 54, 56, 58, 58, 58, 57, 58, 58, 60, 61, 61, 61, 61, 61],
-  unstructured: [7,  7,  7,  8, 10, 10, 11, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 16, 16],
-  articles:     [0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0],
-  topics:       [120,124,123,125,128,130,133,138,141,145,148,150,151,153,156,158,160,162,164,165],
-  attachments:  [0,  0,  0,  0,  1,  2,  2,  3,  3,  3,  4,  4,  5,  5,  6,  6,  6,  6,  7,  7],
 };
 
 const PERIOD_OPTIONS = [
@@ -66,20 +51,7 @@ const IconFilters = () => (
     <circle cx="19" cy="18" r="2" />
   </svg>
 );
-const IconStacked = () => (
-  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <rect x="3" y="14" width="6" height="6" rx="1" />
-    <rect x="3" y="6" width="6" height="6" rx="1" />
-    <rect x="11" y="10" width="6" height="10" rx="1" />
-    <rect x="11" y="2" width="6" height="6" rx="1" />
-  </svg>
-);
-const IconLog = () => (
-  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d="M3 20 C 9 20 9 4 21 4" />
-    <text x="3" y="9" fontSize="6" fill="currentColor" stroke="none" fontFamily="sans-serif" fontWeight="700">log</text>
-  </svg>
-);
+
 const IconClose = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <path d="M18 6 6 18" />
@@ -153,39 +125,86 @@ function Checkbox({ checked, indeterminate, onChange, label, color, bold = false
 
 /* ---------------------------- Chart ---------------------------- */
 
-function ContentInventoryChart({ activeSeries, period }) {
-  const W = 1100;
-  const H = 380;
+function ContentInventoryChart({ data, activeSeries, period }) {
+  const containerRef = useRef(null);
+  const [dims, setDims] = useState({ W: 1100, H: 380 });
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver((entries) => {
+      for (let entry of entries) {
+        const { width, height } = entry.contentRect;
+        if (width > 50 && height > 50) {
+          setDims({ W: width, H: height });
+        }
+      }
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  const { W, H } = dims;
   const PAD_L = 80;
   const PAD_R = 24;
   const PAD_T = 50;
-  const PAD_B = 76;
+  const PAD_B = 60; // Reduced padding
   const innerW = W - PAD_L - PAD_R;
   const innerH = H - PAD_T - PAD_B;
+
+  const apiToLocalMap = {
+    books: 'books',
+    unstructuredDocuments: 'unstructured',
+    articles: 'articles',
+    topics: 'topics',
+    attachments: 'attachments',
+  };
+  const localToApiMap = {
+    books: 'books',
+    unstructured: 'unstructuredDocuments',
+    articles: 'articles',
+    topics: 'topics',
+    attachments: 'attachments',
+  };
+
+  const dynamicMonths = useMemo(() => {
+    if (!data?.results?.length) return [];
+    return data.results[0].periods.map((p) => p.periodStartDate);
+  }, [data]);
+
+  const dynamicSeries = useMemo(() => {
+    const s = {};
+    if (!data?.results) return s;
+    data.results.forEach((res) => {
+      const localKey = apiToLocalMap[res.type];
+      if (localKey) {
+        s[localKey] = res.periods.map((p) => p.count);
+      }
+    });
+    return s;
+  }, [data]);
 
   const enabled = useMemo(() => Object.entries(activeSeries).filter(([, v]) => v).map(([k]) => k), [activeSeries]);
 
   const max = useMemo(() => {
-    const peaks = enabled.flatMap((k) => SERIES[k] || []);
+    const peaks = enabled.flatMap((k) => dynamicSeries[k] || []);
     if (peaks.length === 0) return 70;
     const v = Math.max(...peaks);
     const step = 10;
     return Math.max(step, Math.ceil((v * 1.12) / step) * step);
-  }, [enabled]);
+  }, [enabled, dynamicSeries]);
 
   const ticks = useMemo(() => {
     const out = [];
-    const step = max <= 70 ? 10 : 20;
+    const step = max <= 70 ? 10 : Math.ceil(max / 5);
     for (let v = 0; v <= max; v += step) out.push(v);
     return out;
   }, [max]);
 
-  const N = MONTHS.length;
-  const slot = innerW / (N - 1);
+  const N = dynamicMonths.length || 1;
+  const slot = N > 1 ? innerW / (N - 1) : innerW;
   const xAt = (i) => PAD_L + i * slot;
   const yAt = (v) => PAD_T + innerH - (v / max) * innerH;
-
-  const labelMonths = ['Sep 2024', 'Dec 2024', 'Mar 2025', 'Jun 2025', 'Sep 2025', 'Dec 2025', 'Mar 2026'];
 
   const [hover, setHover] = useState(null);
 
@@ -193,25 +212,26 @@ function ContentInventoryChart({ activeSeries, period }) {
     key: k,
     color: COLOR[k],
     label: labelFor(k),
-    points: SERIES[k].map((v, i) => ({ x: xAt(i), y: yAt(v), v, m: MONTHS[i] })),
+    points: (dynamicSeries[k] || Array(N).fill(0)).map((v, i) => ({ x: xAt(i), y: yAt(v), v, m: dynamicMonths[i] })),
   }));
 
-  // "Ongoing period" — soft pink overlay across the last month slot.
-  const ongoingX1 = xAt(N - 2) + slot / 2;
-  const ongoingX2 = xAt(N - 1);
+  // "Ongoing period" — soft pink overlay across the last slot.
+  const ongoingX1 = N > 1 ? xAt(N - 2) + slot / 2 : PAD_L;
+  const ongoingX2 = N > 1 ? xAt(N - 1) : W - PAD_R;
 
   return (
     <div style={CH.wrap}
+      ref={containerRef}
       onMouseLeave={() => setHover(null)}
       onMouseMove={(e) => {
         const rect = e.currentTarget.getBoundingClientRect();
-        const px = ((e.clientX - rect.left) / rect.width) * W;
+        const px = e.clientX - rect.left;
         if (px < PAD_L || px > W - PAD_R) { setHover(null); return; }
         const idx = Math.max(0, Math.min(N - 1, Math.round((px - PAD_L) / slot)));
         setHover({ idx, cx: xAt(idx), cy: PAD_T + innerH / 2 });
       }}
     >
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height="auto" role="img" aria-label="Content inventory over time">
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height="100%" role="img" aria-label="Content inventory over time" style={{ display: 'block' }}>
         {/* y grid + ticks */}
         {ticks.map((t) => {
           const y = yAt(t);
@@ -242,13 +262,13 @@ function ContentInventoryChart({ activeSeries, period }) {
         <text x={(ongoingX1 + ongoingX2) / 2} y={PAD_T - 4} fontSize="11" textAnchor="middle" fill="#333">Ongoing period</text>
 
         {/* x labels */}
-        {MONTHS.map((m, i) => {
-          if (!labelMonths.includes(m)) return null;
+        {dynamicMonths.map((m, i) => {
+          if (i % Math.max(1, Math.floor(N / 6)) !== 0 && i !== N - 1) return null;
           const cx = xAt(i);
           return (
             <g key={`xl-${m}`}>
               <line x1={cx} y1={PAD_T + innerH} x2={cx} y2={PAD_T + innerH + 5} stroke="#6E7079" />
-              <text x={cx} y={PAD_T + innerH + 18} fontSize="12" fill="#6E7079" textAnchor="middle">{monthLabel(m)}</text>
+              <text x={cx} y={PAD_T + innerH + 18} fontSize="12" fill="#6E7079" textAnchor="middle">{period === 'monthly' ? monthLabel(m) : m}</text>
             </g>
           );
         })}
@@ -300,7 +320,7 @@ function ContentInventoryChart({ activeSeries, period }) {
           }}
         >
           <div style={CH.tooltipTitle}>
-            In {monthLabel(MONTHS[hover.idx])}: {series.reduce((sum, s) => sum + s.points[hover.idx].v, 0)}
+            In {period === 'monthly' ? monthLabel(dynamicMonths[hover.idx]) : dynamicMonths[hover.idx]}: {series.reduce((sum, s) => sum + s.points[hover.idx].v, 0)}
           </div>
           {series.map((s) => (
             <div key={s.key} style={CH.tooltipRow}>
@@ -318,9 +338,11 @@ function labelFor(key) {
   return ({ books: 'Books', unstructured: 'Unstructured documents', articles: 'Articles', topics: 'Topics (books only)', attachments: 'Attachments' })[key] || key;
 }
 function monthLabel(m) {
-  const [mon, yr] = m.split(' ');
-  const map = { Jan: 'January', Feb: 'February', Mar: 'March', Apr: 'April', May: 'May', Jun: 'June', Jul: 'July', Aug: 'August', Sep: 'September', Oct: 'October', Nov: 'November', Dec: 'December' };
-  return `${map[mon] || mon} ${yr}`;
+  if (!m) return '';
+  const d = new Date(m);
+  if (isNaN(d.getTime())) return m;
+  const map = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return `${map[d.getMonth()]} ${d.getFullYear()}`;
 }
 
 /* ----------------------------- Page ----------------------------- */
@@ -328,8 +350,6 @@ function monthLabel(m) {
 export default function ContentInventoryPage() {
   const [drawerOpen, setDrawerOpen] = useState(true);
   const [period, setPeriod] = useState('monthly');
-  const [stacked, setStacked] = useState(false);
-  const [logScale, setLogScale] = useState(false);
   const [pending, setPending] = useState({
     books: true, unstructured: true, articles: true, topics: false, attachments: false,
   });
@@ -348,6 +368,32 @@ export default function ContentInventoryPage() {
 
   const apply = () => setApplied({ ...pending });
   const dirty = JSON.stringify(applied) !== JSON.stringify(pending);
+
+  const [data, setData] = useState(null);
+
+
+
+  useEffect(() => {
+    const end = new Date();
+    const start = new Date();
+    if (period === 'monthly') start.setMonth(start.getMonth() - 11);
+    else if (period === 'weekly') start.setDate(start.getDate() - 12 * 7);
+    else start.setDate(start.getDate() - 30);
+    
+    const typeFilters = [];
+    if (applied.books) typeFilters.push('books');
+    if (applied.unstructured) typeFilters.push('unstructuredDocuments');
+    if (applied.articles) typeFilters.push('articles');
+    if (applied.topics) typeFilters.push('topics');
+    if (applied.attachments) typeFilters.push('attachments');
+
+    api.post('/analytics/v1/khub/time-report', {
+      startDate: start.toISOString(),
+      endDate: end.toISOString(),
+      groupByPeriod: period === 'monthly' ? 'month' : period === 'weekly' ? 'week' : 'day',
+      filters: { type: typeFilters }
+    }).then(setData).catch(console.error);
+  }, [period, applied]);
 
   const toolbarExtras = (
     <button
@@ -379,24 +425,6 @@ export default function ContentInventoryPage() {
               <span style={PS.divider} />
               <button
                 type="button"
-                title="Switch to stacked graph"
-                aria-label="Switch to stacked graph"
-                onClick={() => setStacked((v) => !v)}
-                style={{ ...PS.iconAction, color: stacked ? '#1d4ed8' : '#475569' }}
-              >
-                <IconStacked />
-              </button>
-              <button
-                type="button"
-                title="Switch to logarithmic scale"
-                aria-label="Switch to logarithmic scale"
-                onClick={() => setLogScale((v) => !v)}
-                style={{ ...PS.iconAction, color: logScale ? '#1d4ed8' : '#475569' }}
-              >
-                <IconLog />
-              </button>
-              <button
-                type="button"
                 style={{ ...PS.iconAction, color: '#9D207B' }}
                 title="Download as XLSX"
                 aria-label="Download as XLSX"
@@ -408,7 +436,7 @@ export default function ContentInventoryPage() {
 
           <section style={PS.body}>
             <div style={PS.chartCard}>
-              <ContentInventoryChart activeSeries={applied} period={period} />
+              {data ? <ContentInventoryChart data={data} activeSeries={applied} period={period} /> : <div style={{ padding: '40px', textAlign: 'center' }}><div className="spinner" /></div>}
             </div>
             <div style={PS.legend}>
               {[...DOC_GROUP, ...OTHER_GROUP].filter((s) => applied[s.key]).map((s) => (
@@ -418,15 +446,10 @@ export default function ContentInventoryPage() {
                 </span>
               ))}
             </div>
-            <p style={PS.notice}>
-              Stacked: <strong>{stacked ? 'on' : 'off'}</strong>. Scale:&nbsp;
-              <strong>{logScale ? 'logarithmic' : 'linear'}</strong>. Period:&nbsp;
-              <strong>{period}</strong>.
-            </p>
           </section>
         </main>
 
-        <aside style={{ ...DS.drawer, transform: drawerOpen ? 'translateX(0)' : 'translateX(100%)' }}>
+        <aside style={{ ...DS.drawer, marginRight: drawerOpen ? '0px' : '-330px', visibility: drawerOpen ? 'visible' : 'hidden' }}>
           <header style={DS.drawerHead}>
             <span style={DS.drawerTitle}>Filter content types</span>
             <button type="button" style={DS.drawerClose} aria-label="Close" onClick={() => setDrawerOpen(false)}>
@@ -571,7 +594,7 @@ const CB = {
 };
 
 const PS = {
-  layout: { display: 'flex', minHeight: 'calc(100vh - 60px - 56px)', background: '#ffffff' },
+  layout: { display: 'flex', minHeight: 'calc(100vh - 60px - 56px)', background: '#ffffff', overflow: 'hidden' },
   main: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' },
   resultHead: {
     display: 'flex',
@@ -597,12 +620,16 @@ const PS = {
     background: 'transparent',
     cursor: 'pointer',
   },
-  body: { padding: '18px 22px 28px', display: 'flex', flexDirection: 'column', gap: '12px' },
+  body: { padding: '18px 22px 28px', display: 'flex', flexDirection: 'column', gap: '12px', flex: 1 },
   chartCard: {
     background: '#ffffff',
     border: '1px solid #e5e7eb',
     borderRadius: '12px',
     padding: '12px 12px 8px',
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'column',
+    minHeight: '350px',
   },
   legend: {
     display: 'flex',
@@ -613,11 +640,11 @@ const PS = {
   },
   legendItem: { display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', color: '#0f172a' },
   legendDot: { width: '9px', height: '9px', borderRadius: '50%', display: 'inline-block' },
-  notice: { fontSize: '0.75rem', color: '#94a3b8', margin: 0 },
+
 };
 
 const CH = {
-  wrap: { position: 'relative', width: '100%' },
+  wrap: { position: 'relative', width: '100%', flex: 1, minHeight: '300px' },
   tooltip: {
     position: 'absolute',
     background: 'rgba(0, 0, 0, 0.78)',
@@ -643,7 +670,7 @@ const DS = {
     background: '#ffffff',
     display: 'flex',
     flexDirection: 'column',
-    transition: 'transform 200ms ease',
+    transition: 'margin-right 200ms ease, visibility 200ms',
   },
   drawerHead: {
     display: 'flex',

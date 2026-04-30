@@ -125,6 +125,10 @@ const documentSchema = new mongoose.Schema(
         note:          { type: String, default: '' },
       },
     ],
+    viewCount: {
+      type: Number,
+      default: 0,
+    },
   },
   {
     timestamps: true,
@@ -134,6 +138,7 @@ const documentSchema = new mongoose.Schema(
 documentSchema.index({ status: 1 });
 documentSchema.index({ 'metadata.tags': 1 });
 documentSchema.index({ 'metadata.product': 1 });
+documentSchema.index({ viewCount: -1 });
 documentSchema.index({ createdAt: -1 });
 documentSchema.index({ prettyUrl: 1 }, { sparse: true });
 

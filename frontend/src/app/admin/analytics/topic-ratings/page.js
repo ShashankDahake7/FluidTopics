@@ -5,228 +5,77 @@ import AnalyticsShell from '@/components/admin/AnalyticsShell';
 
 /* ------------------------------ Static data ------------------------------ */
 
-const RATING_TYPE_OPTIONS = [
-  { value: 'stars', label: 'Stars' },
-  { value: 'thumbs', label: 'Thumbs' },
-];
+
 
 /* All 18 rows mirror the Angular blueprint exactly. Each row has the
  * average star rating, the number of ratings collected, the topic + document
  * titles, and a list of metadata key/value chips that's rendered in the
  * Metadata column. */
-const RATING_ROWS = [
-  {
-    stars: 5.0,
-    ratings: 1,
-    topic: 'Time',
-    document: 'Release Notes May 2024',
-    metadata: [
-      { key: 'author_personname', value: 'Darwinbox' },
-      { key: 'ft:lastPublication', value: '2025-11-19T11:12:22.518000' },
-      { key: 'ft:publication_title', value: 'Release Notes May 2024' },
-      { key: 'publicationDate', value: '2025-11-19' },
-    ],
-  },
-  {
-    stars: 5.0,
-    ratings: 1,
-    topic: 'Sapien Design System and Experience Enhancements',
-    document: 'Release Notes Feb 2026',
-    metadata: [
-      { key: 'ft:lastPublication', value: '2026-03-05T06:25:27.907942' },
-      { key: 'ft:publication_title', value: 'Release Notes Feb 2026' },
-      { key: 'publicationDate', value: '2026-03-05' },
-    ],
-  },
-  {
-    stars: 5.0,
-    ratings: 1,
-    topic: 'Flexible Holiday Enhancements',
-    document: 'Release Notes November 2024',
-    metadata: [
-      { key: 'author_personname', value: 'Darwinbox' },
-      { key: 'ft:lastPublication', value: '2025-11-19T12:52:44.153000' },
-      { key: 'ft:publication_title', value: 'Release Notes November 2024' },
-      { key: 'publicationDate', value: '2025-11-19' },
-    ],
-  },
-  {
-    stars: 5.0,
-    ratings: 1,
-    topic: 'FAQ- Recruitment',
-    document: 'Recruitment',
-    metadata: [
-      { key: 'author_personname', value: 'Rashmi Menon' },
-      { key: 'ft:lastPublication', value: '2026-03-07T11:59:16.015726' },
-      { key: 'ft:publication_title', value: 'Recruitment' },
-      { key: 'publicationDate', value: '2026-03-07' },
-    ],
-  },
-  {
-    stars: 5.0,
-    ratings: 1,
-    topic: 'N-Grid Framework',
-    document: 'Talent Intelligence',
-    metadata: [
-      { key: 'author_personname', value: 'Praseeda Udaykumar' },
-      { key: 'ft:lastPublication', value: '2026-03-05T07:46:30.583011' },
-      { key: 'ft:publication_title', value: 'Talent Intelligence' },
-      { key: 'publicationDate', value: '2026-03-05' },
-    ],
-  },
-  {
-    stars: 5.0,
-    ratings: 1,
-    topic: 'New Welcome Page Settings',
-    document: 'Onboarding',
-    metadata: [
-      { key: 'ft:lastPublication', value: '2026-03-16T13:45:03.259429' },
-      { key: 'ft:publication_title', value: 'Onboarding' },
-      { key: 'publicationDate', value: '2026-03-16' },
-    ],
-  },
-  {
-    stars: 5.0,
-    ratings: 1,
-    topic: 'Single Sign On',
-    document: 'Darwinbox Studio',
-    metadata: [
-      { key: 'ft:lastPublication', value: '2026-03-13T13:12:46.082508' },
-      { key: 'ft:publication_title', value: 'Darwinbox Studio' },
-      { key: 'publicationDate', value: '2026-03-13' },
-    ],
-  },
-  {
-    stars: 5.0,
-    ratings: 1,
-    topic: 'Unsubscribe from Notification Emails',
-    document: 'Notification Templates',
-    metadata: [
-      { key: 'ft:lastPublication', value: '2026-03-05T06:42:26.431452' },
-      { key: 'ft:publication_title', value: 'Notification Templates' },
-      { key: 'publicationDate', value: '2026-03-05' },
-    ],
-  },
-  {
-    stars: 5.0,
-    ratings: 1,
-    topic: 'Competency Mapping',
-    document: 'Import',
-    metadata: [
-      { key: 'author_personname', value: 'Lenin Elvira' },
-      { key: 'ft:lastPublication', value: '2026-03-06T12:58:36.267478' },
-      { key: 'ft:publication_title', value: 'Import' },
-      { key: 'publicationDate', value: '2026-03-06' },
-    ],
-  },
-  {
-    stars: 4.0,
-    ratings: 1,
-    topic: 'What are the Company Logo Dimensions?',
-    document: 'Company',
-    metadata: [
-      { key: 'ft:lastPublication', value: '2025-12-19T14:19:47.498000' },
-      { key: 'ft:publication_title', value: 'Company' },
-      { key: 'publicationDate', value: '2025-12-19' },
-    ],
-  },
-  {
-    stars: 3.0,
-    ratings: 1,
-    topic: 'How to Create a Separation Flow',
-    document: 'Workflow: Custom Workflow',
-    metadata: [
-      { key: 'author_personname', value: 'Rashmi Menon' },
-      { key: 'ft:lastPublication', value: '2026-03-17T12:00:23.837954' },
-      { key: 'ft:publication_title', value: 'Workflow: Custom Workflow' },
-      { key: 'publicationDate', value: '2026-03-17' },
-    ],
-  },
-  {
-    stars: 3.0,
-    ratings: 1,
-    topic: 'Best Practices for Candidate Experience Revamp',
-    document: 'Best Practices',
-    metadata: [
-      { key: 'ft:lastPublication', value: '2026-03-06T10:06:05.091000' },
-      { key: 'ft:publication_title', value: 'Best Practices' },
-      { key: 'publicationDate', value: '2026-03-06' },
-    ],
-  },
-  {
-    stars: 1.0,
-    ratings: 1,
-    topic: 'Project Roles',
-    document: 'Company',
-    metadata: [
-      { key: 'ft:lastPublication', value: '2025-12-19T14:19:47.498000' },
-      { key: 'ft:publication_title', value: 'Company' },
-      { key: 'publicationDate', value: '2025-12-19' },
-    ],
-  },
-  {
-    stars: 1.0,
-    ratings: 1,
-    topic: 'Continuous Feedback',
-    document: 'Continuous Feedback',
-    metadata: [
-      { key: 'ft:lastPublication', value: '2026-03-05T06:34:18.639537' },
-      { key: 'ft:publication_title', value: 'Continuous Feedback' },
-      { key: 'publicationDate', value: '2026-03-05' },
-    ],
-  },
-  {
-    stars: 1.0,
-    ratings: 1,
-    topic: 'Bulk Upload HR Letters',
-    document: 'Import',
-    metadata: [
-      { key: 'author_personname', value: 'Lenin Elvira' },
-      { key: 'ft:lastPublication', value: '2026-03-06T12:58:36.267478' },
-      { key: 'ft:publication_title', value: 'Import' },
-      { key: 'publicationDate', value: '2026-03-06' },
-    ],
-  },
-  {
-    stars: 1.0,
-    ratings: 1,
-    topic: 'Helpdesk',
-    document: 'Help Desk',
-    metadata: [
-      { key: 'author_personname', value: 'Shivani Kothakapu' },
-      { key: 'ft:lastPublication', value: '2026-03-05T06:37:51.687775' },
-      { key: 'ft:publication_title', value: 'Help Desk' },
-      { key: 'publicationDate', value: '2026-03-05' },
-    ],
-  },
-  {
-    stars: 1.0,
-    ratings: 1,
-    topic: 'Create an Approval Flow with a Decision Matrix',
-    document: 'Workflow: Custom Workflow',
-    metadata: [
-      { key: 'author_personname', value: 'Rashmi Menon' },
-      { key: 'ft:lastPublication', value: '2026-03-24T12:48:07.667299' },
-      { key: 'ft:publication_title', value: 'Workflow: Custom Workflow' },
-      { key: 'publicationDate', value: '2026-03-24' },
-    ],
-  },
-  {
-    stars: 1.0,
-    ratings: 1,
-    topic: 'Form Builder',
-    document: 'Release Notes August 2024',
-    metadata: [
-      { key: 'ft:lastPublication', value: '2025-11-19T12:41:58.822000' },
-      { key: 'ft:publication_title', value: 'Release Notes August 2024' },
-      { key: 'publicationDate', value: '2025-11-19' },
-    ],
-  },
+const TYPE_BOOK = 'BOOK_PLAIN';
+const TYPE_UNSTRUCTURED = 'UNSTRUCTURED_DOC';
+
+const RATING_TYPE_OPTIONS = [
+  { value: 'Stars', label: 'Stars' },
+  { value: 'Like', label: 'Like' },
+  { value: 'Dichotomous', label: 'Dichotomous' },
 ];
 
-const TOTAL_ROWS = RATING_ROWS.length;
+const SORT_ORDER_OPTIONS = [
+  { value: 'bestFirst', label: 'Best rated' },
+  { value: 'worstFirst', label: 'Worst rated' },
+];
 
-/* ------------------------------ Icons ------------------------------ */
+const COLOR = {
+  books: '#9D207B',
+  unstructured: '#CFB017',
+  articles: '#361FAD',
+  topics: '#45A191',
+  attachments: '#BD0F49',
+};
+
+const DOC_GROUP = [
+  { key: 'books',         label: 'Books',                  color: COLOR.books },
+  { key: 'unstructured',  label: 'Unstructured documents', color: COLOR.unstructured },
+  { key: 'articles',      label: 'Articles',               color: COLOR.articles },
+];
+const OTHER_GROUP = [
+  { key: 'topics',       label: 'Topics (books only)', color: COLOR.topics },
+  { key: 'attachments',  label: 'Attachments',         color: COLOR.attachments },
+];
+
+const Tick = ({ size = 14 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <polyline points="20 6 9 17 4 12" />
+  </svg>
+);
+
+function Checkbox({ checked, indeterminate, onChange, label, color, bold = false }) {
+  return (
+    <label style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', position: 'relative', userSelect: 'none', cursor: 'pointer' }}>
+      <span
+        style={{
+          width: '16px', height: '16px', borderRadius: '3px',
+          border: '1.5px solid #94a3b8', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+          flexShrink: 0,
+          background: checked || indeterminate ? '#1d4ed8' : '#ffffff',
+          borderColor: checked || indeterminate ? '#1d4ed8' : '#94a3b8',
+        }}
+        aria-hidden="true"
+      >
+        {checked && <Tick size={12} />}
+        {indeterminate && <span style={{ width: '8px', height: '2px', background: '#ffffff', borderRadius: '1px' }} />}
+      </span>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        style={{ position: 'absolute', inset: 0, width: '16px', height: '16px', opacity: 0, margin: 0, cursor: 'pointer' }}
+      />
+      {color && <span style={{ width: '9px', height: '9px', borderRadius: '50%', display: 'inline-block', flexShrink: 0, background: color }} aria-hidden="true" />}
+      <span style={{ fontSize: '0.86rem', fontWeight: bold ? 600 : 500, color: '#0f172a' }}>{label}</span>
+    </label>
+  );
+}
 
 const IconFilters = () => (
   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -282,6 +131,16 @@ const IconBook = () => (
   </svg>
 );
 
+const IconUnstructured = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+    <polyline points="14 2 14 8 20 8" />
+    <line x1="16" y1="13" x2="8" y2="13" />
+    <line x1="16" y1="17" x2="8" y2="17" />
+    <polyline points="10 9 9 9 8 9" />
+  </svg>
+);
+
 const IconKebab = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
     <circle cx="12" cy="5" r="1.6" />
@@ -318,50 +177,111 @@ const IconLast = () => (
 
 export default function TopicRatingsPage() {
   const [drawerOpen, setDrawerOpen] = useState(true);
-  const [ratingType, setRatingType] = useState('stars');
+  const [ratingType, setRatingType] = useState('Stars');
   const [topicQuery, setTopicQuery] = useState('');
   const [docQuery, setDocQuery] = useState('');
-  const [sortDir, setSortDir] = useState('desc');
-  const [openMenuRow, setOpenMenuRow] = useState(null);
+  const [sortOrder, setSortOrder] = useState('bestFirst');
+  
+  const [pending, setPending] = useState({ books: true, unstructured: true, articles: true, topics: false, attachments: false });
+  const [applied, setApplied] = useState({ books: true, unstructured: true, articles: true, topics: false, attachments: false });
+
+  const [appliedTopicQuery, setAppliedTopicQuery] = useState('');
+  const [appliedDocQuery, setAppliedDocQuery] = useState('');
+  const [activeMenuRow, setActiveMenuRow] = useState(null);
+
+  const allDoc = ['books', 'unstructured', 'articles'];
+  const allOther = ['topics', 'attachments'];
+
+  const isGroupChecked = (keys) => keys.every((k) => pending[k]);
+  const isGroupIndeterm = (keys) => keys.some((k) => pending[k]) && !isGroupChecked(keys);
+  const allChecked = [...allDoc, ...allOther].every((k) => pending[k]);
+  const allIndeterm = [...allDoc, ...allOther].some((k) => pending[k]) && !allChecked;
+
+  const setOne = (k, v) => setPending(s => ({ ...s, [k]: v }));
+  const setGroup = (keys, v) => setPending((s) => ({ ...s, ...Object.fromEntries(keys.map((k) => [k, v])) }));
+
+  const [data, setData] = useState([]);
+  const [totalRows, setTotalRows] = useState(0);
+  const [page, setPage] = useState(1);
+  const perPage = 10;
+  const [loading, setLoading] = useState(true);
+
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      const token = localStorage.getItem('token');
+      const typeFilters = [];
+      if (applied.books) typeFilters.push('books');
+      if (applied.unstructured) typeFilters.push('unstructuredDocuments');
+      if (applied.articles) typeFilters.push('articles');
+      if (applied.topics) typeFilters.push('topics');
+      if (applied.attachments) typeFilters.push('attachments');
+
+      const payload = {
+        startDate: '2024-01-01',
+        endDate: '2026-12-31',
+        paging: { page, perPage },
+        ratingType,
+        sortOrder,
+        filters: {
+          type: typeFilters,
+          titleContains: appliedTopicQuery.trim(),
+          document: {
+            titleContains: appliedDocQuery.trim()
+          }
+        }
+      };
+
+      const res = await fetch('/api/analytics/v1/topics/ratings', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token && { Authorization: `Bearer ${token}` })
+        },
+        body: JSON.stringify(payload)
+      });
+      const json = await res.json();
+      if (json.results) {
+        setData(json.results);
+        setTotalRows(json.paging?.totalCount || 0);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchData();
+  }, [page, applied, ratingType, sortOrder]);
+
+  const handleApply = () => {
+    setApplied({ ...pending });
+    setAppliedTopicQuery(topicQuery);
+    setAppliedDocQuery(docQuery);
+    setPage(1);
+  };
 
   const tableMenuRef = useRef(null);
   useEffect(() => {
-    if (openMenuRow === null) return;
+    if (activeMenuRow === null) return;
     const onDoc = (e) => {
       if (tableMenuRef.current && !tableMenuRef.current.contains(e.target)) {
-        setOpenMenuRow(null);
+        setActiveMenuRow(null);
       }
     };
-    const onKey = (e) => { if (e.key === 'Escape') setOpenMenuRow(null); };
+    const onKey = (e) => { if (e.key === 'Escape') setActiveMenuRow(null); };
     document.addEventListener('mousedown', onDoc);
     document.addEventListener('keydown', onKey);
     return () => {
       document.removeEventListener('mousedown', onDoc);
       document.removeEventListener('keydown', onKey);
     };
-  }, [openMenuRow]);
+  }, [activeMenuRow]);
 
-  const sortedRows = useMemo(() => {
-    const direction = sortDir === 'asc' ? 1 : -1;
-    return [...RATING_ROWS].sort((a, b) => {
-      if (a.stars === b.stars) return 0;
-      return a.stars > b.stars ? direction : -direction;
-    });
-  }, [sortDir]);
-
-  const visibleRows = useMemo(() => {
-    const tq = topicQuery.trim().toLowerCase();
-    const dq = docQuery.trim().toLowerCase();
-    return sortedRows.filter((r) => {
-      if (tq && !r.topic.toLowerCase().includes(tq)) return false;
-      if (dq && !r.document.toLowerCase().includes(dq)) return false;
-      return true;
-    });
-  }, [sortedRows, topicQuery, docQuery]);
-
-  const total = visibleRows.length;
-  const rangeStart = total === 0 ? 0 : 1;
-  const rangeEnd = total;
+  const rangeStart = totalRows === 0 ? 0 : (page - 1) * perPage + 1;
+  const rangeEnd = Math.min(page * perPage, totalRows);
 
   return (
     <AnalyticsShell
@@ -395,10 +315,10 @@ export default function TopicRatingsPage() {
       }
     >
       <div style={PS.layout}>
-        <main style={{ ...PS.main, marginRight: drawerOpen ? '330px' : 0 }}>
+        <main style={PS.main}>
           <header style={PS.resultHead}>
             <span style={PS.headTagline}>
-              Data is based on the number of times users rate a document.
+              Data is based on the information about the most rated topics in a selected period.
             </span>
             <button
               type="button"
@@ -427,13 +347,13 @@ export default function TopicRatingsPage() {
                       <button
                         type="button"
                         style={PS.sortHeader}
-                        onClick={() => setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))}
+                        onClick={() => setSortOrder((o) => (o === 'bestFirst' ? 'worstFirst' : 'bestFirst'))}
                         aria-label="Sort by stars"
                       >
                         <span>Stars (</span>
                         <span style={PS.starGlyph} aria-hidden="true"><IconStar /></span>
                         <span>)</span>
-                        <span style={PS.sortGlyph}>{sortDir === 'asc' ? '↑' : '↓'}</span>
+                        <span style={PS.sortGlyph}>{sortOrder === 'worstFirst' ? '↑' : '↓'}</span>
                       </button>
                     </th>
                     <th style={PS.thNum}>Ratings</th>
@@ -444,68 +364,77 @@ export default function TopicRatingsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {visibleRows.length === 0 && (
+                  {loading ? (
+                    <tr><td colSpan={6} style={PS.emptyCell}>Loading ratings...</td></tr>
+                  ) : data.length === 0 ? (
                     <tr>
                       <td colSpan={6} style={PS.emptyCell}>
                         No matching topic ratings found during the selected period.
                       </td>
                     </tr>
-                  )}
-                  {visibleRows.map((r, i) => (
-                    <tr key={i} style={i % 2 === 0 ? PS.trEven : PS.trOdd}>
-                      <td style={PS.tdStars}>
-                        <span style={PS.starsValue}>{r.stars.toFixed(1)}</span>
-                        <span style={PS.starsSuffix}>/5</span>
-                      </td>
-                      <td style={PS.tdNum}>{r.ratings}</td>
-                      <td style={PS.tdTopic}>{r.topic}</td>
-                      <td style={PS.tdDoc}>
-                        <span style={PS.docIcon} aria-hidden="true"><IconBook /></span>
-                        <span>{r.document}</span>
-                      </td>
-                      <td style={PS.tdMeta}>
-                        <div style={PS.chipStack}>
-                          {r.metadata.map((m, idx) => (
-                            <span key={idx} style={PS.chip} title={`${m.key}: ${m.value}`}>
-                              <span style={PS.chipKey}>{m.key}:&nbsp;</span>
-                              <span style={PS.chipValue}>{m.value}</span>
-                            </span>
-                          ))}
-                        </div>
-                      </td>
-                      <td style={PS.tdAction}>
-                        <div style={PS.menuWrap}>
-                          <button
-                            type="button"
-                            style={PS.kebabBtn}
-                            onClick={() => setOpenMenuRow((cur) => (cur === i ? null : i))}
-                            aria-haspopup="menu"
-                            aria-expanded={openMenuRow === i}
-                            aria-label="Row actions"
-                            title="Row actions"
-                          >
-                            <IconKebab />
-                          </button>
-                          {openMenuRow === i && (
-                            <div
-                              role="menu"
-                              style={{
-                                ...PS.menuPanel,
-                                ...(i >= visibleRows.length - 2 ? PS.menuPanelUp : PS.menuPanelDown),
-                              }}
+                  ) : (
+                    data.map((r, i) => (
+                      <tr key={r.id || i} style={i % 2 === 0 ? PS.trEven : PS.trOdd}>
+                        <td style={PS.tdStars}>
+                          <span style={PS.starsValue}>{r.rating.average.toFixed(1)}</span>
+                          <span style={PS.starsSuffix}>/5</span>
+                        </td>
+                        <td style={PS.tdNum}>{r.rating.totalCount}</td>
+                        <td style={PS.tdTopic}>
+                           <span style={PS.titleCell}>
+                             <span style={{ color: '#94a3b8', display: 'inline-flex' }}>
+                               {r.document?.type === 'UNSTRUCTURED_DOCUMENT' ? <IconUnstructured /> : <IconBook />}
+                             </span>
+                             <span>{r.title}</span>
+                           </span>
+                        </td>
+                        <td style={PS.tdDoc}>
+                          <span>{r.document?.title}</span>
+                        </td>
+                        <td style={PS.tdMeta}>
+                          <div style={PS.chipStack}>
+                            {r.document?.metadata?.map((m, idx) => (
+                              <span key={idx} style={PS.chip} title={`${m.key}: ${m.values[0]}`}>
+                                <span style={PS.chipKey}>{m.key}:&nbsp;</span>
+                                <span style={PS.chipValue}>{m.values[0]}</span>
+                              </span>
+                            ))}
+                          </div>
+                        </td>
+                        <td style={PS.tdAction}>
+                          <div style={PS.menuWrap}>
+                            <button
+                              type="button"
+                              style={PS.kebabBtn}
+                              onClick={() => setActiveMenuRow((cur) => (cur === i ? null : i))}
+                              aria-haspopup="menu"
+                              aria-expanded={activeMenuRow === i}
+                              aria-label="Row actions"
+                              title="Row actions"
                             >
-                              <button type="button" role="menuitem" style={PS.menuItem} onClick={() => setOpenMenuRow(null)}>
-                                Show topic
-                              </button>
-                              <button type="button" role="menuitem" style={PS.menuItem} onClick={() => setOpenMenuRow(null)}>
-                                Show document
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                              <IconKebab />
+                            </button>
+                            {activeMenuRow === i && (
+                              <div
+                                role="menu"
+                                style={{
+                                  ...PS.menuPanel,
+                                  ...(i >= data.length - 2 ? PS.menuPanelUp : PS.menuPanelDown),
+                                }}
+                              >
+                                <button type="button" role="menuitem" style={PS.menuItem} onClick={() => setActiveMenuRow(null)}>
+                                  Show topic
+                                </button>
+                                <button type="button" role="menuitem" style={PS.menuItem} onClick={() => setActiveMenuRow(null)}>
+                                  Show document
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
@@ -514,18 +443,18 @@ export default function TopicRatingsPage() {
               <span />
               <div style={PS.pagerActions}>
                 <span style={PS.rangeLabel}>
-                  {rangeStart} – {rangeEnd} of {TOTAL_ROWS}
+                  {rangeStart} – {rangeEnd} of {totalRows}
                 </span>
-                <button type="button" style={PS.pagerBtnDisabled} disabled aria-label="First page" title="First page">
+                <button type="button" style={page === 1 ? PS.pagerBtnDisabled : PS.pagerBtn} onClick={() => setPage(1)} disabled={page === 1} aria-label="First page" title="First page">
                   <IconFirst />
                 </button>
-                <button type="button" style={PS.pagerBtnDisabled} disabled aria-label="Previous page" title="Previous page">
+                <button type="button" style={page === 1 ? PS.pagerBtnDisabled : PS.pagerBtn} onClick={() => setPage(p => p - 1)} disabled={page === 1} aria-label="Previous page" title="Previous page">
                   <IconPrev />
                 </button>
-                <button type="button" style={PS.pagerBtnDisabled} disabled aria-label="Next page" title="Next page">
+                <button type="button" style={rangeEnd >= totalRows ? PS.pagerBtnDisabled : PS.pagerBtn} onClick={() => setPage(p => p + 1)} disabled={rangeEnd >= totalRows} aria-label="Next page" title="Next page">
                   <IconNext />
                 </button>
-                <button type="button" style={PS.pagerBtnDisabled} disabled aria-label="Last page" title="Last page">
+                <button type="button" style={rangeEnd >= totalRows ? PS.pagerBtnDisabled : PS.pagerBtn} onClick={() => setPage(Math.ceil(totalRows / perPage))} disabled={rangeEnd >= totalRows} aria-label="Last page" title="Last page">
                   <IconLast />
                 </button>
               </div>
@@ -533,8 +462,7 @@ export default function TopicRatingsPage() {
           </section>
         </main>
 
-        {drawerOpen && (
-          <aside style={PS.drawer} aria-label="Refine search">
+          <aside style={{ ...PS.drawer, marginRight: drawerOpen ? 0 : -330, visibility: drawerOpen ? 'visible' : 'hidden' }} aria-label="Refine search">
             <header style={PS.drawerHead}>
               <h3 style={PS.drawerTitle}>Refine search</h3>
               <button
@@ -547,17 +475,59 @@ export default function TopicRatingsPage() {
                 <IconClose />
               </button>
             </header>
-
+ 
             <form
               style={PS.drawerBody}
-              onSubmit={(e) => { e.preventDefault(); }}
+              onSubmit={(e) => { e.preventDefault(); handleApply(); }}
               noValidate
             >
+              <div style={PS.selectAll}>
+                <Checkbox
+                  label="All types"
+                  bold
+                  checked={allChecked}
+                  indeterminate={allIndeterm}
+                  onChange={(v) => { setOne('books', v); setOne('unstructured', v); setOne('articles', v); setOne('topics', v); setOne('attachments', v); }}
+                />
+              </div>
+
+              <fieldset style={{ border: 'none', padding: 0, margin: '0 0 16px 0' }}>
+                <legend className="sr-only">Document types</legend>
+                <div style={PS.group}>
+                  <Checkbox
+                    label="All documents"
+                    bold
+                    checked={isGroupChecked(allDoc)}
+                    indeterminate={isGroupIndeterm(allDoc)}
+                    onChange={(v) => setGroup(allDoc, v)}
+                  />
+                  <ul style={PS.list}>
+                    {DOC_GROUP.map((s) => (
+                      <li key={s.key} style={PS.listItem}>
+                        <Checkbox
+                          label={s.label}
+                          color={s.color}
+                          checked={pending[s.key]}
+                          onChange={(v) => setOne(s.key, v)}
+                        />
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </fieldset>
+
               <FieldSelect
                 label="Rating type"
                 value={ratingType}
                 options={RATING_TYPE_OPTIONS}
                 onChange={setRatingType}
+              />
+
+              <FieldSelect
+                label="Sort order"
+                value={sortOrder}
+                options={SORT_ORDER_OPTIONS}
+                onChange={setSortOrder}
               />
 
               <FieldInput
@@ -585,7 +555,6 @@ export default function TopicRatingsPage() {
               </div>
             </form>
           </aside>
-        )}
       </div>
     </AnalyticsShell>
   );
@@ -681,8 +650,22 @@ const PS = {
     display: 'flex',
     flexDirection: 'column',
     background: '#ffffff',
-    transition: 'margin-right 200ms ease',
+    transition: 'margin-right 200ms ease, visibility 200ms',
+    overflow: 'hidden',
   },
+  drawer: {
+    width: '330px',
+    flexShrink: 0,
+    borderLeft: '1px solid #e5e7eb',
+    background: '#ffffff',
+    display: 'flex',
+    flexDirection: 'column',
+    transition: 'margin-right 200ms ease, visibility 200ms',
+  },
+  selectAll: { paddingBottom: '12px', borderBottom: '1px solid #f1f5f9', marginBottom: '12px' },
+  group: { marginBottom: '14px' },
+  list: { listStyle: 'none', padding: '4px 0 0 22px', margin: 0, display: 'flex', flexDirection: 'column', gap: '6px' },
+  listItem: { padding: '4px 0' },
 
   toolbarRight: { display: 'inline-flex', alignItems: 'center', gap: '10px' },
   toolbarIconBtn: {
@@ -950,17 +933,13 @@ const PS = {
   },
 
   drawer: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    bottom: 0,
     width: '330px',
-    background: '#ffffff',
+    flexShrink: 0,
     borderLeft: '1px solid #e5e7eb',
+    background: '#ffffff',
     display: 'flex',
     flexDirection: 'column',
-    boxShadow: '-2px 0 8px rgba(15, 23, 42, 0.04)',
-    zIndex: 5,
+    transition: 'margin-right 200ms ease, visibility 200ms',
   },
   drawerHead: {
     display: 'flex',
@@ -998,15 +977,16 @@ const PS = {
     borderTop: '1px solid #f1f5f9',
   },
   applyBtn: {
-    padding: '8px 16px',
-    border: 'none',
-    borderRadius: '6px',
+    width: '100%',
+    padding: '10px 14px',
     background: '#1d4ed8',
     color: '#ffffff',
-    fontSize: '0.85rem',
+    border: 'none',
+    borderRadius: '8px',
+    fontSize: '0.88rem',
     fontWeight: 600,
-    cursor: 'pointer',
     fontFamily: 'inherit',
+    cursor: 'pointer',
   },
 
   metaFieldset: {

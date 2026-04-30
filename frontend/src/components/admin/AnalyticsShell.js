@@ -68,12 +68,10 @@ export const ANALYTICS_SECTIONS = [
     title: 'Knowledge Hub',
     icon: ICON_KHUB,
     items: [
-      { key: 'content-usage',     label: 'Content usage',      href: '/admin/analytics/content-usage' },
       { key: 'content-inventory', label: 'Content inventory',  href: '/admin/analytics/content-inventory' },
-      { key: 'doc-engagement',    label: 'Doc. engagement',    href: '/admin/analytics/doc-engagement', beta: true },
+
       { key: 'document-views',    label: 'Document views',     href: '/admin/analytics/document-views' },
       { key: 'topic-views',       label: 'Topic views',        href: '/admin/analytics/topic-views' },
-      { key: 'document-ratings',  label: 'Document ratings',   href: '/admin/analytics/document-ratings' },
       { key: 'topic-ratings',     label: 'Topic ratings',      href: '/admin/analytics/topic-ratings' },
     ],
   },

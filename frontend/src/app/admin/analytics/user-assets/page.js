@@ -1,664 +1,366 @@
+'use strict';
+
 'use client';
-import { useMemo, useState } from 'react';
+
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import AnalyticsShell from '@/components/admin/AnalyticsShell';
-
-/* ------------------------------ Constants ------------------------------ */
-
-const MONTHS = [
-  'September 2024', 'October 2024', 'November 2024', 'December 2024',
-  'January 2025',   'February 2025', 'March 2025',    'April 2025',
-  'May 2025',       'June 2025',     'July 2025',     'August 2025',
-  'September 2025', 'October 2025',  'November 2025', 'December 2025',
-  'January 2026',   'February 2026', 'March 2026',    'April 2026',
-];
-
-const MONTH_LABELS = [
-  'September 2024', 'December 2024', 'March 2025', 'June 2025',
-  'September 2025', 'December 2025', 'March 2026',
-];
-
-// Mock series mapped from the Angular blueprint chart geometry.
-const SERIES = [
-  {
-    key: 'bookmarks',
-    label: 'Bookmarks',
-    color: '#9D207B',
-    values: [317, 394, 432, 476, 533, 560, 575, 597, 620, 635, 667, 676, 688, 713, 735, 761, 796, 809, 845, 872],
-  },
-  {
-    key: 'personal-books',
-    label: 'Personal books',
-    color: '#CFB017',
-    values: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-  },
-  {
-    key: 'personal-topics',
-    label: 'Personal topics',
-    color: '#361FAD',
-    values: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-  },
-  {
-    key: 'all-saved-searches',
-    label: 'All saved searches',
-    color: '#45A191',
-    values: [61, 56, 56, 56, 55, 57, 58, 58, 58, 60, 70, 71, 72, 73, 73, 76, 76, 79, 81, 86],
-  },
-  {
-    key: 'saved-searches-with-alerts',
-    label: 'Saved searches with alerts',
-    color: '#BD0F49',
-    values: [45, 41, 44, 44, 46, 48, 49, 49, 49, 51, 61, 62, 63, 64, 64, 65, 65, 67, 69, 73],
-  },
-  {
-    key: 'collections',
-    label: 'Collections',
-    color: '#7A891A',
-    values: [3, 3, 4, 4, 4, 4, 4, 5, 8, 8, 9, 10, 11, 11, 11, 11, 13, 14, 15, 16],
-  },
-];
-
-const PERIOD_OPTIONS = [
-  { value: 'DAILY',   label: 'Daily' },
-  { value: 'WEEKLY',  label: 'Weekly' },
-  { value: 'MONTHLY', label: 'Monthly' },
-];
-
-const Y_TICKS_LINEAR = [0, 200, 400, 600, 800, 1000];
-const Y_TICKS_LOG = [1, 10, 100, 1000];
+import api from '@/lib/api';
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Brush, ResponsiveContainer
+} from 'recharts';
 
 /* ------------------------------ Icons ------------------------------ */
 
-const IconFilters = () => (
-  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <line x1="4" y1="6" x2="20" y2="6" />
-    <line x1="4" y1="12" x2="20" y2="12" />
-    <line x1="4" y1="18" x2="20" y2="18" />
-    <circle cx="9" cy="6" r="2.2" fill="#fff" />
-    <circle cx="15" cy="12" r="2.2" fill="#fff" />
-    <circle cx="8" cy="18" r="2.2" fill="#fff" />
-  </svg>
-);
-
 const IconDownload = () => (
-  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v4" />
     <polyline points="7 10 12 15 17 10" />
     <line x1="12" y1="15" x2="12" y2="3" />
   </svg>
 );
 
-const IconStacked = () => (
-  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <rect x="3" y="14" width="4" height="7" />
-    <rect x="10" y="9" width="4" height="12" />
-    <rect x="17" y="4" width="4" height="17" />
-  </svg>
-);
-
-const IconLine = () => (
-  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <polyline points="3 17 9 11 13 15 21 7" />
-  </svg>
-);
-
-const IconLog = () => (
-  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <text x="3" y="16" fontSize="10" fontWeight="700" fill="currentColor" stroke="none" fontFamily="Inter, sans-serif">log</text>
-    <text x="14" y="11" fontSize="7" fontWeight="700" fill="currentColor" stroke="none" fontFamily="Inter, sans-serif">10</text>
-    <line x1="3" y1="20" x2="21" y2="20" />
+const IconFilters = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
   </svg>
 );
 
 const IconClose = () => (
-  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <line x1="18" y1="6" x2="6" y2="18" />
     <line x1="6" y1="6" x2="18" y2="18" />
   </svg>
 );
 
-const IconCheck = () => (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <polyline points="4 12 10 18 20 6" />
+const IconStacked = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M3 3v18h18" />
+    <path d="M18 17V9" />
+    <path d="M13 17V5" />
+    <path d="M8 17v-3" />
   </svg>
 );
 
-/* ------------------------------ Page ------------------------------ */
+const IconLogarithmic = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M4 14a8 8 0 0 1 16 0" />
+    <path d="M4 14h16" />
+    <path d="M12 14v7" />
+  </svg>
+);
+
+/* ------------------------------ Config ------------------------------ */
+
+const ASSET_TYPES = [
+  { id: 'bookmarks', label: 'Bookmarks', color: '#9D207B' },
+  { id: 'personalBooks', label: 'Personal books', color: '#CFB017' },
+  { id: 'personalTopics', label: 'Personal topics', color: '#361FAD' },
+  { id: 'savedSearches', label: 'All saved searches', color: '#45A191' },
+  { id: 'savedSearchesWithAlert', label: 'Saved searches with alerts', color: '#BD0F49' },
+  { id: 'collections', label: 'Collections', color: '#7A891A' },
+];
+
+/* ------------------------------ Components ------------------------------ */
 
 export default function UserAssetsPage() {
-  const [period, setPeriod] = useState('MONTHLY');
-  const [stacked, setStacked] = useState(false);
-  const [logScale, setLogScale] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(true);
-  const [selected, setSelected] = useState(() => new Set(SERIES.map((s) => s.key)));
+  const [groupBy, setGroupBy] = useState('month');
+  const [data, setData] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState(null);
 
-  const allSelected = selected.size === SERIES.length;
-  const noneSelected = selected.size === 0;
+  // Resize logic for responsive chart without triggering React 19 ResponsiveContainer bugs
+  const chartRef = useRef(null);
+  const [chartSize, setChartSize] = useState({ width: 1000, height: 550 });
 
-  const toggleAll = () => {
-    setSelected(allSelected ? new Set() : new Set(SERIES.map((s) => s.key)));
-  };
-
-  const toggleOne = (key) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
+  useEffect(() => {
+    if (!chartRef.current) return;
+    const observer = new ResizeObserver((entries) => {
+      for (let entry of entries) {
+        setChartSize({
+          width: entry.contentRect.width,
+          height: Math.max(550, entry.contentRect.height)
+        });
+      }
     });
+    observer.observe(chartRef.current);
+    return () => observer.disconnect();
+  }, []);
+
+  // Filters State
+  const [filters, setFilters] = useState(
+    ASSET_TYPES.reduce((acc, curr) => ({ ...acc, [curr.id]: true }), {})
+  );
+
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      const json = await api.post('/analytics/v1/users/assets/time-report', {
+        startDate: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString(),
+        endDate: new Date().toISOString(),
+        groupByPeriod: groupBy,
+        filters: { type: ASSET_TYPES.map(t => t.id) }
+      });
+      if (json.results) {
+        setData(json.results);
+      } else if (json.error) {
+        setErrorMsg(json.error);
+      }
+    } catch (e) {
+      console.error(e);
+      setErrorMsg(e.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const visible = useMemo(
-    () => SERIES.filter((s) => selected.has(s.key)),
-    [selected],
-  );
+  useEffect(() => {
+    fetchData();
+  }, [groupBy]);
+
+  const toggleAll = (checked) => {
+    const next = {};
+    ASSET_TYPES.forEach(t => next[t.id] = checked);
+    setFilters(next);
+  };
+
+  const isAllChecked = Object.values(filters).every(Boolean);
+
+  // Transform Data for Recharts
+  const chartData = useMemo(() => {
+    if (!data || data.length === 0) return [];
+    
+    // We expect `data` to be an array of `{ type, periods: [{ periodStartDate, count }] }`
+    const firstType = data[0];
+    if (!firstType || !firstType.periods) return [];
+    if (firstType.periods.length === 0) return [];
+
+    return firstType.periods.map((p, idx) => {
+      const dataPoint = {
+        name: new Date(p.periodStartDate).toLocaleDateString('en-US', {
+          month: 'long',
+          year: 'numeric',
+          ...(groupBy === 'day' && { day: 'numeric' })
+        })
+      };
+
+      data.forEach(assetType => {
+        const period = assetType.periods[idx];
+        if (period) {
+          dataPoint[assetType.type] = period.count;
+        }
+      });
+      return dataPoint;
+    });
+  }, [data, groupBy]);
 
   return (
     <AnalyticsShell
       active="user-assets"
-      breadcrumb={{ prefix: 'Users', title: 'User assets' }}
-      feedbackSubject="Feedback about user assets"
+      title="User assets"
+      breadcrumb={[{ label: 'Knowledge Hub' }, { label: 'User assets' }]}
       toolbarExtras={
-        <button
-          type="button"
-          onClick={() => setDrawerOpen((v) => !v)}
-          title={drawerOpen ? 'Hide filters' : 'Show filters'}
-          aria-label={drawerOpen ? 'Hide filters' : 'Show filters'}
-          aria-pressed={drawerOpen}
-          style={{
-            ...PS.toolbarIconBtn,
-            background: drawerOpen ? '#eff6ff' : 'transparent',
-            color: drawerOpen ? '#1d4ed8' : '#475569',
-          }}
-        >
-          <IconFilters />
-        </button>
+        <div style={PS.toolbarRight}>
+          <button
+            type="button"
+            onClick={() => setDrawerOpen(!drawerOpen)}
+            style={{
+              ...PS.toolbarIconBtn,
+              color: '#475569',
+            }}
+          >
+            <IconFilters />
+          </button>
+        </div>
       }
     >
       <div style={PS.layout}>
-        <main style={{ ...PS.main, marginRight: drawerOpen ? '330px' : 0 }}>
+        <main style={PS.main}>
           <header style={PS.resultHead}>
             <span style={PS.headTagline}>
               Data is based on the types of user assets created in the portal.
             </span>
-            <div style={PS.headControls}>
-              <div role="radiogroup" aria-label="Group by period" style={PS.switch}>
-                {PERIOD_OPTIONS.map((opt) => {
-                  const active = period === opt.value;
-                  return (
-                    <button
-                      key={opt.value}
-                      type="button"
-                      role="radio"
-                      aria-checked={active}
-                      onClick={() => setPeriod(opt.value)}
-                      style={{
-                        ...PS.switchOption,
-                        background: active ? '#1d4ed8' : 'transparent',
-                        color: active ? '#ffffff' : '#0f172a',
-                        fontWeight: active ? 600 : 500,
-                      }}
-                    >
-                      {opt.label}
-                    </button>
-                  );
-                })}
+            <div style={PS.headerControls}>
+              <div style={PS.toggleGroup}>
+                {['day', 'week', 'month'].map(period => (
+                  <button
+                    key={period}
+                    type="button"
+                    onClick={() => setGroupBy(period)}
+                    style={{
+                      ...PS.toggleBtn,
+                      ...(groupBy === period ? PS.toggleBtnActive : {}),
+                    }}
+                  >
+                    {period.charAt(0).toUpperCase() + period.slice(1)}
+                  </button>
+                ))}
               </div>
-              <button
-                type="button"
-                style={PS.iconBtn}
-                title={stacked ? 'Switch to line graph' : 'Switch to stacked graph'}
-                aria-label={stacked ? 'Switch to line graph' : 'Switch to stacked graph'}
-                onClick={() => setStacked((v) => !v)}
-              >
-                {stacked ? <IconLine /> : <IconStacked />}
-              </button>
-              <button
-                type="button"
-                style={{
-                  ...PS.iconBtn,
-                  background: logScale ? '#eff6ff' : 'transparent',
-                  color: logScale ? '#1d4ed8' : '#475569',
-                }}
-                title={logScale ? 'Switch to linear scale' : 'Switch to logarithmic scale'}
-                aria-label={logScale ? 'Switch to linear scale' : 'Switch to logarithmic scale'}
-                aria-pressed={logScale}
-                onClick={() => setLogScale((v) => !v)}
-              >
-                <IconLog />
-              </button>
-              <button
-                type="button"
-                style={{ ...PS.iconBtn, color: '#1d4ed8' }}
-                title="Download as XLSX"
-                aria-label="Download as XLSX"
-              >
-                <IconDownload />
-              </button>
+              <div style={PS.iconActions}>
+                <button type="button" style={PS.iconActionBtn} title="Switch to stacked graph">
+                  <IconStacked />
+                </button>
+                <button type="button" style={PS.iconActionBtn} title="Switch to logarithmic scale">
+                  <IconLogarithmic />
+                </button>
+                <button type="button" style={PS.exportBtn}>
+                  <IconDownload />
+                </button>
+              </div>
             </div>
           </header>
 
           <section style={PS.body}>
-            <div style={PS.chartCard}>
-              <UserAssetChart
-                series={visible}
-                stacked={stacked}
-                logScale={logScale}
-                empty={noneSelected}
-              />
-            </div>
+            {loading ? (
+               <div style={PS.loading}>Loading charts...</div>
+            ) : errorMsg ? (
+               <div style={{ color: 'red', padding: '20px' }}>Error: {errorMsg}</div>
+            ) : chartData.length === 0 ? (
+               <div style={{ color: 'red', padding: '20px' }}>Data is empty!</div>
+            ) : (
+               <div style={PS.chartSection}>
+                 <h3 style={PS.chartTitle}>USER ASSET COUNT</h3>
+                 <div style={PS.chartWrapper}>
+                   <ResponsiveContainer width="100%" height="100%">
+                     <LineChart data={chartData} margin={{ top: 20, right: 30, left: 0, bottom: 20 }}>
+                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e0e6f1" />
+                     <XAxis dataKey="name" tick={{ fontSize: 12, fill: '#6e7079' }} tickLine={false} axisLine={{ stroke: '#e0e6f1' }} minTickGap={30} />
+                     <YAxis tick={{ fontSize: 12, fill: '#6e7079' }} tickLine={false} axisLine={{ stroke: '#e0e6f1' }} />
+                     <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
+                     
+                     {ASSET_TYPES.map((asset) => (
+                       filters[asset.id] && (
+                         <Line
+                           key={asset.id}
+                           type="monotone"
+                           dataKey={asset.id}
+                           name={asset.label}
+                           stroke={asset.color}
+                           strokeWidth={2}
+                           dot={{ r: 3, fill: '#fff', strokeWidth: 2 }}
+                           activeDot={{ r: 6, fill: '#fff', strokeWidth: 2 }}
+                         />
+                       )
+                     ))}
+                     <Brush dataKey="name" height={30} stroke="#cbd5e1" fill="#f8fafc" />
+                     </LineChart>
+                   </ResponsiveContainer>
+                 </div>
+               </div>
+            )}
           </section>
         </main>
 
-        {drawerOpen && (
-          <aside style={PS.drawer} aria-label="Filter asset types">
-            <header style={PS.drawerHead}>
-              <h3 style={PS.drawerTitle}>Filter asset types</h3>
-              <button
-                type="button"
-                style={PS.drawerCloseBtn}
-                onClick={() => setDrawerOpen(false)}
-                title="Close"
-                aria-label="Close"
-              >
-                <IconClose />
-              </button>
-            </header>
-
-            <div style={PS.drawerBody}>
-              <label style={{ ...PS.checkRow, fontWeight: 600 }}>
-                <Checkbox
-                  checked={allSelected}
-                  indeterminate={!allSelected && !noneSelected}
-                  onChange={toggleAll}
-                />
-                <span>Select all</span>
-              </label>
-
-              <ul style={PS.list}>
-                {SERIES.map((s) => (
-                  <li key={s.key}>
-                    <label style={PS.checkRow}>
-                      <Checkbox
-                        checked={selected.has(s.key)}
-                        onChange={() => toggleOne(s.key)}
-                      />
-                      <span style={{ ...PS.colorDot, background: s.color }} aria-hidden="true" />
-                      <span>{s.label}</span>
-                    </label>
-                  </li>
-                ))}
-              </ul>
+        <aside style={{ ...PS.drawer, marginRight: drawerOpen ? 0 : -330, visibility: drawerOpen ? 'visible' : 'hidden' }}>
+          <header style={PS.drawerHead}>
+            <h3 style={PS.drawerTitle}>Filter asset types</h3>
+            <button type="button" style={PS.drawerCloseBtn} onClick={() => setDrawerOpen(false)}>
+              <IconClose />
+            </button>
+          </header>
+          <div style={PS.drawerBody}>
+            <label style={PS.checkboxWrap}>
+              <input 
+                type="checkbox" 
+                checked={isAllChecked} 
+                onChange={(e) => toggleAll(e.target.checked)} 
+                style={PS.checkbox}
+              />
+              <span style={PS.checkboxLabel}>Select all</span>
+            </label>
+            
+            <div style={PS.filterList}>
+              {ASSET_TYPES.map(asset => (
+                <label key={asset.id} style={PS.checkboxWrap}>
+                  <input 
+                    type="checkbox" 
+                    checked={filters[asset.id]} 
+                    onChange={(e) => setFilters(prev => ({ ...prev, [asset.id]: e.target.checked }))} 
+                    style={PS.checkbox}
+                  />
+                  <span style={{ ...PS.colorDot, backgroundColor: asset.color }} />
+                  <span style={PS.checkboxLabelLight}>{asset.label}</span>
+                </label>
+              ))}
             </div>
-
-            <footer style={PS.drawerFoot}>
-              <button type="button" style={PS.applyBtn}>
-                Apply
-              </button>
-            </footer>
-          </aside>
-        )}
+            
+            <div style={PS.drawerSpace} />
+            <div style={PS.drawerFooter}>
+              <button type="button" style={PS.applyBtn} onClick={() => fetchData()}>Apply</button>
+            </div>
+          </div>
+        </aside>
       </div>
     </AnalyticsShell>
   );
 }
 
-/* ------------------------------ Checkbox ------------------------------ */
-
-function Checkbox({ checked, indeterminate, onChange }) {
-  const filled = checked || indeterminate;
-  return (
-    <span
-      role="checkbox"
-      aria-checked={indeterminate ? 'mixed' : checked}
-      tabIndex={0}
-      onClick={onChange}
-      onKeyDown={(e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); onChange(); } }}
-      style={{
-        ...CK.box,
-        background: filled ? '#1d4ed8' : '#ffffff',
-        borderColor: filled ? '#1d4ed8' : '#94a3b8',
-      }}
-    >
-      {indeterminate ? (
-        <span style={CK.dash} />
-      ) : checked ? (
-        <IconCheck />
-      ) : null}
-    </span>
-  );
-}
-
-/* ------------------------------ Chart ------------------------------ */
-
-function UserAssetChart({ series, stacked, logScale, empty }) {
-  const width = 1100;
-  const height = 360;
-  const padL = 70;
-  const padR = 24;
-  const padT = 36;
-  const padB = 50;
-  const innerW = width - padL - padR;
-  const innerH = height - padT - padB;
-
-  const yTicks = logScale ? Y_TICKS_LOG : Y_TICKS_LINEAR;
-
-  const transform = (v) => {
-    if (logScale) return Math.log10(Math.max(v, 1));
-    return v;
-  };
-
-  const yMin = logScale ? 0 : 0;
-  const yMax = logScale ? Math.log10(yTicks[yTicks.length - 1]) : yTicks[yTicks.length - 1];
-
-  const xStep = innerW / (MONTHS.length - 1);
-  const xPos = (i) => padL + i * xStep;
-  const yPos = (v) => {
-    const t = transform(v);
-    if (yMax === yMin) return padT + innerH;
-    const norm = (t - yMin) / (yMax - yMin);
-    return padT + innerH - Math.max(0, Math.min(1, norm)) * innerH;
-  };
-
-  const stackedSeries = useMemo(() => {
-    if (!stacked) return series;
-    const running = MONTHS.map(() => 0);
-    return series.map(({ label, color, key, values }) => {
-      const stackedVals = values.map((v, i) => {
-        running[i] += v;
-        return running[i];
-      });
-      return { key, label, color, values: stackedVals };
-    });
-  }, [series, stacked]);
-
-  const labelTickIdx = useMemo(
-    () => MONTH_LABELS.map((label) => MONTHS.indexOf(label)).filter((i) => i >= 0),
-    [],
-  );
-
-  const ongoingX = xPos(MONTHS.length - 1);
-  const lastTickX = xPos(MONTHS.length - 2);
-
-  return (
-    <div style={CS.wrap}>
-      <div style={CS.svgWrap}>
-        <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" style={{ width: '100%', height }}>
-          <text x={padL} y={padT - 16} fontSize="11" fill="#6E7079" textAnchor="middle" fontFamily="Inter, sans-serif" fontWeight="600">
-            USER ASSET COUNT
-          </text>
-
-          {yTicks.map((t) => (
-            <g key={t}>
-              <line x1={padL} y1={yPos(t)} x2={padL + innerW} y2={yPos(t)} stroke="#e0e6f1" />
-              <text x={padL - 8} y={yPos(t) + 3} fontSize="11" fill="#6e7079" textAnchor="end" fontFamily="Inter, sans-serif">
-                {t.toLocaleString('en-US')}
-              </text>
-            </g>
-          ))}
-
-          <line x1={padL} y1={padT + innerH} x2={padL + innerW} y2={padT + innerH} stroke="#6e7079" />
-          <text x={padL + innerW + 6} y={padT + innerH + 3} fontSize="11" fill="#6E7079" fontFamily="Inter, sans-serif">
-            DATE
-          </text>
-
-          {labelTickIdx.map((idx) => (
-            <g key={idx}>
-              <line x1={xPos(idx)} y1={padT + innerH} x2={xPos(idx)} y2={padT + innerH + 5} stroke="#6e7079" />
-              <text x={xPos(idx)} y={padT + innerH + 18} fontSize="11" fill="#6e7079" textAnchor="middle" fontFamily="Inter, sans-serif">
-                {MONTHS[idx]}
-              </text>
-            </g>
-          ))}
-
-          <rect x={lastTickX} y={padT - 10} width={ongoingX - lastTickX} height={innerH + 10} fill="rgba(33,150,243,0.06)" />
-          <text x={(lastTickX + ongoingX) / 2} y={padT - 14} fontSize="11" fill="#475569" textAnchor="middle" fontFamily="Inter, sans-serif">
-            Ongoing period
-          </text>
-
-          {!empty && stackedSeries.map(({ key, label, color, values }) => {
-            const points = values.map((v, i) => `${xPos(i)},${yPos(v)}`).join(' ');
-            return (
-              <g key={key}>
-                <polyline points={points} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="bevel" />
-                {values.map((v, i) => (
-                  <circle
-                    key={i}
-                    cx={xPos(i)}
-                    cy={yPos(v)}
-                    r="3.2"
-                    fill="#ffffff"
-                    stroke={color}
-                    strokeWidth="1"
-                    opacity={i === values.length - 1 ? 0.55 : 1}
-                  >
-                    <title>{`${label} — ${MONTHS[i]}: ${v.toLocaleString('en-US')}`}</title>
-                  </circle>
-                ))}
-              </g>
-            );
-          })}
-
-          {empty && (
-            <text x={padL + innerW / 2} y={padT + innerH / 2} fontSize="13" fill="#94a3b8" textAnchor="middle" fontFamily="Inter, sans-serif">
-              No asset types selected
-            </text>
-          )}
-        </svg>
-      </div>
-
-      <div style={CS.legend}>
-        {series.map(({ key, label, color }) => (
-          <span key={key} style={CS.legendItem}>
-            <span style={{ ...CS.legendDot, background: color }} />
-            <span>{label}</span>
-          </span>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/* ------------------------------ Styles ------------------------------ */
-
 const PS = {
-  layout: {
-    position: 'relative',
-    display: 'flex',
-    minHeight: 'calc(100vh - 60px - 56px)',
-  },
-  main: {
-    flex: 1,
-    minWidth: 0,
-    display: 'flex',
-    flexDirection: 'column',
-    background: '#ffffff',
-    transition: 'margin-right 200ms ease',
+  layout: { display: 'flex', minHeight: 'calc(100vh - 60px - 56px)', background: '#ffffff', overflow: 'hidden', position: 'relative' },
+  main: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' },
+  toolbarRight: { display: 'inline-flex', alignItems: 'center', gap: '10px' },
+  toolbarIconBtn: {
+    width: '34px', height: '34px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    border: 'none', background: 'transparent', cursor: 'pointer', borderRadius: '50%',
   },
   resultHead: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: '14px',
-    padding: '14px 22px',
-    borderBottom: '1px solid #e5e7eb',
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 22px', borderBottom: '1px solid #e5e7eb',
   },
-  headTagline: { fontSize: '0.85rem', color: '#475569', flex: 1 },
-  headControls: { display: 'inline-flex', alignItems: 'center', gap: '12px' },
-  switch: {
-    display: 'inline-flex',
-    padding: '3px',
-    border: '1px solid #cbd5e1',
-    borderRadius: '999px',
-    background: '#ffffff',
+  headTagline: { fontSize: '0.85rem', color: '#475569' },
+  headerControls: { display: 'flex', alignItems: 'center', gap: '16px' },
+  
+  toggleGroup: {
+    display: 'flex', background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '6px', overflow: 'hidden',
   },
-  switchOption: {
-    padding: '5px 14px',
-    fontSize: '0.78rem',
-    border: 'none',
-    borderRadius: '999px',
-    cursor: 'pointer',
-    fontFamily: 'inherit',
+  toggleBtn: {
+    padding: '6px 14px', fontSize: '0.8rem', fontWeight: 500, color: '#475569', background: 'transparent',
+    border: 'none', borderRight: '1px solid #e2e8f0', cursor: 'pointer',
   },
-  iconBtn: {
-    width: '36px',
-    height: '36px',
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    border: 'none',
-    borderRadius: '50%',
-    background: 'transparent',
-    color: '#475569',
-    cursor: 'pointer',
+  toggleBtnActive: { background: '#eff6ff', color: '#1d4ed8', fontWeight: 600 },
+  
+  iconActions: { display: 'flex', alignItems: 'center', gap: '8px' },
+  iconActionBtn: {
+    width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+    border: 'none', background: 'transparent', color: '#64748b', cursor: 'pointer', borderRadius: '4px',
   },
-  toolbarIconBtn: {
-    width: '34px',
-    height: '34px',
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    border: 'none',
-    borderRadius: '50%',
-    cursor: 'pointer',
+  exportBtn: {
+    width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+    border: 'none', background: 'transparent', color: '#1d4ed8', cursor: 'pointer', borderRadius: '4px',
   },
-  body: { padding: '18px 22px 28px', display: 'flex', flexDirection: 'column', gap: '16px' },
-  chartCard: {
-    background: '#ffffff',
-    border: '1px solid #e5e7eb',
-    borderRadius: '12px',
-    padding: '16px 18px 18px',
-  },
+  
+  body: { padding: '24px 22px', display: 'flex', flexDirection: 'column', gap: '24px', flex: 1, overflowY: 'auto' },
+  loading: { padding: '40px', textAlign: 'center', color: '#64748b' },
+  
+  chartSection: { display: 'flex', flexDirection: 'column', gap: '16px', flex: 1, minHeight: 0, minWidth: 0 },
+  chartTitle: { fontSize: '0.75rem', fontWeight: 600, color: '#6e7079', letterSpacing: '0.5px' },
+  chartWrapper: { width: '100%', flex: 1, minHeight: '550px', minWidth: 0 },
 
   drawer: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    bottom: 0,
-    width: '330px',
-    background: '#ffffff',
-    borderLeft: '1px solid #e5e7eb',
-    display: 'flex',
-    flexDirection: 'column',
-    boxShadow: '-2px 0 8px rgba(15, 23, 42, 0.04)',
-    zIndex: 5,
+    width: '330px', flexShrink: 0, borderLeft: '1px solid #e5e7eb', background: '#ffffff',
+    display: 'flex', flexDirection: 'column', transition: 'margin-right 200ms ease, visibility 200ms',
   },
   drawerHead: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: '14px 18px',
-    borderBottom: '1px solid #e5e7eb',
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', borderBottom: '1px solid #e5e7eb',
   },
-  drawerTitle: {
-    margin: 0,
-    fontSize: '0.95rem',
-    fontWeight: 600,
-    color: '#0f172a',
-  },
+  drawerTitle: { fontSize: '0.95rem', fontWeight: 600, color: '#0f172a', margin: 0 },
   drawerCloseBtn: {
-    width: '30px',
-    height: '30px',
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    border: 'none',
-    background: 'transparent',
-    color: '#475569',
-    borderRadius: '50%',
-    cursor: 'pointer',
+    width: '32px', height: '32px', border: 'none', background: 'transparent', color: '#475569', cursor: 'pointer',
+    borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
   },
-  drawerBody: {
-    flex: 1,
-    overflowY: 'auto',
-    padding: '14px 18px 18px',
-  },
-  list: {
-    listStyle: 'none',
-    padding: 0,
-    margin: '8px 0 0 0',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '4px',
-  },
-  checkRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '10px',
-    padding: '6px 4px',
-    fontSize: '0.85rem',
-    color: '#1f2937',
-    cursor: 'pointer',
-    userSelect: 'none',
-  },
-  colorDot: {
-    width: '9px',
-    height: '9px',
-    borderRadius: '50%',
-    display: 'inline-block',
-    marginRight: '2px',
-  },
-  drawerFoot: {
-    borderTop: '1px solid #e5e7eb',
-    padding: '12px 18px',
-    display: 'flex',
-    justifyContent: 'flex-end',
-  },
+  drawerBody: { padding: '18px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '18px' },
+  
+  checkboxWrap: { display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' },
+  checkbox: { width: '16px', height: '16px', accentColor: '#2196F3' },
+  checkboxLabel: { fontSize: '0.88rem', fontWeight: 600, color: '#0f172a' },
+  checkboxLabelLight: { fontSize: '0.88rem', fontWeight: 500, color: '#334155' },
+  colorDot: { width: '8px', height: '8px', borderRadius: '50%' },
+  
+  filterList: { display: 'flex', flexDirection: 'column', gap: '12px', paddingLeft: '6px', marginTop: '4px' },
+  
+  drawerSpace: { flex: 1 },
+  drawerFooter: { padding: '12px 18px', background: '#ffffff', borderTop: '1px solid #e5e7eb' },
   applyBtn: {
-    padding: '8px 22px',
-    background: '#1d4ed8',
-    color: '#ffffff',
-    border: 'none',
-    borderRadius: '6px',
-    fontSize: '0.82rem',
-    fontWeight: 600,
-    cursor: 'pointer',
-    fontFamily: 'inherit',
-  },
-};
-
-const CS = {
-  wrap: { display: 'flex', flexDirection: 'column', gap: '8px' },
-  svgWrap: { width: '100%' },
-  legend: {
-    display: 'flex',
-    flexWrap: 'wrap',
-    gap: '6px 18px',
-    marginTop: '6px',
-    padding: '6px 4px 0',
-    borderTop: '1px solid #f1f5f9',
-  },
-  legendItem: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: '6px',
-    fontSize: '0.76rem',
-    color: '#334155',
-  },
-  legendDot: {
-    width: '10px',
-    height: '10px',
-    borderRadius: '50%',
-    display: 'inline-block',
-  },
-};
-
-const CK = {
-  box: {
-    width: '18px',
-    height: '18px',
-    border: '2px solid #94a3b8',
-    borderRadius: '3px',
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-    cursor: 'pointer',
-    transition: 'background 120ms ease, border-color 120ms ease',
-  },
-  dash: {
-    width: '10px',
-    height: '2px',
-    background: '#ffffff',
-    borderRadius: '1px',
+    width: '100%', padding: '10px 14px', background: '#2196F3', color: '#ffffff',
+    border: 'none', borderRadius: '4px', fontSize: '0.9rem', fontWeight: 600, cursor: 'pointer',
   },
 };

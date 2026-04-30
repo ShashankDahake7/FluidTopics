@@ -59,13 +59,18 @@ const getDashboardStats = async (days = 30) => {
     ctrData,
     engagementMetrics,
     contentStats,
-    topViewedTopics,
+    topViewedDocs, // Renamed from topViewedTopics
     userActivity,
+    unstructuredDocs,
+    totalDocViewsAgg, // New aggregation for total Document views
+    totalTopicViewsAgg,
+    totalUnstructuredViewsAgg,
+    monthlyStatsAgg,
   ] = await Promise.all([
     // Total searches
     Analytics.countDocuments({ eventType: 'search', timestamp: { $gte: since } }),
 
-    // Total views
+    // Total views (Analytics count, kept for backwards compatibility but we will calculate exact viewCounts below)
     Analytics.countDocuments({ eventType: 'view', timestamp: { $gte: since } }),
 
     // Total clicks (from search results)
@@ -168,11 +173,11 @@ const getDashboardStats = async (days = 30) => {
       ]),
     ]),
 
-    // Top viewed topics
-    Topic.find()
+    // Top viewed structured documents
+    Document.find({ status: 'completed' })
       .sort({ viewCount: -1 })
       .limit(10)
-      .select('title slug viewCount metadata.tags metadata.product')
+      .select('title viewCount')
       .lean(),
 
     // Active users
@@ -191,16 +196,80 @@ const getDashboardStats = async (days = 30) => {
         },
       },
     ]),
+
+    // Top Unstructured documents
+    require('../../models/UnstructuredDocument').find()
+      .sort({ viewCount: -1 })
+      .limit(10)
+      .select('title viewCount')
+      .lean(),
+
+    // Exact Total Document Views
+    Document.aggregate([
+      { $group: { _id: null, total: { $sum: '$viewCount' } } },
+    ]),
+
+    // Exact Total Topic Views
+    Topic.aggregate([
+      { $group: { _id: null, total: { $sum: '$viewCount' } } },
+    ]),
+
+    // Exact Total Unstructured Views
+    require('../../models/UnstructuredDocument').aggregate([
+      { $group: { _id: null, total: { $sum: '$viewCount' } } },
+    ]),
+
+    // Monthly event counts (Last 12 months)
+    Analytics.aggregate([
+      { $match: { timestamp: { $gte: new Date(new Date().setMonth(new Date().getMonth() - 11)) } } },
+      {
+        $group: {
+          _id: {
+            month: { $dateToString: { format: '%Y-%m', date: '$timestamp' } },
+            type: '$eventType',
+          },
+          count: { $sum: 1 },
+        },
+      },
+      { $sort: { '_id.month': 1 } },
+    ]),
   ]);
 
-  // Transform daily stats
+  // Transform daily stats - Pre-fill all days so the graph starts from 30 days ago to today
   const dailyMap = {};
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const dateStr = d.toISOString().split('T')[0];
+    dailyMap[dateStr] = { date: dateStr, searches: 0, views: 0, clicks: 0 };
+  }
+
   dailyStats.forEach((item) => {
     const date = item._id.date;
-    if (!dailyMap[date]) dailyMap[date] = { date, searches: 0, views: 0, clicks: 0 };
-    const typeKey = item._id.type + 's';
-    if (dailyMap[date][typeKey] !== undefined) {
-      dailyMap[date][typeKey] = item.count;
+    if (dailyMap[date]) {
+      const typeKey = item._id.type + 's';
+      if (dailyMap[date][typeKey] !== undefined) {
+        dailyMap[date][typeKey] = item.count;
+      }
+    }
+  });
+
+  // Transform monthly stats - Pre-fill last 12 months
+  const monthlyMap = {};
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date();
+    d.setMonth(d.getMonth() - i);
+    const monthStr = d.toISOString().substring(0, 7); // YYYY-MM
+    monthlyMap[monthStr] = { month: monthStr, searches: 0, views: 0, clicks: 0 };
+  }
+
+  monthlyStatsAgg.forEach((item) => {
+    const month = item._id.month;
+    if (monthlyMap[month]) {
+      const typeKey = item._id.type + 's';
+      if (monthlyMap[month][typeKey] !== undefined) {
+        monthlyMap[month][typeKey] = item.count;
+      }
     }
   });
 
@@ -222,9 +291,21 @@ const getDashboardStats = async (days = 30) => {
     topicCount: p.count,
   }));
 
+  // To ensure absolute mathematical consistency on the dashboard:
+  const exactTopicViews = totalTopicViewsAgg[0]?.total || 0;
+  const exactUnstructuredViews = totalUnstructuredViewsAgg[0]?.total || 0;
+  const exactStructuredDocViews = totalDocViewsAgg[0]?.total || 0;
+  
+  const exactTotalDocViews = exactStructuredDocViews + exactUnstructuredViews;
+
+  // Merge structured and unstructured top documents
+  const mergedDocs = [...topViewedDocs, ...unstructuredDocs]
+    .sort((a, b) => b.viewCount - a.viewCount)
+    .slice(0, 10);
+
   return {
     totalSearches,
-    totalViews,
+    totalViews: exactTopicViews, // Replace the Analytics count with the exact sum so it matches the list
     totalClicks,
     clickThroughRate: parseFloat(clickThroughRate),
     searchSuccessRate: parseFloat(successRate),
@@ -232,6 +313,7 @@ const getDashboardStats = async (days = 30) => {
     topQueries,
     failedSearches,
     dailyStats: Object.values(dailyMap),
+    monthlyStats: Object.values(monthlyMap),
     engagement: engagementMetrics[0] || {
       avgDuration: 0,
       avgScrollDepth: 0,
@@ -243,7 +325,8 @@ const getDashboardStats = async (days = 30) => {
       topics: contentStats[1],
       productBreakdown,
     },
-    topViewedTopics,
+    topViewedDocuments: mergedDocs,
+    documentViews: exactTotalDocViews,
     userActivity: userActivity[0] || { activeUsers: 0, avgViews: 0, avgSearches: 0 },
   };
 };

@@ -1,341 +1,310 @@
+'use strict';
+
 'use client';
-import { useMemo, useState } from 'react';
+
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import AnalyticsShell from '@/components/admin/AnalyticsShell';
-
-/* ------------------------------ Constants ------------------------------ */
-
-const MONTHS = [
-  'September 2024', 'October 2024', 'November 2024', 'December 2024',
-  'January 2025',   'February 2025', 'March 2025',    'April 2025',
-  'May 2025',       'June 2025',     'July 2025',     'August 2025',
-  'September 2025', 'October 2025',  'November 2025', 'December 2025',
-  'January 2026',   'February 2026', 'March 2026',    'April 2026',
-];
-
-const MONTH_LABELS = [
-  'September 2024', 'November 2024', 'January 2025', 'March 2025',
-  'May 2025',       'July 2025',     'September 2025', 'November 2025',
-  'January 2026',   'March 2026',
-];
-
-const SERIES_COLORS = {
-  'Darwinbox_fluidtopics':       '#9D207B',
-  'darwinbox-clients-sso-prod':  '#CFB017',
-  'db_clients-qa':               '#361FAD',
-  'dbox-qa-sso':                 '#45A191',
-  'internal':                    '#BD0F49',
-  'sso-clients-qa':              '#7A891A',
-  'sso-stage-realm':             '#1980B2',
-  'test-qa-dbox':                '#B4643C',
-};
-
-const SERIES_NAMES = Object.keys(SERIES_COLORS);
-
-const ACTIVE_USERS = {
-  'Darwinbox_fluidtopics':      [1334, 1437, 1513, 1437, 1617, 1608, 1607, 1664, 1825, 1727, 1905, 1667, 1744, 1745, 803,  624,  648,  734,  691,  642],
-  'darwinbox-clients-sso-prod': [1364, 1379, 1500, 1852, 2075, 2169, 1990, 1996, 2014, 1945, 2103, 2099, 2141, 1992, 2079, 2016, 2064, 2007, 2300, 1965],
-  'db_clients-qa':              [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-  'dbox-qa-sso':                [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-  'internal':                   [120, 112, 107, 124, 124, 99, 93, 81, 78, 64, 71, 61, 59, 49, 51, 42, 51, 41, 50, 38],
-  'sso-clients-qa':             [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-  'sso-stage-realm':            [0, 0, 64, 111, 129, 118, 156, 158, 140, 146, 179, 156, 188, 163, 164, 137, 165, 167, 153, 152],
-  'test-qa-dbox':               [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-};
-
-const TOTAL_USERS = {
-  'Darwinbox_fluidtopics':      [243, 274, 289, 308, 307, 315, 323, 340, 351, 354, 396, 406, 421, 434, 548, 618, 681, 753, 797, 832],
-  'darwinbox-clients-sso-prod': [909, 1135, 1381, 1761, 2241, 2656, 3023, 3398, 3670, 3956, 4291, 4632, 4986, 5256, 5644, 6024, 6436, 6829, 7306, 7719],
-  'db_clients-qa':              [4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4],
-  'dbox-qa-sso':                [0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-  'internal':                   [929, 916, 564, 550, 599, 500, 372, 354, 343, 334, 321, 291, 279, 267, 264, 268, 268, 258, 257, 258],
-  'sso-clients-qa':             [6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6],
-  'sso-stage-realm':            [0, 0, 60, 152, 230, 293, 386, 475, 533, 597, 692, 772, 852, 909, 968, 1049, 1127, 1205, 1271, 1343],
-  'test-qa-dbox':               [5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5],
-};
-
-const PERIOD_OPTIONS = [
-  { value: 'DAILY',   label: 'Daily' },
-  { value: 'WEEKLY',  label: 'Weekly' },
-  { value: 'MONTHLY', label: 'Monthly' },
-];
+import api from '@/lib/api';
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Brush, ResponsiveContainer
+} from 'recharts';
 
 /* ------------------------------ Icons ------------------------------ */
 
 const IconDownload = () => (
-  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v4" />
     <polyline points="7 10 12 15 17 10" />
     <line x1="12" y1="15" x2="12" y2="3" />
   </svg>
 );
-const IconStacked = () => (
-  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <rect x="3" y="14" width="4" height="7" />
-    <rect x="10" y="9" width="4" height="12" />
-    <rect x="17" y="4" width="4" height="17" />
-  </svg>
-);
-const IconLine = () => (
-  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <polyline points="3 17 9 11 13 15 21 7" />
+
+const IconStackedChart = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M3 3v18h18" />
+    <path d="M18 17V9" />
+    <path d="M13 17V5" />
+    <path d="M8 17v-3" />
   </svg>
 );
 
-/* ------------------------------ Page ------------------------------ */
+/* ------------------------------ Components ------------------------------ */
+
+const REALM_COLORS = {
+  internal: '#9D207B',
+  sso: '#CFB017',
+  ldap: '#361FAD',
+  oidc: '#45A191',
+};
 
 export default function UserTrafficPage() {
-  const [period, setPeriod] = useState('MONTHLY');
-  const [stacked, setStacked] = useState(false);
+  const [groupBy, setGroupBy] = useState('month');
+  const [startDate, setStartDate] = useState(() => {
+    const d = new Date();
+    d.setMonth(d.getMonth() - 6);
+    return d.toISOString().split('T')[0];
+  });
+  const [endDate, setEndDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [data, setData] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState(null);
+
+  // Resize logic for responsive chart without triggering React 19 ResponsiveContainer bugs
+  const chartRef = useRef(null);
+  const [chartSize, setChartSize] = useState({ width: 1000, height: 550 });
+
+  useEffect(() => {
+    if (!chartRef.current) return;
+    const observer = new ResizeObserver((entries) => {
+      for (let entry of entries) {
+        setChartSize({
+          width: entry.contentRect.width,
+          height: Math.max(550, entry.contentRect.height)
+        });
+      }
+    });
+    observer.observe(chartRef.current);
+    return () => observer.disconnect();
+  }, []);
+
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      const json = await api.post('/analytics/v1/traffic/user-activity', {
+        startDate: new Date(startDate).toISOString(),
+        endDate: new Date(endDate).toISOString(),
+        groupByPeriod: groupBy
+      });
+      if (json.results) {
+        setData(json.results);
+      } else if (json.error) {
+        setErrorMsg(json.error);
+      } else {
+        setErrorMsg('Unknown response format: ' + JSON.stringify(json).substring(0, 100));
+      }
+    } catch (e) {
+      console.error(e);
+      setErrorMsg(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchData();
+  }, [groupBy, startDate, endDate]);
+
+  const chartData = useMemo(() => {
+    if (!data || data.length === 0) return [];
+    
+    const firstRealm = data[0];
+    if (!firstRealm || !firstRealm.periods) return [];
+    
+    return firstRealm.periods.map((p, idx) => {
+      const dataPoint = {
+        name: new Date(p.periodStartDate).toLocaleDateString('en-GB', { 
+          day: '2-digit', month: 'short', year: 'numeric'
+        }),
+      };
+      
+      data.forEach(realm => {
+        const period = realm.periods[idx];
+        if (period) {
+          dataPoint[`${realm.realm}_active`] = period.activeCount;
+          dataPoint[`${realm.realm}_total`] = period.totalCount;
+        }
+      });
+      return dataPoint;
+    });
+  }, [data]);
+
+  // Custom legend removed for safety
 
   return (
     <AnalyticsShell
       active="user-traffic"
-      breadcrumb={{ prefix: 'Users', title: 'User traffic' }}
-      feedbackSubject="Feedback about user traffic"
+      title="User traffic"
+      breadcrumb={[{ label: 'Users' }, { label: 'User traffic' }]}
     >
-      <main style={PS.main}>
-        <header style={PS.resultHead}>
-          <span style={PS.headTagline}>
-            Data is based on the number of authenticated users who accessed the portal or a public API.
-          </span>
-          <div style={PS.headControls}>
-            <div role="radiogroup" aria-label="Group by period" style={PS.switch}>
-              {PERIOD_OPTIONS.map((opt) => {
-                const active = period === opt.value;
-                return (
+      <div style={PS.layout}>
+        <main style={PS.main}>
+          <header style={PS.resultHead}>
+            <span style={PS.headTagline}>
+              Data is based on the number of authenticated users who accessed the portal or a public API.
+            </span>
+            <div style={PS.headerControls}>
+              <div style={PS.dateControls}>
+                <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} style={PS.dateInput} />
+                <span style={PS.dateSeparator}>to</span>
+                <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} style={PS.dateInput} />
+              </div>
+              <div style={PS.toggleGroup}>
+                {['day', 'week', 'month'].map(period => (
                   <button
-                    key={opt.value}
+                    key={period}
                     type="button"
-                    role="radio"
-                    aria-checked={active}
-                    onClick={() => setPeriod(opt.value)}
                     style={{
-                      ...PS.switchOption,
-                      background: active ? '#1d4ed8' : 'transparent',
-                      color: active ? '#ffffff' : '#0f172a',
-                      fontWeight: active ? 600 : 500,
+                      ...PS.toggleBtn,
+                      ...(groupBy === period ? PS.toggleBtnActive : {}),
+                      borderRight: period === 'month' ? 'none' : '1px solid #cbd5e1'
                     }}
+                    onClick={() => setGroupBy(period)}
                   >
-                    {opt.label}
+                    {period === 'day' ? 'Daily' : period === 'week' ? 'Weekly' : 'Monthly'}
                   </button>
-                );
-              })}
+                ))}
+              </div>
+              <button type="button" style={PS.iconBtn} title="Switch to stacked graph">
+                <IconStackedChart />
+              </button>
+              <button type="button" style={PS.iconBtn} title="Download as XLSX">
+                <IconDownload />
+              </button>
             </div>
-            <button
-              type="button"
-              style={PS.iconBtn}
-              title={stacked ? 'Switch to line graph' : 'Switch to stacked graph'}
-              aria-label={stacked ? 'Switch to line graph' : 'Switch to stacked graph'}
-              onClick={() => setStacked((v) => !v)}
-            >
-              {stacked ? <IconLine /> : <IconStacked />}
-            </button>
-            <button
-              type="button"
-              style={{ ...PS.iconBtn, color: '#1d4ed8' }}
-              title="Download as XLSX"
-              aria-label="Download as XLSX"
-            >
-              <IconDownload />
-            </button>
-          </div>
-        </header>
+          </header>
 
-        <section style={PS.body}>
-          <div style={PS.chartCard}>
-            <LineChart
-              title="Active users"
-              series={ACTIVE_USERS}
-              months={MONTHS}
-              monthLabels={MONTH_LABELS}
-              yTicks={[0, 500, 1000, 1500, 2000, 2500]}
-              stacked={stacked}
-            />
-          </div>
-          <div style={PS.chartCard}>
-            <LineChart
-              title="Total users"
-              series={TOTAL_USERS}
-              months={MONTHS}
-              monthLabels={MONTH_LABELS}
-              yTicks={[0, 2000, 4000, 6000, 8000, 10000]}
-              stacked={stacked}
-            />
-          </div>
-        </section>
-      </main>
+          <section style={PS.body}>
+            {loading ? (
+               <div style={PS.loading}>Loading charts...</div>
+            ) : errorMsg ? (
+               <div style={{ color: 'red', padding: '20px' }}>Error: {errorMsg}</div>
+            ) : data.length === 0 ? (
+               <div style={{ color: 'red', padding: '20px' }}>Data is empty!</div>
+            ) : (
+               <>
+                  <div style={PS.chartSection}>
+                    <h3 style={PS.chartTitle}>USER ACTIVITY OVER TIME</h3>
+                    <div style={PS.chartWrapper}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={chartData} margin={{ top: 20, right: 30, left: 0, bottom: 20 }}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+                        <XAxis dataKey="name" tick={{ fontSize: 12, fill: '#6b7280' }} tickLine={false} axisLine={false} minTickGap={30} />
+                        <YAxis tick={{ fontSize: 12, fill: '#6b7280' }} tickLine={false} axisLine={false} />
+                        <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
+                        <Legend verticalAlign="top" height={36} />
+                        
+                        {data.map((realm) => (
+                          <Line
+                            key={realm.realm}
+                            type="monotone"
+                            dataKey={`${realm.realm}_active`}
+                            name={`${realm.realm}_active`}
+                            stroke={REALM_COLORS[realm.realm] || '#3b82f6'}
+                            strokeWidth={2}
+                            dot={false}
+                            activeDot={{ r: 6, fill: '#fff', strokeWidth: 2 }}
+                          />
+                        ))}
+                        <Brush dataKey="name" height={30} stroke="#cbd5e1" fill="#f8fafc" />
+                      </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+
+                  <div style={PS.chartSection}>
+                    <h3 style={PS.chartTitle}>Total users</h3>
+                    <div style={PS.chartWrapper}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={chartData} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+                        <XAxis dataKey="name" tick={{ fontSize: 12, fill: '#6b7280' }} tickLine={false} axisLine={false} minTickGap={30} />
+                        <YAxis tick={{ fontSize: 12, fill: '#6b7280' }} tickLine={false} axisLine={false} />
+                        <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
+                        <Legend verticalAlign="top" height={36} />
+                        
+                        {data.map((realm) => (
+                          <Line
+                            key={realm.realm}
+                            type="monotone"
+                            dataKey={`${realm.realm}_total`}
+                            name={`${realm.realm}_total`}
+                            stroke={REALM_COLORS[realm.realm] || '#3b82f6'}
+                            strokeWidth={2}
+                            dot={{ r: 3, fill: '#fff', strokeWidth: 2 }}
+                            activeDot={{ r: 6, fill: '#fff', strokeWidth: 2 }}
+                          />
+                        ))}
+                        <Brush dataKey="name" height={30} stroke="#cbd5e1" fill="#f8fafc" />
+                      </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+               </>
+            )}
+          </section>
+        </main>
+      </div>
     </AnalyticsShell>
   );
 }
 
-/* ------------------------------ Chart ------------------------------ */
-
-function LineChart({ title, series, months, monthLabels, yTicks, stacked }) {
-  const width = 1200;
-  const height = 280;
-  const padL = 70;
-  const padR = 24;
-  const padT = 36;
-  const padB = 50;
-  const innerW = width - padL - padR;
-  const innerH = height - padT - padB;
-
-  const yMax = yTicks[yTicks.length - 1];
-  const xStep = innerW / (months.length - 1);
-  const xPos = (i) => padL + i * xStep;
-  const yPos = (v) => padT + innerH - (Math.min(v, yMax) / yMax) * innerH;
-
-  const seriesEntries = useMemo(() => SERIES_NAMES.map((name) => ({
-    name,
-    color: SERIES_COLORS[name],
-    values: series[name] || [],
-  })), [series]);
-
-  const stackedSeries = useMemo(() => {
-    if (!stacked) return seriesEntries;
-    const running = months.map(() => 0);
-    return seriesEntries.map(({ name, color, values }) => {
-      const stackedVals = values.map((v, i) => {
-        running[i] += v;
-        return running[i];
-      });
-      return { name, color, values: stackedVals };
-    });
-  }, [seriesEntries, stacked, months.length]);
-
-  const labelTickIdx = useMemo(() => monthLabels.map((label) => months.indexOf(label)).filter((i) => i >= 0), [months, monthLabels]);
-
-  const ongoingX = xPos(months.length - 1);
-  const lastTickX = xPos(months.length - 2);
-
-  return (
-    <div style={CS.wrap}>
-      <h3 style={CS.title}>{title}</h3>
-      <div style={CS.svgWrap}>
-        <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" style={{ width: '100%', height }}>
-          {yTicks.map((t) => (
-            <g key={t}>
-              <line x1={padL} y1={yPos(t)} x2={padL + innerW} y2={yPos(t)} stroke="#e0e6f1" />
-              <text x={padL - 8} y={yPos(t) + 3} fontSize="11" fill="#6e7079" textAnchor="end" fontFamily="Inter, sans-serif">
-                {t.toLocaleString('en-US')}
-              </text>
-            </g>
-          ))}
-
-          <line x1={padL} y1={padT + innerH} x2={padL + innerW} y2={padT + innerH} stroke="#6e7079" />
-
-          {labelTickIdx.map((idx) => (
-            <g key={idx}>
-              <line x1={xPos(idx)} y1={padT + innerH} x2={xPos(idx)} y2={padT + innerH + 5} stroke="#6e7079" />
-              <text x={xPos(idx)} y={padT + innerH + 18} fontSize="11" fill="#6e7079" textAnchor="middle" fontFamily="Inter, sans-serif">
-                {months[idx]}
-              </text>
-            </g>
-          ))}
-
-          <rect x={lastTickX} y={padT - 10} width={ongoingX - lastTickX} height={innerH + 10} fill="rgba(33,150,243,0.06)" />
-          <text x={(lastTickX + ongoingX) / 2} y={padT - 14} fontSize="11" fill="#475569" textAnchor="middle" fontFamily="Inter, sans-serif">
-            Ongoing period
-          </text>
-
-          {stackedSeries.map(({ name, color, values }) => {
-            const points = values.map((v, i) => `${xPos(i)},${yPos(v)}`).join(' ');
-            return (
-              <g key={name}>
-                <polyline points={points} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="bevel" />
-                {values.map((v, i) => (
-                  <circle key={i} cx={xPos(i)} cy={yPos(v)} r="3.2" fill="#ffffff" stroke={color} strokeWidth="1" opacity={i === values.length - 1 ? 0.55 : 1} />
-                ))}
-              </g>
-            );
-          })}
-        </svg>
-      </div>
-      <div style={CS.legend}>
-        {SERIES_NAMES.map((name) => (
-          <span key={name} style={CS.legendItem}>
-            <span style={{ ...CS.legendDot, background: SERIES_COLORS[name] }} />
-            <span>{name}</span>
-          </span>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/* ------------------------------ Styles ------------------------------ */
-
 const PS = {
-  main: { display: 'flex', flexDirection: 'column', minHeight: 'calc(100vh - 60px - 56px)', background: '#ffffff' },
+  layout: { display: 'flex', minHeight: 'calc(100vh - 60px - 56px)', background: '#ffffff', position: 'relative' },
+  main: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' },
+  
   resultHead: {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: '14px',
     padding: '14px 22px',
     borderBottom: '1px solid #e5e7eb',
-  },
-  headTagline: { fontSize: '0.85rem', color: '#475569', flex: 1 },
-  headControls: { display: 'inline-flex', alignItems: 'center', gap: '12px' },
-  switch: {
-    display: 'inline-flex',
-    padding: '3px',
-    border: '1px solid #cbd5e1',
-    borderRadius: '999px',
     background: '#ffffff',
   },
-  switchOption: {
-    padding: '5px 14px',
-    fontSize: '0.78rem',
-    border: 'none',
-    borderRadius: '999px',
-    cursor: 'pointer',
-    fontFamily: 'inherit',
+  headTagline: { fontSize: '0.85rem', color: '#475569' },
+  headerControls: { display: 'flex', alignItems: 'center', gap: '16px' },
+  
+  dateControls: { display: 'flex', alignItems: 'center', gap: '8px', marginRight: '8px' },
+  dateInput: { padding: '6px 10px', fontSize: '0.85rem', border: '1px solid #cbd5e1', borderRadius: '6px', color: '#0f172a' },
+  dateSeparator: { fontSize: '0.85rem', color: '#64748b' },
+  
+  toggleGroup: {
+    display: 'flex',
+    background: '#ffffff',
+    border: '1px solid #cbd5e1',
+    borderRadius: '6px',
+    overflow: 'hidden',
   },
+  toggleBtn: {
+    padding: '6px 16px',
+    fontSize: '0.8rem',
+    fontWeight: 500,
+    color: '#475569',
+    background: 'transparent',
+    border: 'none',
+    cursor: 'pointer',
+    transition: 'all 0.2s',
+  },
+  toggleBtnActive: {
+    background: '#f1f5f9',
+    color: '#0f172a',
+    fontWeight: 600,
+  },
+  
   iconBtn: {
     width: '36px',
     height: '36px',
     display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
-    border: 'none',
-    borderRadius: '50%',
     background: 'transparent',
-    color: '#475569',
+    border: 'none',
+    color: '#64748b',
     cursor: 'pointer',
-  },
-  body: { padding: '18px 22px 28px', display: 'flex', flexDirection: 'column', gap: '16px' },
-  chartCard: {
-    background: '#ffffff',
-    border: '1px solid #e5e7eb',
-    borderRadius: '12px',
-    padding: '16px 18px 18px',
-  },
-};
-
-const CS = {
-  wrap: { display: 'flex', flexDirection: 'column', gap: '8px' },
-  title: { margin: '0 0 4px 0', fontSize: '1rem', fontWeight: 700, color: '#1f2937' },
-  svgWrap: { width: '100%' },
-  legend: {
-    display: 'flex',
-    flexWrap: 'wrap',
-    gap: '6px 18px',
-    marginTop: '6px',
-    padding: '6px 4px 0',
-    borderTop: '1px solid #f1f5f9',
-  },
-  legendItem: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: '6px',
-    fontSize: '0.76rem',
-    color: '#334155',
-  },
-  legendDot: {
-    width: '10px',
-    height: '10px',
     borderRadius: '50%',
-    display: 'inline-block',
   },
+  downloadBtn: {
+    // keeping for reference
+  },
+  
+  body: { padding: '24px 32px', display: 'flex', flexDirection: 'column', gap: '48px', flex: 1, overflowY: 'auto' },
+  loading: { textAlign: 'center', padding: '40px', color: '#64748b' },
+  
+  chartSection: { display: 'flex', flexDirection: 'column', gap: '16px', flex: 1, minHeight: 0, minWidth: 0 },
+  chartTitle: { fontSize: '0.75rem', fontWeight: 600, color: '#6e7079', letterSpacing: '0.5px' },
+  chartWrapper: { width: '100%', flex: 1, minHeight: '550px', minWidth: 0 },
+  
+  legendContainer: { display: 'flex', justifyContent: 'center', gap: '24px', marginBottom: '16px' },
+  legendItem: { display: 'flex', alignItems: 'center', gap: '8px' },
+  legendIcon: { width: '12px', height: '12px', borderRadius: '50%', border: '3px solid', background: '#fff' },
+  legendText: { fontSize: '0.8rem', color: '#475569', fontWeight: 500 },
 };

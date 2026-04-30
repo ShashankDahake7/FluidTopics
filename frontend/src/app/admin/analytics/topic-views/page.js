@@ -7,62 +7,7 @@ import AnalyticsShell from '@/components/admin/AnalyticsShell';
 const TYPE_BOOK = 'BOOK_PLAIN';
 const TYPE_UNSTRUCTURED = 'UNSTRUCTURED_DOC';
 
-const TOPICS = [
-  { views: 1644, topicTitle: 'Release Notes February 2026', documentTitle: 'Release Notes Feb 2026', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Release Notes Feb 2026', 'ft:lastPublication': '2026-03-23T13:39:55.281165', 'publicationDate': '2026-03-23' } },
-  { views: 723, topicTitle: 'Sapien Design System and Experience Enhancements', documentTitle: 'Release Notes Feb 2026', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Release Notes Feb 2026', 'ft:lastPublication': '2026-03-23T13:39:55.281165', 'publicationDate': '2026-03-23' } },
-  { views: 443, topicTitle: 'Core', documentTitle: 'Release Notes Feb 2026', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Release Notes Feb 2026', 'ft:lastPublication': '2026-03-23T13:39:55.281165', 'publicationDate': '2026-03-23' } },
-  { views: 419, topicTitle: 'Features Enabled By Default', documentTitle: 'Release Notes Feb 2026', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Release Notes Feb 2026', 'ft:lastPublication': '2026-03-23T13:39:55.281165', 'publicationDate': '2026-03-23' } },
-  { views: 367, topicTitle: 'Feature Availability for February 2026', documentTitle: 'Release Notes Feb 2026', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Release Notes Feb 2026', 'ft:lastPublication': '2026-03-23T13:39:55.281165', 'publicationDate': '2026-03-23' } },
-  { views: 290, topicTitle: "What's Upcoming - February 2026", documentTitle: 'Release Notes Feb 2026', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Release Notes Feb 2026', 'ft:lastPublication': '2026-02-27T09:48:28.870000', 'publicationDate': '2026-02-27' } },
-  { views: 281, topicTitle: 'Time Management', documentTitle: 'Release Notes Feb 2026', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Release Notes Feb 2026', 'ft:lastPublication': '2026-03-23T13:39:55.281165', 'publicationDate': '2026-03-23' } },
-  { views: 280, topicTitle: 'Platform Services', documentTitle: 'Release Notes Feb 2026', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Release Notes Feb 2026', 'ft:lastPublication': '2026-03-23T13:39:55.281165', 'publicationDate': '2026-03-23' } },
-  { views: 263, topicTitle: 'Configuration Approval Notification for Sub-Admins', documentTitle: 'Release Notes Feb 2026', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Release Notes Feb 2026', 'ft:lastPublication': '2026-03-23T13:39:55.281165', 'publicationDate': '2026-03-23' } },
-  { views: 253, topicTitle: 'Organization', documentTitle: 'Company', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Company', 'ft:lastPublication': '2026-03-11T09:59:38.099637', 'publicationDate': '2026-03-11' } },
-  { views: 242, topicTitle: 'Performance', documentTitle: 'Performance', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Performance', 'author_personname': 'Nilanjan Guha', 'ft:lastPublication': '2026-03-24T12:50:59.742657', 'publicationDate': '2026-03-24' } },
-  { views: 241, topicTitle: 'Talent Acquisition', documentTitle: 'Release Notes Feb 2026', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Release Notes Feb 2026', 'ft:lastPublication': '2026-03-23T13:39:55.281165', 'publicationDate': '2026-03-23' } },
-  { views: 241, topicTitle: 'Create Reports', documentTitle: 'Reports Builder', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Reports Builder', 'author_personname': 'Lenin Elvira', 'ft:lastPublication': '2026-03-25T13:34:23.710560', 'publicationDate': '2026-03-25' } },
-  { views: 226, topicTitle: 'Release Notes November 2025', documentTitle: 'Release Notes Nov 2025', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Release Notes Nov 2025', 'author_personname': 'Darwinbox', 'ft:lastPublication': '2026-02-12T13:35:31.970000', 'publicationDate': '2026-02-12' } },
-  { views: 217, topicTitle: 'Workflows', documentTitle: 'Release Notes Feb 2026', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Release Notes Feb 2026', 'ft:lastPublication': '2026-03-23T13:39:55.281165', 'publicationDate': '2026-03-23' } },
-  { views: 204, topicTitle: 'Disabling Default Emails in Flows', documentTitle: 'Release Notes Feb 2026', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Release Notes Feb 2026', 'ft:lastPublication': '2026-03-23T13:39:55.281165', 'publicationDate': '2026-03-23' } },
-  { views: 203, topicTitle: 'Darwinbox Studio', documentTitle: 'Darwinbox Studio', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Darwinbox Studio', 'ft:lastPublication': '2026-03-25T14:22:40.755161', 'publicationDate': '2026-03-25' } },
-  { views: 199, topicTitle: 'Recruitment', documentTitle: 'Recruitment', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Recruitment', 'author_personname': 'Rashmi Menon', 'ft:lastPublication': '2026-03-27T06:14:31.118859', 'publicationDate': '2026-03-27' } },
-  { views: 198, topicTitle: 'Reports Builder', documentTitle: 'Reports Builder', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Reports Builder', 'author_personname': 'Lenin Elvira', 'ft:lastPublication': '2026-03-25T13:34:23.710560', 'publicationDate': '2026-03-25' } },
-  { views: 196, topicTitle: 'Release Webinars', documentTitle: 'Release Notes Feb 2026', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Release Notes Feb 2026', 'ft:lastPublication': '2026-03-23T13:39:55.281165', 'publicationDate': '2026-03-23' } },
-  { views: 184, topicTitle: 'Employees', documentTitle: 'Employees', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Employees', 'author_personname': 'Lenin Elvira', 'ft:lastPublication': '2026-03-11T10:00:17.056885', 'publicationDate': '2026-03-11' } },
-  { views: 182, topicTitle: 'Payroll', documentTitle: 'Release Notes Feb 2026', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Release Notes Feb 2026', 'ft:lastPublication': '2026-03-23T13:39:55.281165', 'publicationDate': '2026-03-23' } },
-  { views: 179, topicTitle: 'Product Webinar: Launching Sapien 2.0', documentTitle: 'Best Practices', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Best Practices', 'ft:lastPublication': '2026-03-06T10:06:05.091000', 'publicationDate': '2026-03-06' } },
-  { views: 175, topicTitle: 'Start From Scratch', documentTitle: 'Reports Builder', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Reports Builder', 'author_personname': 'Lenin Elvira', 'ft:lastPublication': '2026-03-25T13:34:23.710560', 'publicationDate': '2026-03-25' } },
-  { views: 174, topicTitle: 'Ability to Define the My Team Structure in Darwinbox', documentTitle: 'Release Notes Feb 2026', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Release Notes Feb 2026', 'ft:lastPublication': '2026-03-23T13:39:55.281165', 'publicationDate': '2026-03-23' } },
-  { views: 173, topicTitle: 'Attendance', documentTitle: 'Attendance', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Attendance', 'author_personname': 'Shikha Gheyee', 'ft:lastPublication': '2026-03-26T11:27:57.411018', 'publicationDate': '2026-03-26' } },
-  { views: 170, topicTitle: 'Flows', documentTitle: 'Workflow: Custom Workflow', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Workflow: Custom Workflow', 'author_personname': 'Rashmi Menon', 'ft:lastPublication': '2026-03-24T12:48:07.667299', 'publicationDate': '2026-03-24' } },
-  { views: 158, topicTitle: 'Activity Log for Offer and Offer Proposal Flows', documentTitle: 'Release Notes Feb 2026', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Release Notes Feb 2026', 'ft:lastPublication': '2026-03-23T13:39:55.281165', 'publicationDate': '2026-03-23' } },
-  { views: 158, topicTitle: 'Helpdesk', documentTitle: 'Help Desk', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Help Desk', 'author_personname': 'Shivani Kothakapu', 'ft:lastPublication': '2026-03-05T06:37:51.687775', 'publicationDate': '2026-03-05' } },
-  { views: 156, topicTitle: 'Leave', documentTitle: 'Leave', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Leave', 'author_personname': 'Shikha Gheyee', 'ft:lastPublication': '2026-03-26T09:41:31.950317', 'publicationDate': '2026-03-26' } },
-  { views: 153, topicTitle: 'Leave Settings Precautions', documentTitle: 'Darwinbox Troubleshooting Articles', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Darwinbox Troubleshooting Articles', 'ft:lastPublication': '2026-03-27T13:31:01.145911' } },
-  { views: 144, topicTitle: 'Introduction to HR Letters', documentTitle: 'HR Documents', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'HR Documents', 'author_personname': 'Lenin Elvira', 'ft:lastPublication': '2026-03-06T12:58:05.283000', 'publicationDate': '2026-03-06' } },
-  { views: 142, topicTitle: 'Assignment of Key People Using Import', documentTitle: 'Release Notes Feb 2026', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Release Notes Feb 2026', 'ft:lastPublication': '2026-03-23T13:39:55.281165', 'publicationDate': '2026-03-23' } },
-  { views: 142, topicTitle: 'Payroll', documentTitle: 'Payroll', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Payroll', 'author_personname': 'Shivani Kothakapu', 'ft:lastPublication': '2026-03-27T13:04:47.906108', 'publicationDate': '2026-03-27' } },
-  { views: 139, topicTitle: 'Financial Year-End Leave Balance Carry Forward – Actions & Guidelines', documentTitle: 'Darwinbox Troubleshooting Articles', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Darwinbox Troubleshooting Articles', 'ft:lastPublication': '2026-03-27T13:31:01.145911' } },
-  { views: 138, topicTitle: 'Onboarding', documentTitle: 'Release Notes Feb 2026', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Release Notes Feb 2026', 'ft:lastPublication': '2026-03-23T13:39:55.281165', 'publicationDate': '2026-03-23' } },
-  { views: 134, topicTitle: 'Activity Import Enhancements', documentTitle: 'Release Notes Feb 2026', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Release Notes Feb 2026', 'ft:lastPublication': '2026-03-23T13:39:55.281165', 'publicationDate': '2026-03-23' } },
-  { views: 132, topicTitle: 'Legal Entity-Based Configuration for Organizations', documentTitle: 'Release Notes Feb 2026', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Release Notes Feb 2026', 'ft:lastPublication': '2026-03-23T13:39:55.281165', 'publicationDate': '2026-03-23' } },
-  { views: 129, topicTitle: 'Performance Management', documentTitle: 'Release Notes Feb 2026', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Release Notes Feb 2026', 'ft:lastPublication': '2026-03-23T13:39:55.281165', 'publicationDate': '2026-03-23' } },
-  { views: 125, topicTitle: 'Dynamic Assignee in Approval and Workflow Steps', documentTitle: 'Release Notes Feb 2026', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Release Notes Feb 2026', 'ft:lastPublication': '2026-03-23T13:39:55.281165', 'publicationDate': '2026-03-23' } },
-  { views: 117, topicTitle: 'People Analytics', documentTitle: 'People Analytics', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'People Analytics', 'author_personname': 'Lenin Elvira', 'ft:lastPublication': '2026-03-05T06:45:34.986291', 'publicationDate': '2026-03-05' } },
-  { views: 111, topicTitle: 'Reports Builder', documentTitle: 'Release Notes Feb 2026', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Release Notes Feb 2026', 'ft:lastPublication': '2026-03-23T13:39:55.281165', 'publicationDate': '2026-03-23' } },
-  { views: 111, topicTitle: 'Create a New Welcome Page', documentTitle: 'Onboarding', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Onboarding', 'ft:lastPublication': '2026-03-16T13:45:03.259429', 'publicationDate': '2026-03-16' } },
-  { views: 109, topicTitle: 'Create a Decision Matrix', documentTitle: 'Darwinbox Studio', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Darwinbox Studio', 'ft:lastPublication': '2026-03-25T14:22:40.755161', 'publicationDate': '2026-03-25' } },
-  { views: 107, topicTitle: 'Features that Require Configuration', documentTitle: 'Release Notes Feb 2026', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Release Notes Feb 2026', 'ft:lastPublication': '2026-03-23T13:39:55.281165', 'publicationDate': '2026-03-23' } },
-  { views: 104, topicTitle: 'Additional Date Format Support', documentTitle: 'Release Notes Feb 2026', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Release Notes Feb 2026', 'ft:lastPublication': '2026-03-23T13:39:55.281165', 'publicationDate': '2026-03-23' } },
-  { views: 104, topicTitle: 'Global Compensation Playbook', documentTitle: 'Payroll', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Payroll', 'author_personname': 'Shivani Kothakapu', 'ft:lastPublication': '2026-03-27T13:04:47.906108', 'publicationDate': '2026-03-27' } },
-  { views: 104, topicTitle: 'Audit Trail Reports in Reports Builder', documentTitle: 'Release Notes Feb 2026', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Release Notes Feb 2026', 'ft:lastPublication': '2026-03-23T13:39:55.281165', 'publicationDate': '2026-03-23' } },
-  { views: 103, topicTitle: 'Deprecation of Evaluation Forms and Migration to New Forms in Recruitment', documentTitle: 'Release Notes Feb 2026', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Release Notes Feb 2026', 'ft:lastPublication': '2026-03-23T13:39:55.281165', 'publicationDate': '2026-03-23' } },
-  { views: 100, topicTitle: 'Allowances Framework and Calculated Fields in Overtime', documentTitle: 'Release Notes Feb 2026', documentType: TYPE_BOOK, metadata: { 'ft:publication_title': 'Release Notes Feb 2026', 'ft:lastPublication': '2026-03-23T13:39:55.281165', 'publicationDate': '2026-03-23' } },
-];
 
-const TOTAL_TOPIC_VIEWS = 76468;
-const TOTAL_TOPIC_ROWS = 8084;
-const PAGE_SIZE = 50;
 
 /* ------------------------------ Icons ------------------------------ */
 
@@ -148,27 +93,151 @@ const IconKebab = () => (
   </svg>
 );
 
+const COLOR = {
+  books: '#9D207B',
+  unstructured: '#CFB017',
+  articles: '#361FAD',
+  topics: '#45A191',
+  attachments: '#BD0F49',
+};
+
+const DOC_GROUP = [
+  { key: 'books',         label: 'Books',                  color: COLOR.books },
+  { key: 'unstructured',  label: 'Unstructured documents', color: COLOR.unstructured },
+  { key: 'articles',      label: 'Articles',               color: COLOR.articles },
+];
+const OTHER_GROUP = [
+  { key: 'topics',       label: 'Topics (books only)', color: COLOR.topics },
+  { key: 'attachments',  label: 'Attachments',         color: COLOR.attachments },
+];
+
+const Tick = ({ size = 14 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <polyline points="20 6 9 17 4 12" />
+  </svg>
+);
+
+function Checkbox({ checked, indeterminate, onChange, label, color, bold = false }) {
+  return (
+    <label style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', position: 'relative', userSelect: 'none', cursor: 'pointer' }}>
+      <span
+        style={{
+          width: '16px', height: '16px', borderRadius: '3px',
+          border: '1.5px solid #94a3b8', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+          flexShrink: 0,
+          background: checked || indeterminate ? '#1d4ed8' : '#ffffff',
+          borderColor: checked || indeterminate ? '#1d4ed8' : '#94a3b8',
+        }}
+        aria-hidden="true"
+      >
+        {checked && <Tick size={12} />}
+        {indeterminate && <span style={{ width: '8px', height: '2px', background: '#ffffff', borderRadius: '1px' }} />}
+      </span>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        style={{ position: 'absolute', inset: 0, width: '16px', height: '16px', opacity: 0, margin: 0, cursor: 'pointer' }}
+      />
+      {color && <span style={{ width: '9px', height: '9px', borderRadius: '50%', display: 'inline-block', flexShrink: 0, background: color }} aria-hidden="true" />}
+      <span style={{ fontSize: '0.86rem', fontWeight: bold ? 600 : 500, color: '#0f172a' }}>{label}</span>
+    </label>
+  );
+}
+
 /* ------------------------------ Page ------------------------------ */
 
 export default function TopicViewsPage() {
   const [drawerOpen, setDrawerOpen] = useState(true);
   const [topicQuery, setTopicQuery] = useState('');
   const [documentQuery, setDocumentQuery] = useState('');
+  const [userId, setUserId] = useState('');
+
+  const [pending, setPending] = useState({ books: true, unstructured: true, articles: true, topics: false, attachments: false });
+  const [applied, setApplied] = useState({ books: true, unstructured: true, articles: true, topics: false, attachments: false });
+
   const [appliedTopicQuery, setAppliedTopicQuery] = useState('');
   const [appliedDocumentQuery, setAppliedDocumentQuery] = useState('');
   const [activeMenuRow, setActiveMenuRow] = useState(null);
 
+  const allDoc = ['books', 'unstructured', 'articles'];
+  const allOther = ['topics', 'attachments'];
+
+  const isGroupChecked = (keys) => keys.every((k) => pending[k]);
+  const isGroupIndeterm = (keys) => keys.some((k) => pending[k]) && !isGroupChecked(keys);
+  const allChecked = [...allDoc, ...allOther].every((k) => pending[k]);
+  const allIndeterm = [...allDoc, ...allOther].some((k) => pending[k]) && !allChecked;
+
+  const setOne = (k, v) => setPending(s => ({ ...s, [k]: v }));
+  const setGroup = (keys, v) => setPending((s) => ({ ...s, ...Object.fromEntries(keys.map((k) => [k, v])) }));
+
+  const [data, setData] = useState(null);
+  const [totalViews, setTotalViews] = useState(0);
+  const [totalRows, setTotalRows] = useState(0);
+  const [page, setPage] = useState(1);
+  const perPage = 50;
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    const fetchData = async () => {
+      setLoading(true);
+      try {
+        const token = localStorage.getItem('token');
+        const typeFilters = [];
+        if (applied.books) typeFilters.push('books');
+        if (applied.unstructured) typeFilters.push('unstructuredDocuments');
+        if (applied.articles) typeFilters.push('articles');
+        if (applied.topics) typeFilters.push('topics');
+        if (applied.attachments) typeFilters.push('attachments');
+
+        const payload = {
+           startDate: '2024-01-01',
+           endDate: '2026-12-31',
+           paging: { page, perPage },
+           filters: {
+             type: typeFilters
+           }
+        };
+        if (userId.trim()) payload.filters.userId = userId.trim();
+
+        const res = await fetch('/api/analytics/v2/topics/views-top', {
+          method: 'POST',
+          headers: {
+             'Content-Type': 'application/json',
+             ...(token && { Authorization: `Bearer ${token}` })
+          },
+          body: JSON.stringify(payload)
+        });
+        const json = await res.json();
+        if (active && json.results) {
+           setData(json.results);
+           setTotalRows(json.paging?.totalCount || 0);
+           setTotalViews(json.totalDisplayCount || 0);
+        }
+      } catch (e) {
+        console.error(e);
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+    fetchData();
+    return () => { active = false; };
+  }, [page, applied, userId]);
+
   const filteredRows = useMemo(() => {
+    if (!data) return [];
     const tq = appliedTopicQuery.trim().toLowerCase();
     const dq = appliedDocumentQuery.trim().toLowerCase();
-    return TOPICS.filter((r) => {
+    return data.filter((r) => {
       if (tq && !r.topicTitle.toLowerCase().includes(tq)) return false;
       if (dq && !r.documentTitle.toLowerCase().includes(dq)) return false;
       return true;
     });
-  }, [appliedTopicQuery, appliedDocumentQuery]);
+  }, [data, appliedTopicQuery, appliedDocumentQuery]);
 
   const handleApply = () => {
+    setApplied({ ...pending });
     setAppliedTopicQuery(topicQuery);
     setAppliedDocumentQuery(documentQuery);
   };
@@ -196,7 +265,6 @@ export default function TopicViewsPage() {
     </span>
   );
 
-  const rowsToRender = filteredRows.slice(0, PAGE_SIZE);
 
   return (
     <AnalyticsShell
@@ -241,13 +309,17 @@ export default function TopicViewsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rowsToRender.length === 0 ? (
+                  {loading ? (
+                    <tr>
+                      <td colSpan={5} style={PS.emptyCell}>Loading...</td>
+                    </tr>
+                  ) : filteredRows.length === 0 ? (
                     <tr>
                       <td colSpan={5} style={PS.emptyCell}>No topics match the current filters.</td>
                     </tr>
                   ) : (
-                    rowsToRender.map((r, idx) => (
-                      <tr key={`${r.topicTitle}-${r.documentTitle}-${idx}`} style={PS.tableRow}>
+                    filteredRows.map((r, idx) => (
+                      <tr key={`${r.id || r.topicTitle}-${idx}`} style={PS.tableRow}>
                         <td style={PS.td}>{formatNum(r.views)}</td>
                         <td style={PS.td}>
                           <span style={PS.topicText}>{r.topicTitle}</span>
@@ -262,7 +334,7 @@ export default function TopicViewsPage() {
                         </td>
                         <td style={PS.td}>
                           <span style={PS.metaList}>
-                            {Object.entries(r.metadata).map(([key, value]) => (
+                            {r.metadata && Object.entries(r.metadata).map(([key, value]) => (
                               <span key={key} style={PS.metaChip}>
                                 <span style={PS.metaKey}>{key}:&nbsp;</span>
                                 <span style={PS.metaVal}>{value}</span>
@@ -285,21 +357,23 @@ export default function TopicViewsPage() {
 
               <div style={PS.pager}>
                 <span style={PS.totalLabel}>
-                  Total views:&nbsp;<strong style={{ color: '#0f172a' }}>{formatNum(TOTAL_TOPIC_VIEWS)}</strong>
+                  Total views:&nbsp;<strong style={{ color: '#0f172a' }}>{formatNum(totalViews)}</strong>
                 </span>
-                <span style={PS.pagerLabel}>1 – 50 of {formatNum(TOTAL_TOPIC_ROWS)}</span>
+                <span style={PS.pagerLabel}>
+                  {totalRows > 0 ? `${(page - 1) * perPage + 1} – ${Math.min(page * perPage, totalRows)}` : '0'} of {formatNum(totalRows)}
+                </span>
                 <div style={PS.pagerBtns}>
-                  <PagerBtn disabled aria-label="First page"><IconChevDoubleLeft /></PagerBtn>
-                  <PagerBtn disabled aria-label="Previous page"><IconChevLeft /></PagerBtn>
-                  <PagerBtn aria-label="Next page"><IconChevRight /></PagerBtn>
-                  <PagerBtn aria-label="Last page"><IconChevDoubleRight /></PagerBtn>
+                  <PagerBtn disabled={page === 1} aria-label="First page" onClick={() => setPage(1)}><IconChevDoubleLeft /></PagerBtn>
+                  <PagerBtn disabled={page === 1} aria-label="Previous page" onClick={() => setPage(p => p - 1)}><IconChevLeft /></PagerBtn>
+                  <PagerBtn disabled={page * perPage >= totalRows} aria-label="Next page" onClick={() => setPage(p => p + 1)}><IconChevRight /></PagerBtn>
+                  <PagerBtn disabled={page * perPage >= totalRows} aria-label="Last page" onClick={() => setPage(Math.ceil(totalRows / perPage))}><IconChevDoubleRight /></PagerBtn>
                 </div>
               </div>
             </div>
           </section>
         </main>
 
-        <aside style={{ ...DS.drawer, transform: drawerOpen ? 'translateX(0)' : 'translateX(100%)' }}>
+        <aside style={{ ...DS.drawer, marginRight: drawerOpen ? 0 : -330, visibility: drawerOpen ? 'visible' : 'hidden' }}>
           <header style={DS.drawerHead}>
             <span style={DS.drawerTitle}>Refine search</span>
             <button type="button" style={DS.drawerClose} aria-label="Close" onClick={() => setDrawerOpen(false)}>
@@ -307,13 +381,76 @@ export default function TopicViewsPage() {
             </button>
           </header>
           <section style={DS.drawerBody}>
+            <div style={DS.selectAll}>
+              <Checkbox
+                label="All types"
+                bold
+                checked={allChecked}
+                indeterminate={allIndeterm}
+                onChange={(v) => { setOne('books', v); setOne('unstructured', v); setOne('articles', v); setOne('topics', v); setOne('attachments', v); }}
+              />
+            </div>
+
+            <fieldset style={{ border: 'none', padding: 0, margin: 0 }}>
+              <legend className="sr-only">Document types</legend>
+              <div style={DS.group}>
+                <Checkbox
+                  label="All documents"
+                  bold
+                  checked={isGroupChecked(allDoc)}
+                  indeterminate={isGroupIndeterm(allDoc)}
+                  onChange={(v) => setGroup(allDoc, v)}
+                />
+                <ul style={DS.list}>
+                  {DOC_GROUP.map((s) => (
+                    <li key={s.key} style={DS.listItem}>
+                      <Checkbox
+                        label={s.label}
+                        color={s.color}
+                        checked={pending[s.key]}
+                        onChange={(v) => setOne(s.key, v)}
+                      />
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              <div style={DS.group}>
+                <Checkbox
+                  label="All other components"
+                  bold
+                  checked={isGroupChecked(allOther)}
+                  indeterminate={isGroupIndeterm(allOther)}
+                  onChange={(v) => setGroup(allOther, v)}
+                />
+                <ul style={DS.list}>
+                  {OTHER_GROUP.map((s) => (
+                    <li key={s.key} style={DS.listItem}>
+                      <Checkbox
+                        label={s.label}
+                        color={s.color}
+                        checked={pending[s.key]}
+                        onChange={(v) => setOne(s.key, v)}
+                      />
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </fieldset>
+
+            <div style={DS.sectionTitle}>Topic title</div>
             <FloatingInput label="Search by topic title" value={topicQuery} onChange={setTopicQuery} />
+            <div style={{ height: '12px' }} />
+            <div style={DS.sectionTitle}>Document title</div>
             <FloatingInput label="Search by document title" value={documentQuery} onChange={setDocumentQuery} />
 
             <fieldset style={DS.fieldset}>
               <legend style={DS.legend}>Metadata</legend>
               <p style={DS.emptyMessage}>Select a metadata value in the result tags to add a filter.</p>
             </fieldset>
+
+            <div style={DS.sectionTitle}>User</div>
+            <FloatingInput label="User ID" value={userId} onChange={setUserId} />
           </section>
           <footer style={DS.drawerFooter}>
             <button type="button" style={DS.applyBtn} onClick={handleApply}>Apply</button>
@@ -435,7 +572,7 @@ const TS = {
 };
 
 const PS = {
-  layout: { display: 'flex', minHeight: 'calc(100vh - 60px - 56px)', background: '#ffffff' },
+  layout: { display: 'flex', minHeight: 'calc(100vh - 60px - 56px)', background: '#ffffff', overflow: 'hidden' },
   main: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' },
   resultHead: {
     display: 'flex',
@@ -598,7 +735,7 @@ const DS = {
     background: '#ffffff',
     display: 'flex',
     flexDirection: 'column',
-    transition: 'transform 200ms ease',
+    transition: 'margin-right 200ms ease, visibility 200ms',
   },
   drawerHead: {
     display: 'flex',
@@ -620,7 +757,17 @@ const DS = {
     alignItems: 'center',
     justifyContent: 'center',
   },
-  drawerBody: { padding: '16px 18px 12px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '12px' },
+  drawerBody: { padding: '14px 18px 14px', overflowY: 'auto', flex: 1 },
+  selectAll: { paddingBottom: '12px', borderBottom: '1px solid #f1f5f9', marginBottom: '12px' },
+  group: { marginBottom: '14px' },
+  list: { listStyle: 'none', padding: '4px 0 0 22px', margin: 0, display: 'flex', flexDirection: 'column', gap: '6px' },
+  listItem: { padding: '4px 0' },
+  sectionTitle: {
+    fontSize: '0.85rem',
+    fontWeight: 600,
+    color: '#0f172a',
+    marginBottom: '10px',
+  },
   fieldset: {
     border: 'none',
     padding: 0,
@@ -642,17 +789,18 @@ const DS = {
   drawerFooter: {
     padding: '12px 18px',
     borderTop: '1px solid #e5e7eb',
-    display: 'flex',
-    justifyContent: 'flex-end',
+    background: '#ffffff',
   },
   applyBtn: {
-    padding: '8px 22px',
+    width: '100%',
+    padding: '10px 14px',
     background: '#1d4ed8',
     color: '#ffffff',
     border: 'none',
-    borderRadius: '6px',
+    borderRadius: '8px',
+    fontSize: '0.88rem',
     fontWeight: 600,
+    fontFamily: 'inherit',
     cursor: 'pointer',
-    fontSize: '0.85rem',
   },
 };
