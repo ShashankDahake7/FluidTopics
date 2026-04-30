@@ -4,6 +4,10 @@ const mongoose = require('mongoose');
 // by its type ("template" for built-in custom templates, "document" for
 // published documents) and its key (the template slug or the document _id).
 // Only superadmins may create/update/delete these records.
+//
+// The image binary is stored directly in MongoDB (as a Buffer field) so the
+// icon is immediately available to every user on every server instance —
+// no shared filesystem required.
 const tileIconSchema = new mongoose.Schema(
   {
     tileType: {
@@ -19,7 +23,8 @@ const tileIconSchema = new mongoose.Schema(
     filename: { type: String, required: true },
     mimeType: { type: String, default: 'image/png' },
     size:     { type: Number, default: 0 },
-    path:     { type: String, required: true },   // relative to uploads/tile-icons/
+    // Image binary stored directly in the document — max 2 MB per icon.
+    data:     { type: Buffer, required: true },
     uploaderId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',

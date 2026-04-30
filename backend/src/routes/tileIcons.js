@@ -1,25 +1,15 @@
 const express  = require('express');
-const path     = require('path');
-const fs       = require('fs');
 const multer   = require('multer');
 const TileIcon = require('../models/TileIcon');
-const config   = require('../config/env');
 const { auth, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
 
 // ── Storage ──────────────────────────────────────────────────────────────────
-const ICON_DIR = path.resolve(config.upload.dir, 'tile-icons');
-fs.mkdirSync(ICON_DIR, { recursive: true });
-
+// Use memory storage — the file buffer goes straight into MongoDB, no disk
+// writes needed. This keeps icons available to every user on every instance.
 const upload = multer({
-  storage: multer.diskStorage({
-    destination: (_req, _file, cb) => cb(null, ICON_DIR),
-    filename:    (_req, file, cb) => {
-      const ext = path.extname(file.originalname);
-      cb(null, `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`);
-    },
-  }),
+  storage: multer.memoryStorage(),
   fileFilter: (_req, file, cb) => {
     if (/^image\//.test(file.mimetype)) cb(null, true);
     else cb(new Error('Only image files are allowed'), false);
@@ -40,7 +30,8 @@ function validateType(req, res) {
 // ── GET /api/tile-icons — list every custom icon (lightweight metadata) ──────
 router.get('/', async (_req, res, next) => {
   try {
-    const icons = await TileIcon.find().lean();
+    // Only fetch metadata fields, exclude the heavy `data` buffer
+    const icons = await TileIcon.find({}, 'tileType tileKey').lean();
     res.json({
       icons: icons.map((i) => ({
         tileType: i.tileType,
@@ -58,15 +49,13 @@ router.get('/:tileType/:tileKey', async (req, res, next) => {
     const icon = await TileIcon.findOne({
       tileType: req.params.tileType,
       tileKey:  req.params.tileKey,
-    }).lean();
-    if (!icon) return res.status(404).json({ error: 'No custom icon set' });
-
-    const filePath = path.resolve(config.upload.dir, icon.path);
-    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Icon file missing on disk' });
+    });
+    if (!icon || !icon.data) return res.status(404).json({ error: 'No custom icon set' });
 
     res.setHeader('Content-Type', icon.mimeType);
+    res.setHeader('Content-Length', icon.data.length);
     res.setHeader('Cache-Control', 'public, max-age=3600');
-    fs.createReadStream(filePath).pipe(res);
+    res.send(icon.data);
   } catch (err) { next(err); }
 });
 
@@ -83,14 +72,6 @@ router.post(
 
       const { tileType, tileKey } = req.params;
 
-      // Remove old file if replacing
-      const existing = await TileIcon.findOne({ tileType, tileKey }).lean();
-      if (existing) {
-        try { fs.unlinkSync(path.resolve(config.upload.dir, existing.path)); } catch { /* noop */ }
-      }
-
-      const relPath = `tile-icons/${path.basename(req.file.path)}`;
-
       const icon = await TileIcon.findOneAndUpdate(
         { tileType, tileKey },
         {
@@ -99,7 +80,7 @@ router.post(
           filename:   req.file.originalname,
           mimeType:   req.file.mimetype,
           size:       req.file.size,
-          path:       relPath,
+          data:       req.file.buffer,
           uploaderId: req.user._id,
         },
         { upsert: true, new: true, setDefaultsOnInsert: true }
@@ -129,7 +110,6 @@ router.delete(
         tileKey:  req.params.tileKey,
       });
       if (!icon) return res.status(404).json({ error: 'No custom icon to remove' });
-      try { fs.unlinkSync(path.resolve(config.upload.dir, icon.path)); } catch { /* noop */ }
       res.json({ message: 'Icon removed' });
     } catch (err) { next(err); }
   }
