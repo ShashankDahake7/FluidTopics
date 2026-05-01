@@ -2,6 +2,11 @@ const xml2js = require('xml2js');
 const cheerio = require('cheerio');
 const { stripHtml } = require('../../../utils/helpers');
 const { extractFromDitaCheerio } = require('../../metadata/customMetadata');
+const {
+  extractPaligoDocbookFromCheerio,
+  mergeCustomMaps,
+  synthesizeFluidTopicsFields,
+} = require('../../metadata/paligoMetadataExtractor');
 
 /**
  * Parse XML content (DITA/DocBook/generic) into structured sections
@@ -33,6 +38,12 @@ const parseXML = async (xmlContent, filename = '') => {
   try {
     const $xml = cheerio.load(xmlContent, { xmlMode: true, decodeEntities: false });
     metadata.custom = extractFromDitaCheerio($xml);
+    const paligoBag = extractPaligoDocbookFromCheerio($xml);
+    mergeCustomMaps(metadata.custom, paligoBag);
+    const rootEl = $xml('article, book, chapter').first();
+    const plain = rootEl.length ? rootEl.text() : $xml.root().text();
+    const xmlLang = rootEl.attr('xml:lang') || '';
+    synthesizeFluidTopicsFields(metadata.custom, { plainText: plain || '', xmlLang });
   } catch (_) {
     // Malformed XML — leave custom empty rather than crash the whole
     // ingest. The xml2js parser below has its own error path.

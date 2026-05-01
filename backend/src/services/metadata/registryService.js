@@ -99,7 +99,7 @@ async function upsertMetadataRegistry(topicIds) {
             manual: false,
             createdAt: now,
           },
-          $set: { lastSeenAt: now, manual: false },
+          $set: { lastSeenAt: now },
           // $addToSet + $slice keeps the sample bounded.
           $addToSet: { valuesSample: { $each: sample } },
           // valuesCount is best-effort — exact distinct counts would need

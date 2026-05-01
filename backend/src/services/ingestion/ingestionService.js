@@ -18,6 +18,7 @@ const {
   snapshotCustomRawForDocument,
   reprojectTopicsForDocument,
 } = require('../metadata/registryService');
+const { buildPaligoZipTopicCustom } = require('../metadata/paligoMetadataExtractor');
 const { regenerateForDocument: regeneratePrettyUrlsForDocument } = require('../prettyUrl/prettyUrlService');
 const { diffAndApplyTopics } = require('./diffIngest');
 const {
@@ -841,6 +842,7 @@ async function buildPaligoCandidates(files, images, paligoRoot, imageSrcMap, doc
   };
 
   const candidates = topicDataList.map((td, i) => {
+    const custom = buildPaligoZipTopicCustom(td, publication);
     const stableId = computeStableId({
       documentId: documentIdString,
       originId: td.originId,
@@ -850,6 +852,7 @@ async function buildPaligoCandidates(files, images, paligoRoot, imageSrcMap, doc
     const contentHash = computeTopicContentHash({
       html: td.content?.html || '',
       text: td.content?.text || '',
+      custom,
       hierarchy: { level: td.topicLevel || 1, order: td.order },
     });
     return {
@@ -862,7 +865,11 @@ async function buildPaligoCandidates(files, images, paligoRoot, imageSrcMap, doc
         level: td.topicLevel || 1,
         order: td.order,
       },
-      metadata: { language: 'en', author: td.author || '' },
+      metadata: {
+        language: 'en',
+        author: td.author || '',
+        custom,
+      },
       sourcePath: td.sourcePath || '',
       originId:   td.originId || '',
       permalink:  td.permalink || '',

@@ -27,6 +27,7 @@ function toUiRow(api) {
     // registry.
     dateLocked: false,
     manual: !!api.manual,
+    reserved: !!api.reserved,
   };
 }
 
@@ -174,6 +175,32 @@ export default function MetadataConfigPage() {
 
   const onCancel = () => setRows(savedRows);
 
+  const onSyncPaligo = async () => {
+    const raw = window.prompt('Paligo folder IDs to sync (comma-separated). Leave empty to sync root documents only.', '39000,1289615');
+    if (raw == null) return;
+    const folderIds = raw
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    setBusy(true);
+    setError('');
+    try {
+      const res = await api.post('/metadata-keys/sync-paligo', {
+        folderIds,
+        includeRootDocuments: true,
+        includeDocumentDetails: true,
+      });
+      await refetch();
+      const docs = res?.result?.documents?.detailed || res?.result?.documents?.listed || 0;
+      alert(`Paligo metadata synced from ${docs} document${docs === 1 ? '' : 's'}.`);
+    } catch (e) {
+      setError(e?.message || 'Paligo metadata sync failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   // ── progress strip helpers ──────────────────────────────────────────────
   const showProgress = job && (job.status === 'queued' || job.status === 'running');
   const progressLabel = job && job.total
@@ -188,13 +215,18 @@ export default function MetadataConfigPage() {
             <h1 style={S.h1}>Metadata configuration</h1>
             <p style={S.subtitle}>Choose which metadata should be indexed and define metadata to be set as dates.</p>
           </div>
-          <button type="button" style={S.primaryBtn} onClick={() => setEditing('new')} disabled={busy}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <line x1="12" y1="5" x2="12" y2="19" />
-              <line x1="5"  y1="12" x2="19" y2="12" />
-            </svg>
-            <span>New metadata</span>
-          </button>
+          <div style={S.headerActions}>
+            <button type="button" style={S.secondaryBtn} onClick={onSyncPaligo} disabled={busy}>
+              <span>Sync Paligo</span>
+            </button>
+            <button type="button" style={S.primaryBtn} onClick={() => setEditing('new')} disabled={busy}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5"  y1="12" x2="19" y2="12" />
+              </svg>
+              <span>New metadata</span>
+            </button>
+          </div>
         </header>
 
         {error && (
@@ -299,7 +331,7 @@ export default function MetadataConfigPage() {
                     />
                   </td>
                   <td style={{ ...S.td, textAlign: 'right', whiteSpace: 'nowrap' }}>
-                    {r.manual && r.valuesCount === 0 && (
+                    {!r.reserved && (
                       <>
                         <IconBtn title="Edit metadata" onClick={() => setEditing(r)}>
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -354,13 +386,14 @@ export default function MetadataConfigPage() {
         editing={editing && editing !== 'new' ? editing : null}
         onCancel={() => setEditing(null)}
         onSave={upsertRow}
+        onRefetch={refetch}
         busy={busy}
       />
 
       <ConfirmModal
         open={confirm?.kind === 'delete'}
         title={confirm?.row ? `Delete "${confirm.row.key}"?` : ''}
-        body="The metadata key will be removed from the configuration. Save and reprocess to apply the change."
+        body="This removes the metadata key from the configuration, topic metadata, indexed search values, and dependent rules. This cannot be undone."
         onCancel={() => setConfirm(null)}
         onConfirm={async () => {
           if (confirm?.row) await deleteRow(confirm.row);
@@ -438,9 +471,12 @@ function IconBtn({ title, danger, onClick, children }) {
   );
 }
 
-function MetadataModal({ open, existingKeys, editing, onCancel, onSave, busy }) {
+function MetadataModal({ open, existingKeys, editing, onCancel, onSave, onRefetch, busy }) {
   const isEdit = !!editing;
   const [draft, setDraft] = useState({ key: '', indexed: true, isDate: false });
+  const [newValue, setNewValue] = useState('');
+  const [valueBusy, setValueBusy] = useState(false);
+  const [valueError, setValueError] = useState('');
 
   useEffect(() => {
     if (!open) return undefined;
@@ -448,6 +484,8 @@ function MetadataModal({ open, existingKeys, editing, onCancel, onSave, busy }) 
       ? { key: editing.key, indexed: editing.indexed, isDate: editing.isDate }
       : { key: '', indexed: true, isDate: false }
     );
+    setNewValue('');
+    setValueError('');
     const onKey = (e) => { if (e.key === 'Escape') onCancel?.(); };
     window.addEventListener('keydown', onKey);
     const prev = document.body.style.overflow;
@@ -462,6 +500,23 @@ function MetadataModal({ open, existingKeys, editing, onCancel, onSave, busy }) 
   const otherKeys = isEdit ? existingKeys.filter((k) => k !== editing.key.toLowerCase()) : existingKeys;
   const clash = otherKeys.includes(lower);
   const valid = keyTrim && !clash && !busy;
+
+  const addValue = async () => {
+    if (!isEdit || !editing?.id) return;
+    const value = newValue.trim();
+    if (!value) return;
+    setValueBusy(true);
+    setValueError('');
+    try {
+      await api.patch(`/metadata-keys/${editing.id}`, { addValue: value });
+      setNewValue('');
+      await onRefetch?.();
+    } catch (e) {
+      setValueError(e?.message || 'Add value failed');
+    } finally {
+      setValueBusy(false);
+    }
+  };
 
   return (
     <div role="presentation" onClick={onCancel} style={S.modalOverlay}>
@@ -488,6 +543,37 @@ function MetadataModal({ open, existingKeys, editing, onCancel, onSave, busy }) 
             />
           </FloatField>
           {clash && <span style={{ fontSize: '0.78rem', color: '#b91c1c', marginTop: '-8px' }}>A metadata with this key already exists.</span>}
+
+          {isEdit && (
+            <div style={S.valueEditorBox}>
+              <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#334155' }}>Values</div>
+              <ValueChips values={editing.values || []} />
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <input
+                  type="text"
+                  value={newValue}
+                  onChange={(e) => setNewValue(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      addValue();
+                    }
+                  }}
+                  placeholder="Add value"
+                  style={S.formInput}
+                />
+                <button
+                  type="button"
+                  onClick={addValue}
+                  disabled={valueBusy || !newValue.trim()}
+                  style={{ ...S.secondaryBtn, opacity: valueBusy || !newValue.trim() ? 0.55 : 1 }}
+                >
+                  Add
+                </button>
+              </div>
+              {valueError && <span style={{ fontSize: '0.78rem', color: '#b91c1c' }}>{valueError}</span>}
+            </div>
+          )}
 
           <label style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
             <input type="checkbox" checked={draft.indexed} onChange={(e) => setDraft((d) => ({ ...d, indexed: e.target.checked }))}
@@ -579,6 +665,9 @@ const S = {
   headerRow: {
     display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '14px',
   },
+  headerActions: {
+    display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end',
+  },
   h1: { fontSize: '1.4rem', fontWeight: 700, color: '#0f172a', margin: 0 },
   subtitle: { margin: '4px 0 0', fontSize: '0.92rem', color: '#475569' },
   primaryBtn: {
@@ -659,6 +748,15 @@ const S = {
     padding: '2px 8px', borderRadius: '999px',
     background: '#fef2f2', color: '#b91c1c',
     fontSize: '0.74rem', fontWeight: 600,
+  },
+  valueEditorBox: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '10px',
+    padding: '12px',
+    border: '1px solid #e2e8f0',
+    borderRadius: '6px',
+    background: '#f8fafc',
   },
   errorBar: {
     background: '#fef2f2', color: '#b91c1c',

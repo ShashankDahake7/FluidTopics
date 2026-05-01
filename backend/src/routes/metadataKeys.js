@@ -7,6 +7,15 @@ const { auth, requireRole } = require('../middleware/auth');
 const MetadataKey = require('../models/MetadataKey');
 const MetadataReprocessJob = require('../models/MetadataReprocessJob');
 const Topic = require('../models/Topic');
+const Document = require('../models/Document');
+const EnrichRule = require('../models/EnrichRule');
+const AccessRule = require('../models/AccessRule');
+const FeedbackSettings = require('../models/FeedbackSettings');
+const AlertsConfig = require('../models/AlertsConfig');
+const PrettyUrlTemplate = require('../models/PrettyUrlTemplate');
+const SeoConfig = require('../models/SeoConfig');
+const { syncPaligoMetadataRegistry } = require('../services/metadata/paligoApiMetadataService');
+const { reprojectTopicsForDocument } = require('../services/metadata/registryService');
 
 const router = express.Router();
 
@@ -28,6 +37,7 @@ function serialise(row) {
     isIndexed: !!obj.isIndexed,
     isDate: !!obj.isDate,
     manual: !!obj.manual,
+    reserved: MetadataKey.isReserved(obj.name),
     valuesSample: obj.valuesSample || [],
     valuesCount: obj.valuesCount || 0,
     invalidDateCount: obj.invalidDateCount || 0,
@@ -57,6 +67,7 @@ function serialiseJob(job) {
 // polling without state loss.
 router.get('/', auth, adminOrEditor, async (req, res, next) => {
   try {
+    res.set('Cache-Control', 'no-store');
     const { search } = req.query;
     const q = {};
     if (search && String(search).trim()) {
@@ -112,6 +123,30 @@ router.post('/', auth, adminOrEditor, async (req, res, next) => {
   }
 });
 
+// POST /api/metadata-keys/sync-paligo — pull live metadata values from the
+// Paligo API into the metadata registry shown by this page. Body:
+//   { folderIds?: [39000, 1289615], includeRootDocuments?: boolean }
+router.post('/sync-paligo', auth, adminOrEditor, async (req, res, next) => {
+  try {
+    res.set('Cache-Control', 'no-store');
+    const {
+      folderIds = [],
+      includeRootDocuments = true,
+      includeDocumentDetails = true,
+      projectToCorpus = true,
+      indexForSearch = true,
+    } = req.body || {};
+    const result = await syncPaligoMetadataRegistry({
+      folderIds,
+      includeRootDocuments,
+      includeDocumentDetails,
+      projectToCorpus,
+      indexForSearch,
+    });
+    res.json({ ok: true, result });
+  } catch (err) { next(err); }
+});
+
 // PATCH /api/metadata-keys/:id — toggle isIndexed/isDate, or rename when no
 // values are present. The frontend uses the toggles individually for live
 // state and falls back to /save-and-reprocess for the bulk "apply config"
@@ -124,7 +159,7 @@ router.patch('/:id', auth, adminOrEditor, async (req, res, next) => {
     const row = await MetadataKey.findById(req.params.id);
     if (!row) return res.status(404).json({ error: 'Metadata key not found' });
 
-    const { name, isIndexed, isDate } = req.body || {};
+    const { name, isIndexed, isDate, addValue, removeValue } = req.body || {};
 
     if (name != null) {
       const display = String(name).trim();
@@ -132,16 +167,11 @@ router.patch('/:id', auth, adminOrEditor, async (req, res, next) => {
       if (MetadataKey.isReserved(display)) {
         return res.status(400).json({ error: `"${display}" is a reserved built-in metadata field.` });
       }
-      // Renames are only safe before any topic carries the key — once
-      // values exist the lower-cased name is referenced from
-      // metadata.custom maps across the corpus.
-      if (row.valuesCount > 0) {
-        return res.status(409).json({ error: 'Cannot rename a key that already has values.' });
-      }
       const lower = display.toLowerCase();
       if (lower !== row.name) {
         const dup = await MetadataKey.findOne({ name: lower, _id: { $ne: row._id } });
         if (dup) return res.status(409).json({ error: 'Another metadata key already uses that name.' });
+        await renameMetadataEverywhere(row.name, display);
         row.name = lower;
       }
       row.displayName = display;
@@ -158,13 +188,32 @@ router.patch('/:id', auth, adminOrEditor, async (req, res, next) => {
       row.isDate = !!isDate;
     }
 
+    if (addValue != null) {
+      const value = String(addValue).trim();
+      if (value) {
+        const current = Array.isArray(row.valuesSample) ? row.valuesSample : [];
+        if (!current.includes(value)) {
+          row.valuesSample = [...current, value].slice(0, 10);
+          row.valuesCount = Math.max(row.valuesCount || 0, row.valuesSample.length);
+        }
+      }
+    }
+
+    if (removeValue != null) {
+      const value = String(removeValue).trim();
+      if (value) {
+        row.valuesSample = (row.valuesSample || []).filter((v) => v !== value);
+        row.valuesCount = Math.max(0, Math.min(row.valuesCount || 0, row.valuesSample.length));
+      }
+    }
+
     await row.save();
     res.json({ item: serialise(row) });
   } catch (err) { next(err); }
 });
 
-// DELETE /api/metadata-keys/:id — manual-only, value-less keys can be
-// removed before content arrives. Anything backed by topic data is locked.
+// DELETE /api/metadata-keys/:id — remove a custom/discovered metadata key from
+// the registry and from every topic/document metadata bag that uses it.
 router.delete('/:id', auth, adminOrEditor, async (req, res, next) => {
   try {
     if (!mongoose.isValidObjectId(req.params.id)) {
@@ -172,14 +221,10 @@ router.delete('/:id', auth, adminOrEditor, async (req, res, next) => {
     }
     const row = await MetadataKey.findById(req.params.id);
     if (!row) return res.status(404).json({ error: 'Metadata key not found' });
-    if (!row.manual) {
-      return res.status(409).json({ error: 'Auto-discovered metadata keys cannot be deleted.' });
+    if (MetadataKey.isReserved(row.name)) {
+      return res.status(400).json({ error: 'Built-in metadata fields cannot be deleted.' });
     }
-    if (row.valuesCount > 0) {
-      return res.status(409).json({
-        error: 'This metadata key has associated values and cannot be deleted.',
-      });
-    }
+    await deleteMetadataEverywhere(row.name);
     await row.deleteOne();
     res.status(204).end();
   } catch (err) { next(err); }
@@ -352,6 +397,249 @@ function spawnReprocessWorker(jobId) {
       }
     }
   });
+}
+
+function valuesArray(value) {
+  if (Array.isArray(value)) return value.map((v) => String(v)).filter(Boolean);
+  if (value == null) return [];
+  return [String(value)].filter(Boolean);
+}
+
+function mergeValues(a, b) {
+  const out = [];
+  for (const v of [...valuesArray(a), ...valuesArray(b)]) {
+    if (!out.includes(v)) out.push(v);
+  }
+  return out;
+}
+
+function mapToPlain(mapLike) {
+  if (!mapLike) return {};
+  if (mapLike instanceof Map) return Object.fromEntries(mapLike.entries());
+  return { ...mapLike };
+}
+
+function renameCustomBag(mapLike, oldLower, newDisplay) {
+  const plain = mapToPlain(mapLike);
+  const out = {};
+  let moved = [];
+  let changed = false;
+  for (const [key, value] of Object.entries(plain)) {
+    if (String(key).trim().toLowerCase() === oldLower) {
+      moved = mergeValues(moved, value);
+      changed = true;
+    } else {
+      out[key] = value;
+    }
+  }
+  if (changed) out[newDisplay] = mergeValues(out[newDisplay], moved);
+  return { changed, value: out };
+}
+
+function deleteFromCustomBag(mapLike, oldLower) {
+  const plain = mapToPlain(mapLike);
+  const out = {};
+  let changed = false;
+  for (const [key, value] of Object.entries(plain)) {
+    if (String(key).trim().toLowerCase() === oldLower) {
+      changed = true;
+    } else {
+      out[key] = value;
+    }
+  }
+  return { changed, value: out };
+}
+
+async function mutateTopicMetadata(oldLower, mutator) {
+  const affectedDocumentIds = new Set();
+  const cursor = Topic.find(
+    {
+      $or: [
+        { 'metadata.custom': { $exists: true } },
+        { 'metadata.customRaw': { $exists: true } },
+      ],
+    },
+    'metadata.custom metadata.customRaw documentId'
+  ).cursor({ batchSize: 200 });
+
+  for await (const topic of cursor) {
+    const nextCustom = mutator(topic.metadata?.custom, oldLower);
+    const nextRaw = mutator(topic.metadata?.customRaw, oldLower);
+    if (!nextCustom.changed && !nextRaw.changed) continue;
+
+    topic.metadata = topic.metadata || {};
+    if (nextCustom.changed) topic.metadata.custom = nextCustom.value;
+    if (nextRaw.changed) topic.metadata.customRaw = nextRaw.value;
+    await topic.save();
+    if (topic.documentId) affectedDocumentIds.add(String(topic.documentId));
+  }
+
+  return affectedDocumentIds;
+}
+
+async function mutateDocumentMetadata(oldLower, mutator) {
+  const affectedDocumentIds = new Set();
+  const cursor = Document.find(
+    { 'metadata.customFields': { $exists: true } },
+    'metadata.customFields'
+  ).cursor({ batchSize: 200 });
+
+  for await (const doc of cursor) {
+    const next = mutator(doc.metadata?.customFields, oldLower);
+    if (!next.changed) continue;
+    doc.metadata = doc.metadata || {};
+    const scalar = {};
+    for (const [key, value] of Object.entries(next.value)) {
+      const first = Array.isArray(value) ? value[0] : value;
+      if (first != null) scalar[key] = String(first);
+    }
+    doc.metadata.customFields = scalar;
+    await doc.save();
+    affectedDocumentIds.add(String(doc._id));
+  }
+
+  return affectedDocumentIds;
+}
+
+async function reprojectAffectedDocuments(ids) {
+  for (const id of ids) {
+    await reprojectTopicsForDocument(id);
+  }
+}
+
+function sameKey(a, oldLower) {
+  return String(a || '').trim().toLowerCase() === oldLower;
+}
+
+async function renameReferences(oldLower, newDisplay) {
+  const newLower = newDisplay.toLowerCase();
+
+  await EnrichRule.updateMany({ metadataKey: oldLower }, { $set: { metadataKey: newLower } });
+  const copyRules = await EnrichRule.find({ 'config.sourceKey': oldLower });
+  for (const rule of copyRules) {
+    rule.config = { ...(rule.config || {}), sourceKey: newLower };
+    await rule.save();
+  }
+
+  const accessRules = await AccessRule.find({});
+  for (const rule of accessRules) {
+    rule.requirements = (rule.requirements || []).map((r) => (
+      sameKey(r.key, oldLower) ? { ...r.toObject?.() || r, key: newDisplay } : r
+    ));
+    if (sameKey(rule.autoBindKey, oldLower)) rule.autoBindKey = newDisplay;
+    await rule.save();
+  }
+
+  await renameSingletonArrayKey(FeedbackSettings, 'feedback-settings', ['subjectMetadataKeys', 'bodyMetadataKeys'], oldLower, newDisplay);
+  await renameSingletonArrayKey(AlertsConfig, 'alerts-config', ['bodyMetadataKeys'], oldLower, newDisplay);
+
+  const pretty = await PrettyUrlTemplate.find({});
+  for (const row of pretty) {
+    row.requirements = (row.requirements || []).map((r) => (
+      sameKey(r.key, oldLower) ? { ...r.toObject?.() || r, key: newDisplay } : r
+    ));
+    await row.save();
+  }
+
+  const seo = await SeoConfig.findOne();
+  if (seo) {
+    seo.titleTags = (seo.titleTags || []).map((t) => (
+      sameKey(t.metadata, oldLower) ? { ...t.toObject?.() || t, metadata: newDisplay } : t
+    ));
+    seo.customRules = (seo.customRules || []).map((r) => (
+      sameKey(r.metadataKey, oldLower) ? { ...r.toObject?.() || r, metadataKey: newDisplay } : r
+    ));
+    await seo.save();
+  }
+}
+
+async function deleteReferences(oldLower) {
+  await EnrichRule.deleteMany({ metadataKey: oldLower });
+  const copyRules = await EnrichRule.find({ 'config.sourceKey': oldLower });
+  for (const rule of copyRules) {
+    rule.config = { ...(rule.config || {}) };
+    delete rule.config.sourceKey;
+    await rule.save();
+  }
+
+  const accessRules = await AccessRule.find({});
+  for (const rule of accessRules) {
+    rule.requirements = (rule.requirements || []).filter((r) => !sameKey(r.key, oldLower));
+    if (sameKey(rule.autoBindKey, oldLower)) rule.autoBindKey = '';
+    await rule.save();
+  }
+
+  await deleteSingletonArrayKey(FeedbackSettings, 'feedback-settings', ['subjectMetadataKeys', 'bodyMetadataKeys'], oldLower);
+  await deleteSingletonArrayKey(AlertsConfig, 'alerts-config', ['bodyMetadataKeys'], oldLower);
+
+  const pretty = await PrettyUrlTemplate.find({});
+  for (const row of pretty) {
+    row.requirements = (row.requirements || []).filter((r) => !sameKey(r.key, oldLower));
+    await row.save();
+  }
+
+  const seo = await SeoConfig.findOne();
+  if (seo) {
+    seo.titleTags = (seo.titleTags || []).filter((t) => !sameKey(t.metadata, oldLower));
+    seo.customRules = (seo.customRules || []).filter((r) => !sameKey(r.metadataKey, oldLower));
+    await seo.save();
+  }
+}
+
+async function renameSingletonArrayKey(Model, id, fields, oldLower, newDisplay) {
+  const doc = await Model.findById(id).catch(() => null);
+  if (!doc) return;
+  let changed = false;
+  for (const field of fields) {
+    const arr = Array.isArray(doc[field]) ? doc[field] : [];
+    const next = arr.map((v) => sameKey(v, oldLower) ? newDisplay : v);
+    if (JSON.stringify(arr) !== JSON.stringify(next)) {
+      doc[field] = next;
+      changed = true;
+    }
+  }
+  if (changed) await doc.save();
+}
+
+async function deleteSingletonArrayKey(Model, id, fields, oldLower) {
+  const doc = await Model.findById(id).catch(() => null);
+  if (!doc) return;
+  let changed = false;
+  for (const field of fields) {
+    const arr = Array.isArray(doc[field]) ? doc[field] : [];
+    const next = arr.filter((v) => !sameKey(v, oldLower));
+    if (JSON.stringify(arr) !== JSON.stringify(next)) {
+      doc[field] = next;
+      changed = true;
+    }
+  }
+  if (changed) await doc.save();
+}
+
+async function renameMetadataEverywhere(oldName, newDisplay) {
+  const oldLower = String(oldName || '').trim().toLowerCase();
+  if (!oldLower) return;
+  if (MetadataKey.isReserved(oldLower)) {
+    throw Object.assign(new Error('Built-in metadata fields cannot be renamed.'), { status: 400 });
+  }
+  const affected = new Set();
+  for (const id of await mutateTopicMetadata(oldLower, (bag, key) => renameCustomBag(bag, key, newDisplay))) affected.add(id);
+  for (const id of await mutateDocumentMetadata(oldLower, (bag, key) => renameCustomBag(bag, key, newDisplay))) affected.add(id);
+  await renameReferences(oldLower, newDisplay);
+  await reprojectAffectedDocuments(affected);
+}
+
+async function deleteMetadataEverywhere(oldName) {
+  const oldLower = String(oldName || '').trim().toLowerCase();
+  if (!oldLower) return;
+  if (MetadataKey.isReserved(oldLower)) {
+    throw Object.assign(new Error('Built-in metadata fields cannot be deleted.'), { status: 400 });
+  }
+  const affected = new Set();
+  for (const id of await mutateTopicMetadata(oldLower, deleteFromCustomBag)) affected.add(id);
+  for (const id of await mutateDocumentMetadata(oldLower, deleteFromCustomBag)) affected.add(id);
+  await deleteReferences(oldLower);
+  await reprojectAffectedDocuments(affected);
 }
 
 module.exports = router;
