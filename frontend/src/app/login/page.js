@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import api, { getStoredToken, storeAuthSession } from '@/lib/api';
 import PortalSignInLanding from '@/components/portal/PortalSignInLanding';
 import '@/components/portal/portal.css';
@@ -35,18 +35,55 @@ function resolveNextRoute(query) {
 
 export default function LoginPage() {
   const router = useRouter();
-  const [mode, setMode] = useState(null);
+  const searchParams = useSearchParams();
+  const queryString = searchParams.toString();
+  const query = useMemo(() => new URLSearchParams(queryString), [queryString]);
+  const handoffToken = query.get('db_sso_token');
+  const ssoError = useMemo(() => {
+    return query.get('db_sso_error') ? query.get('message') || 'Darwinbox SSO sign-in failed.' : '';
+  }, [query]);
+  const mode = query.get('register') === '1' ? 'register' : 'signin';
 
   useEffect(() => {
-    const q = readQuery();
+    let cancelled = false;
+    const q = new URLSearchParams(queryString);
+    const handoffToken = q.get('db_sso_token');
+    const handoffRefresh = q.get('db_sso_refresh');
+
+    if (handoffToken) {
+      (async () => {
+        storeAuthSession({ token: handoffToken, refreshToken: handoffRefresh }, true);
+        try {
+          const me = await api.get('/auth/me');
+          if (!cancelled) {
+            storeAuthSession(
+              { token: handoffToken, refreshToken: handoffRefresh, user: me?.user },
+              true
+            );
+          }
+        } catch {
+          /* The token is enough to let the next page retry /auth/me. */
+        }
+        if (!cancelled) {
+          window.dispatchEvent(new Event('ft-auth'));
+          router.replace(resolveNextRoute(q));
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }
+
     if (getStoredToken()) {
       router.replace(resolveNextRoute(q));
       return;
     }
-    setMode(q.get('register') === '1' ? 'register' : 'signin');
-  }, [router]);
+    return () => {
+      cancelled = true;
+    };
+  }, [router, queryString]);
 
-  if (mode === null) {
+  if (handoffToken) {
     return (
       <main className="portal-shell-main portal-gate-loading-main">
         <div className="portal-gate-loading">
@@ -60,6 +97,7 @@ export default function LoginPage() {
     return (
       <main className="portal-shell-main">
         <PortalSignInLanding
+          initialError={ssoError}
           onSuccess={() => {
             window.dispatchEvent(new Event('ft-auth'));
             router.replace(resolveNextRoute(readQuery()));

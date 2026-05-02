@@ -31,6 +31,12 @@ const config = {
     secret: process.env.JWT_SECRET || 'default_secret',
     expiresIn: process.env.JWT_EXPIRES_IN || '7d',
   },
+  darwinboxHelpPortalSso: {
+    encryptionKey: process.env.DARWINBOX_HELP_PORTAL_SSO_ENCRYPTION_KEY || '',
+    iv: process.env.DARWINBOX_HELP_PORTAL_SSO_IV || '',
+    postSsoRedirectBase: process.env.DARWINBOX_HELP_PORTAL_POST_SSO_REDIRECT_BASE || '',
+    debug: String(process.env.DARWINBOX_HELP_PORTAL_SSO_DEBUG || '').toLowerCase() === 'true',
+  },
   upload: {
     dir: process.env.UPLOAD_DIR || './uploads',
     maxFileSize: parseInt(process.env.MAX_FILE_SIZE) || 104857600, // 100MB

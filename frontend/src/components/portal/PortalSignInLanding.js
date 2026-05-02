@@ -17,14 +17,14 @@ function DbIcon() {
   );
 }
 
-export default function PortalSignInLanding({ onSuccess }) {
+export default function PortalSignInLanding({ onSuccess, initialError = '' }) {
   const [role, setRole] = useState('client');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [remember, setRemember] = useState(true);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState(initialError);
   const [authConfig, setAuthConfig] = useState(null);
 
   useEffect(() => {

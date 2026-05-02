@@ -3,9 +3,11 @@ const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const Session = require('../models/Session');
+const DefaultRolesConfig = require('../models/DefaultRolesConfig');
 const config = require('../config/env');
 const { auth } = require('../middleware/auth');
 const emailService = require('../services/email/emailService');
+const vocab = require('../services/users/rolesVocabulary');
 
 const router = express.Router();
 
@@ -88,6 +90,117 @@ const hashToken = (raw) => crypto.createHash('sha256').update(raw).digest('hex')
 // Whether unauthenticated visitors can create their own account from the
 // /login screen. Off by default — admins provision users from /admin/users.
 const SELF_REGISTRATION_ENABLED = false;
+
+const DARWINBOX_HELP_PORTAL_SSO_METHOD = 'aes-256-cbc';
+const DARWINBOX_HELP_PORTAL_SSO_PROVIDER = 'darwinbox-help-portal';
+
+function httpError(message, status) {
+  const err = new Error(message);
+  err.status = status;
+  return err;
+}
+
+function logDarwinboxHelpPortalSso(payload, level = 'log') {
+  if (!config.darwinboxHelpPortalSso.debug) return;
+  const line = JSON.stringify(payload);
+  if (level === 'error') {
+    console.error('[DarwinboxHelpPortalSSO]', line);
+  } else {
+    console.log('[DarwinboxHelpPortalSSO]', line);
+  }
+}
+
+function resolvePostSsoRedirectBase(req) {
+  const configured = String(config.darwinboxHelpPortalSso.postSsoRedirectBase || '').trim();
+  if (configured) return configured.replace(/\/+$/, '');
+  const proto = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+  const host = req.headers['x-forwarded-host'] || req.get('host');
+  return `${proto}://${host}`.replace(/\/+$/, '');
+}
+
+function fullyUrlDecodeQueryValue(value) {
+  let s = String(value || '').trim();
+  for (let i = 0; i < 8; i += 1) {
+    try {
+      const next = decodeURIComponent(s);
+      if (next === s) break;
+      s = next;
+    } catch {
+      break;
+    }
+  }
+  return s;
+}
+
+function opensslAes256CbcKeyFromRawSecret(secret) {
+  const buf = Buffer.from(String(secret || ''), 'utf8');
+  const key = Buffer.alloc(32, 0);
+  buf.copy(key, 0, 0, Math.min(buf.length, 32));
+  return key;
+}
+
+function decodeDarwinboxIv(rawIv) {
+  const iv = String(rawIv || '').trim();
+  if (!iv) return Buffer.alloc(16, 0);
+  if (/^[0-9a-f]{32}$/i.test(iv)) return Buffer.from(iv, 'hex');
+  try {
+    const b64 = Buffer.from(iv, 'base64');
+    if (b64.length === 16) return b64;
+  } catch {
+    /* fall through to utf8 */
+  }
+  const utf8 = Buffer.from(iv, 'utf8');
+  if (utf8.length !== 16) {
+    throw httpError('DARWINBOX_HELP_PORTAL_SSO_IV must decode to 16 bytes.', 503);
+  }
+  return utf8;
+}
+
+function decryptDarwinboxHelpPortalPayload(dataParam, encryptionSecret) {
+  const secret = String(encryptionSecret || '').trim();
+  // Do not map `+` to space: Darwinbox sends base64 and PHP urlencode uses `%2B`.
+  const decoded = fullyUrlDecodeQueryValue(dataParam);
+  const combined = Buffer.from(decoded, 'base64');
+  const key = opensslAes256CbcKeyFromRawSecret(secret);
+  const iv = decodeDarwinboxIv(config.darwinboxHelpPortalSso.iv);
+  const decipher = crypto.createDecipheriv(DARWINBOX_HELP_PORTAL_SSO_METHOD, key, iv);
+  const plain = Buffer.concat([decipher.update(combined), decipher.final()]);
+  return JSON.parse(plain.toString('utf8'));
+}
+
+function firstNonEmpty(...values) {
+  for (const value of values) {
+    const str = String(value || '').trim();
+    if (str) return str;
+  }
+  return '';
+}
+
+function nameFromDarwinboxPayload(payload) {
+  const fullName = firstNonEmpty(payload.name, payload.fullname, payload.fullName, payload.employee_name);
+  if (fullName) return fullName.slice(0, 120);
+  const first = firstNonEmpty(payload.firstname, payload.firstName, payload.first_name);
+  const last = firstNonEmpty(payload.lastname, payload.lastName, payload.last_name);
+  return `${first} ${last}`.trim().slice(0, 120) || 'Darwinbox User';
+}
+
+function subjectFromDarwinboxPayload(payload, email) {
+  return firstNonEmpty(
+    payload.sub,
+    payload.user_id,
+    payload.employee_id,
+    payload.employeeId,
+    payload.employee_code,
+    payload.unique_user_code,
+    payload.id,
+    email
+  ).slice(0, 200);
+}
+
+async function defaultAuthenticatedPermissions() {
+  const defaults = await DefaultRolesConfig.getSingleton();
+  return vocab.sanitizeDefaultRoles(defaults.authenticated || [], 'authenticated');
+}
 
 // POST /api/auth/register
 router.post('/register', async (req, res, next) => {
@@ -357,6 +470,162 @@ router.post('/sso/oidc/callback', async (req, res, next) => {
     res.json({ token: accessToken, refreshToken, user: user.toJSON() });
   } catch (err) { next(err); }
 });
+
+// GET /api/auth/sso/darwinbox/handoff — Darwinbox Help Portal SSO callback.
+// Darwinbox redirects here with encrypted `data` and `sp=help_portal`.
+async function darwinboxHelpPortalHandoff(req, res) {
+  const q = req.query || {};
+  const rawData = typeof q.data === 'string' ? q.data : '';
+  logDarwinboxHelpPortalSso({
+    step: 'controller_request',
+    method: req.method,
+    path: req.path,
+    sp: q.sp ?? null,
+    dataLength: rawData.length,
+    dataPrefix: rawData.slice(0, 48),
+    ip: req.ip,
+  });
+
+  try {
+    if (!config.darwinboxHelpPortalSso.encryptionKey) {
+      throw httpError(
+        'Darwinbox Help Portal SSO is not configured (set DARWINBOX_HELP_PORTAL_SSO_ENCRYPTION_KEY).',
+        503
+      );
+    }
+    if (!rawData) throw httpError('Missing data query parameter.', 400);
+    if (q.sp && !['help_portal', 'help-portal', 'helpportal'].includes(String(q.sp))) {
+      throw httpError('Invalid sp parameter.', 400);
+    }
+
+    let payload;
+    try {
+      payload = decryptDarwinboxHelpPortalPayload(
+        rawData,
+        config.darwinboxHelpPortalSso.encryptionKey
+      );
+    } catch (decryptErr) {
+      if (decryptErr?.status) throw decryptErr;
+      logDarwinboxHelpPortalSso({
+        step: 'decrypt_failed',
+        errMessage: decryptErr?.message || String(decryptErr),
+        errName: decryptErr?.name,
+      }, 'error');
+      throw httpError('Invalid or corrupted handoff payload.', 400);
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    const exp = Number(payload.expire_after || payload.expires_at || payload.exp);
+    const email = String(payload.email || payload.user_email || payload.work_email || '')
+      .trim()
+      .toLowerCase();
+
+    logDarwinboxHelpPortalSso({
+      step: 'decrypted_ok',
+      emailFromPayload: email || null,
+      expire_after: payload.expire_after ?? payload.expires_at ?? payload.exp ?? null,
+      nowUnix: now,
+      secondsToExpiry: Number.isFinite(exp) ? exp - now : null,
+      tenant_subdomain: payload.tenant_subdomain ?? null,
+      unique_tenant_code: payload.unique_tenant_code ?? null,
+    });
+
+    if (!Number.isFinite(exp) || exp < now) {
+      throw httpError('Handoff payload has expired.', 401);
+    }
+    if (!email) throw httpError('Missing email in handoff payload.', 400);
+
+    const ssoSubject = subjectFromDarwinboxPayload(payload, email);
+    let user = await User.findOne({
+      ssoProvider: DARWINBOX_HELP_PORTAL_SSO_PROVIDER,
+      ssoSubject,
+    });
+    if (!user) user = await User.findOne({ email });
+
+    if (!user) {
+      try {
+        user = await User.create({
+          name: nameFromDarwinboxPayload(payload),
+          email,
+          password: crypto.randomBytes(24).toString('hex'),
+          role: 'viewer',
+          realm: 'sso',
+          ssoProvider: DARWINBOX_HELP_PORTAL_SSO_PROVIDER,
+          ssoSubject,
+          emailVerified: true,
+          permissionsDefault: await defaultAuthenticatedPermissions(),
+        });
+        logDarwinboxHelpPortalSso({
+          step: 'user_provisioned',
+          userId: String(user._id),
+          email: user.email,
+          name: user.name,
+        });
+      } catch (createErr) {
+        if (createErr?.code === 11000) user = await User.findOne({ email });
+        if (!user) {
+          logDarwinboxHelpPortalSso({
+            step: 'user_provision_failed',
+            errMessage: createErr?.message,
+            code: createErr?.code,
+          }, 'error');
+          throw httpError('Could not create help portal account for this email.', 500);
+        }
+      }
+    }
+
+    if (!user.ssoProvider || !user.ssoSubject) {
+      user.ssoProvider = DARWINBOX_HELP_PORTAL_SSO_PROVIDER;
+      user.ssoSubject = ssoSubject;
+    }
+    user.realm = user.realm === 'internal' ? 'sso' : user.realm;
+    user.emailVerified = true;
+    user.failedLogins = 0;
+    user.lockedUntil = null;
+    user.lastLogin = new Date();
+    user.lastActivityAt = new Date();
+    user.loginCount = (user.loginCount || 0) + 1;
+
+    if (!user.isActive || user.lockedManually) {
+      throw httpError('Account deactivated or locked.', 401);
+    }
+
+    await user.save();
+
+    const { accessToken, refreshToken } = await issueSession(user, req);
+    const redirectUrl = new URL('/login', `${resolvePostSsoRedirectBase(req)}/`);
+    redirectUrl.searchParams.set('db_sso_token', accessToken);
+    redirectUrl.searchParams.set('db_sso_refresh', refreshToken);
+
+    logDarwinboxHelpPortalSso({
+      step: 'success_redirect',
+      redirectHost: redirectUrl.host,
+      tokenIssued: true,
+    });
+    return res.redirect(302, redirectUrl.toString());
+  } catch (err) {
+    const redirectUrl = new URL('/login', `${resolvePostSsoRedirectBase(req)}/`);
+    redirectUrl.searchParams.set(
+      'db_sso_error',
+      String(err.status && err.status < 500 ? err.status : 'handoff_failed')
+    );
+    redirectUrl.searchParams.set(
+      'message',
+      String(err.message || 'handoff_failed').slice(0, 200)
+    );
+    logDarwinboxHelpPortalSso({
+      step: 'controller_error_redirect',
+      statusCode: err.status ?? null,
+      message: err.message,
+      name: err.name,
+      redirectToLogin: true,
+    }, 'error');
+    return res.redirect(302, redirectUrl.toString());
+  }
+}
+
+router.get('/sso/darwinbox/handoff', darwinboxHelpPortalHandoff);
+router.get('/sso/darwinbox/help-portal', darwinboxHelpPortalHandoff);
 
 // GET /api/auth/me
 router.get('/me', auth, async (req, res) => {
