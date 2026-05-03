@@ -202,6 +202,11 @@ async function defaultAuthenticatedPermissions() {
   return vocab.sanitizeDefaultRoles(defaults.authenticated || [], 'authenticated');
 }
 
+/** Refresh Default roles → permissionsDefault so effective permissions and Admin UI stay aligned. */
+async function syncAuthenticatedDefaultPermissions(user) {
+  user.permissionsDefault = await defaultAuthenticatedPermissions();
+}
+
 // POST /api/auth/register
 router.post('/register', async (req, res, next) => {
   try {
@@ -302,6 +307,7 @@ router.post('/login', async (req, res, next) => {
     user.lockedUntil  = null;
     user.lastLogin    = new Date();
     user.loginCount   = (user.loginCount || 0) + 1;
+    await syncAuthenticatedDefaultPermissions(user);
     await user.save();
 
     const { accessToken, refreshToken } = await issueSession(user, req);
@@ -456,6 +462,7 @@ router.post('/sso/oidc/callback', async (req, res, next) => {
           ssoProvider: provider,
           ssoSubject: decoded.sub,
           emailVerified: true,
+          permissionsDefault: await defaultAuthenticatedPermissions(),
         });
       }
     }
@@ -464,6 +471,7 @@ router.post('/sso/oidc/callback', async (req, res, next) => {
 
     user.lastLogin = new Date();
     user.loginCount = (user.loginCount || 0) + 1;
+    await syncAuthenticatedDefaultPermissions(user);
     await user.save();
 
     const { accessToken, refreshToken } = await issueSession(user, req);
@@ -590,6 +598,7 @@ async function darwinboxHelpPortalHandoff(req, res) {
       throw httpError('Account deactivated or locked.', 401);
     }
 
+    await syncAuthenticatedDefaultPermissions(user);
     await user.save();
 
     const { accessToken, refreshToken } = await issueSession(user, req);

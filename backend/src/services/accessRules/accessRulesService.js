@@ -18,19 +18,55 @@ const mongoose = require('mongoose');
 const AccessRule       = require('../../models/AccessRule');
 const AccessRulesConfig = require('../../models/AccessRulesConfig');
 const Group            = require('../../models/Group');
+const Document         = require('../../models/Document');
+const Topic            = require('../../models/Topic');
 
 // Privileged tier roles & administrative roles that bypass every rule.
 function userCanBypass(user) {
   if (!user) return false;
   if (user.role === 'superadmin' || user.role === 'admin') return true;
   const adminRoles = Array.isArray(user.adminRoles) ? user.adminRoles : [];
-  return adminRoles.includes('KHUB_ADMIN') || adminRoles.includes('CONTENT_PUBLISHER');
+  const apiKeyRoles = Array.isArray(user.roles) ? user.roles : [];
+  return [...adminRoles, ...apiKeyRoles].includes('KHUB_ADMIN')
+    || [...adminRoles, ...apiKeyRoles].includes('CONTENT_PUBLISHER')
+    || apiKeyRoles.includes('ADMIN');
 }
 
 function userGroupIdSet(user) {
   if (!user) return new Set();
   const ids = (user.groups || []).map((g) => (g?._id ? g._id.toString() : g.toString()));
   return new Set(ids);
+}
+
+function userGroupNameSet(user) {
+  if (!user) return new Set();
+  if (user.groupNames instanceof Set) return user.groupNames;
+  const names = [];
+  for (const g of user.groups || []) {
+    if (g && typeof g === 'object' && g.name) names.push(g.name);
+    if (typeof g === 'string' && !mongoose.isValidObjectId(g)) names.push(g);
+  }
+  return new Set(names);
+}
+
+async function hydrateAccessUser(user) {
+  if (!user) return null;
+  if (user.groupNames instanceof Set) return user;
+  const hydrated = { ...(user.toObject ? user.toObject() : user) };
+  const ids = [];
+  const names = [];
+  for (const g of hydrated.groups || []) {
+    if (g && typeof g === 'object' && g.name) names.push(g.name);
+    const raw = g?._id ? String(g._id) : String(g || '');
+    if (mongoose.isValidObjectId(raw)) ids.push(raw);
+    else if (raw) names.push(raw);
+  }
+  if (ids.length) {
+    const groups = await Group.find({ _id: { $in: ids } }).select('name').lean();
+    groups.forEach((g) => names.push(g.name));
+  }
+  hydrated.groupNames = new Set(names.filter(Boolean));
+  return hydrated;
 }
 
 // --- Requirement matching --------------------------------------------------
@@ -67,7 +103,7 @@ function ruleGrantsAccessToUser(rule, user) {
     // the rule's autoBindKey, grant. Group resolution is left to the caller
     // who supplies user.groupNames as a Set.
     const autoVals = (rule._autoMatchedValues) || []; // populated by caller
-    const userGroupNames = user?.groupNames instanceof Set ? user.groupNames : new Set();
+    const userGroupNames = userGroupNameSet(user);
     return autoVals.some((v) => userGroupNames.has(v));
   }
   if (rule.authMode === 'groups') {
@@ -80,53 +116,65 @@ function ruleGrantsAccessToUser(rule, user) {
   return false;
 }
 
-// Build a flat metaBag from a topic's metadata sub-doc + parent document.
-function buildMetaBagForTopic(topic, document) {
+function addValues(bag, key, values) {
+  if (!key) return;
+  const arr = Array.isArray(values) ? values : [values];
+  const clean = arr
+    .filter((v) => v !== undefined && v !== null && String(v).trim() !== '')
+    .map((v) => String(v));
+  if (clean.length) bag[key] = (bag[key] || []).concat(clean);
+}
+
+function addMapValues(bag, mapLike) {
+  if (!mapLike) return;
+  if (typeof mapLike.forEach === 'function') {
+    mapLike.forEach((val, key) => addValues(bag, key, val));
+    return;
+  }
+  if (typeof mapLike === 'object') {
+    for (const [key, val] of Object.entries(mapLike)) addValues(bag, key, val);
+  }
+}
+
+function buildMetaBagForDocument(document) {
   const bag = {};
-  const t = topic || {};
   const d = document || {};
-  const tMeta = t.metadata || {};
   const dMeta = d.metadata || {};
 
-  if (Array.isArray(tMeta.tags))    bag.tags = tMeta.tags.slice();
-  if (Array.isArray(dMeta.tags)) {
-    bag.tags = (bag.tags || []).concat(dMeta.tags);
-  }
-  if (tMeta.product)  bag.product  = [tMeta.product];
-  if (tMeta.language) bag.language = [tMeta.language];
-  if (tMeta.author)   bag.author   = [tMeta.author];
-  if (dMeta.product)  bag.product  = (bag.product || []).concat([dMeta.product]);
-
-  // Topic.metadata.custom is a Map<string, string[]>
-  const custom = tMeta.custom;
-  if (custom && typeof custom.forEach === 'function') {
-    custom.forEach((vals, key) => {
-      bag[key] = (bag[key] || []).concat(Array.isArray(vals) ? vals : [vals]);
-    });
-  } else if (custom && typeof custom === 'object') {
-    for (const [k, v] of Object.entries(custom)) {
-      bag[k] = (bag[k] || []).concat(Array.isArray(v) ? v : [v]);
-    }
-  }
-  // Document.metadata.customFields is a Map<string, string>
-  const cf = dMeta.customFields;
-  if (cf && typeof cf.forEach === 'function') {
-    cf.forEach((val, key) => {
-      bag[key] = (bag[key] || []).concat([val]);
-    });
-  } else if (cf && typeof cf === 'object') {
-    for (const [k, v] of Object.entries(cf)) {
-      bag[k] = (bag[k] || []).concat([v]);
-    }
-  }
+  addValues(bag, 'tags', dMeta.tags);
+  addValues(bag, 'product', dMeta.product);
+  addValues(bag, 'version', dMeta.version);
+  addValues(bag, 'language', d.language || dMeta.language);
+  addValues(bag, 'author', dMeta.author);
+  addMapValues(bag, dMeta.customFields);
 
   // Synthesised "ft:" keys mirroring Fluid Topics' built-in metadata.
-  if (d.title)            bag['ft:publication_title'] = [d.title];
-  if (d.originalFilename) bag['ft:filename']          = [d.originalFilename];
-  if (d.sourceFormat)     bag['ft:sourceName']        = [d.sourceFormat];
-  if (typeof d.isAttachment === 'boolean') {
-    bag['ft:isAttachment'] = [d.isAttachment ? 'True' : 'False'];
-  }
+  addValues(bag, 'ft:publication_title', d.publication?.portalTitle || d.title);
+  addValues(bag, 'ft:filename', d.originalFilename || d.title);
+  addValues(bag, 'ft:sourceName', d.sourceFormat || d.mimeType);
+  if (typeof d.isAttachment === 'boolean') addValues(bag, 'ft:isAttachment', d.isAttachment ? 'True' : 'False');
+
+  return bag;
+}
+
+// Build a flat metaBag from a topic's metadata sub-doc + parent document.
+function buildMetaBagForTopic(topic, document) {
+  const bag = buildMetaBagForDocument(document);
+  const t = topic || {};
+  const tMeta = t.metadata || {};
+
+  addValues(bag, 'tags', tMeta.tags);
+  addValues(bag, 'product', tMeta.product);
+  addValues(bag, 'version', tMeta.version);
+  addValues(bag, 'language', tMeta.language);
+  addValues(bag, 'author', tMeta.author);
+
+  // Topic.metadata.custom is a Map<string, string[]>
+  addMapValues(bag, tMeta.custom);
+  addValues(bag, 'ft:title', t.title);
+  addValues(bag, 'ft:slug', t.slug);
+  addValues(bag, 'ft:originId', t.originId);
+  addValues(bag, 'ft:permalink', t.permalink);
 
   return bag;
 }
@@ -141,37 +189,145 @@ function defaultRuleAllows(cfg, user) {
   // Otherwise: a group id/name. Allow if user is in that group.
   const userGids = userGroupIdSet(user);
   if (mongoose.isValidObjectId(def) && userGids.has(def)) return true;
+  if (userGroupNameSet(user).has(def)) return true;
   return false;
+}
+
+function ruleAppliesToDocuments(rule, cfg) {
+  if (cfg.mode !== 'enhanced' || !cfg.topicLevelEnabled) return true;
+  return !rule.targetTopics;
+}
+
+function ruleAppliesToTopics(rule, cfg) {
+  return cfg.mode === 'enhanced' && cfg.topicLevelEnabled && !!rule.targetTopics;
+}
+
+function evaluateMatchingRules(rules, metaBag, user) {
+  const matching = rules.filter((r) => matchAllRequirements(r, metaBag));
+  if (!matching.length) return null;
+  for (const r of matching) {
+    if (r.authMode === 'auto') {
+      const autoVals = metaBag[r.autoBindKey] || [];
+      if (ruleGrantsAccessToUser({ ...r, _autoMatchedValues: autoVals }, user)) return true;
+    } else if (ruleGrantsAccessToUser(r, user)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function loadAccessContext(user, opts = {}) {
+  const cfg = opts.cfg || (await AccessRulesConfig.getSingleton());
+  const activeRules = opts.activeRules || (await AccessRule.find({
+    status: 'Active',
+    inactiveSet: false,
+  }).populate('groups', 'name').lean());
+  return {
+    cfg,
+    activeRules,
+    user: await hydrateAccessUser(user),
+  };
+}
+
+async function canUserAccessDocument(user, document, opts = {}) {
+  if (userCanBypass(user)) return true;
+  const ctx = opts.ctx || (await loadAccessContext(user, opts));
+  const docRules = ctx.activeRules.filter((r) => ruleAppliesToDocuments(r, ctx.cfg));
+  const decision = evaluateMatchingRules(docRules, buildMetaBagForDocument(document), ctx.user);
+  return decision === null ? defaultRuleAllows(ctx.cfg, ctx.user) : decision;
+}
+
+async function topicRuleDecisionFromAncestors(topic, document, ctx, opts = {}) {
+  const topicRules = ctx.activeRules.filter((r) => ruleAppliesToTopics(r, ctx.cfg));
+  if (!topicRules.length) return null;
+
+  let current = topic;
+  const seen = new Set();
+  for (let depth = 0; current && depth < 25; depth += 1) {
+    const key = String(current._id || current.id || '');
+    if (key && seen.has(key)) break;
+    if (key) seen.add(key);
+    const decision = evaluateMatchingRules(topicRules, buildMetaBagForTopic(current, document), ctx.user);
+    if (decision !== null) return decision;
+
+    const parentId = current.hierarchy?.parent;
+    if (!parentId) break;
+    const parentKey = String(parentId._id || parentId);
+    if (opts.topicById && opts.topicById.has(parentKey)) {
+      current = opts.topicById.get(parentKey);
+    } else {
+      current = await Topic.findById(parentKey).select('title slug metadata hierarchy documentId originId permalink').lean();
+    }
+  }
+  return null;
 }
 
 // In-memory evaluation: returns true if the supplied user can read the supplied
 // topic (and its parent document). Privileged users always pass.
 async function canUserAccessTopic(user, topic, document, opts = {}) {
   if (userCanBypass(user)) return true;
-  const cfg = opts.cfg || (await AccessRulesConfig.getSingleton());
-  const rules = opts.activeRules || (await AccessRule.find({
-    status: 'Active',
-    inactiveSet: false,
-  }).populate('groups', 'name').lean());
+  const ctx = opts.ctx || (await loadAccessContext(user, opts));
+  const docAllowed = await canUserAccessDocument(ctx.user, document, { ctx });
+  if (!docAllowed) return false;
+  const topicDecision = await topicRuleDecisionFromAncestors(topic, document, ctx, opts);
+  return topicDecision === null ? true : topicDecision;
+}
 
-  const metaBag = buildMetaBagForTopic(topic, document);
-  const matching = rules.filter((r) => matchAllRequirements(r, metaBag));
-  if (!matching.length) {
-    return defaultRuleAllows(cfg, user);
+async function filterTopicsForUser(topics, user, opts = {}) {
+  if (!Array.isArray(topics) || topics.length === 0) return [];
+  if (userCanBypass(user)) return topics;
+  const ctx = opts.ctx || (await loadAccessContext(user, opts));
+  const docIds = Array.from(new Set(topics.map((t) => String(t.documentId)).filter(Boolean)));
+  const docs = opts.docById
+    ? []
+    : await Document.find({ _id: { $in: docIds } }).select('title originalFilename sourceFormat metadata publication language').lean();
+  const docById = opts.docById || new Map(docs.map((d) => [String(d._id), d]));
+  const topicById = opts.topicById || new Map(topics.map((t) => [String(t._id), t]));
+
+  const visible = [];
+  for (const topic of topics) {
+    const doc = docById.get(String(topic.documentId));
+    if (doc && await canUserAccessTopic(ctx.user, topic, doc, { ctx, topicById })) visible.push(topic);
   }
-  // BRD: "If a document matches multiple rules, the less restrictive rule
-  // takes precedence." → if ANY matching rule grants access, grant.
-  for (const r of matching) {
-    if (r.authMode === 'auto') {
-      // Pre-compute the matching values for the auto key so the granter can
-      // check user group membership by name.
-      const autoVals = metaBag[r.autoBindKey] || [];
-      const annotated = { ...r, _autoMatchedValues: autoVals };
-      if (ruleGrantsAccessToUser(annotated, user)) return true;
-    } else if (ruleGrantsAccessToUser(r, user)) {
-      return true;
-    }
+  return visible;
+}
+
+async function filterDocumentsForUser(documents, user, opts = {}) {
+  if (!Array.isArray(documents) || documents.length === 0) return [];
+  if (userCanBypass(user)) return documents;
+  const ctx = opts.ctx || (await loadAccessContext(user, opts));
+  const visible = [];
+  for (const document of documents) {
+    if (await canUserAccessDocument(ctx.user, document, { ctx })) visible.push(document);
   }
+  return visible;
+}
+
+async function filterSearchHitsForUser(hits, user, opts = {}) {
+  if (!Array.isArray(hits) || hits.length === 0) return [];
+  if (userCanBypass(user)) return hits;
+  const topicIds = hits.map((h) => h.topicId || h._id || h.id).filter(Boolean);
+  const topics = await Topic.find({ _id: { $in: topicIds } })
+    .select('title slug metadata hierarchy documentId originId permalink')
+    .lean();
+  const topicById = new Map(topics.map((t) => [String(t._id), t]));
+  const visibleTopics = await filterTopicsForUser(topics, user, opts);
+  const visibleIds = new Set(visibleTopics.map((t) => String(t._id)));
+  return hits.filter((h) => {
+    const id = String(h.topicId || h._id || h.id || '');
+    return topicById.has(id) && visibleIds.has(id);
+  });
+}
+
+async function requireDocumentAccess(req, res, document, opts = {}) {
+  if (await canUserAccessDocument(req.user, document, opts)) return true;
+  res.status(req.user ? 403 : 401).json({ error: 'Access denied by access rules.' });
+  return false;
+}
+
+async function requireTopicAccess(req, res, topic, document, opts = {}) {
+  if (await canUserAccessTopic(req.user, topic, document, opts)) return true;
+  res.status(req.user ? 403 : 401).json({ error: 'Access denied by access rules.' });
   return false;
 }
 
@@ -234,11 +390,20 @@ async function activateEnhanced(actor) {
 
 module.exports = {
   userCanBypass,
+  hydrateAccessUser,
+  loadAccessContext,
+  buildMetaBagForDocument,
   buildMetaBagForTopic,
   matchAllRequirements,
   ruleGrantsAccessToUser,
   defaultRuleAllows,
+  canUserAccessDocument,
   canUserAccessTopic,
+  filterDocumentsForUser,
+  filterTopicsForUser,
+  filterSearchHitsForUser,
+  requireDocumentAccess,
+  requireTopicAccess,
   applyReprocess,
   activateEnhanced,
 };

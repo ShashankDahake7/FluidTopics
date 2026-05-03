@@ -7,6 +7,13 @@ const Attachment = require('../models/Attachment');
 const config   = require('../config/env');
 const { inDocumentSearch } = require('../services/search/searchService');
 const { optionalAuth } = require('../middleware/auth');
+const {
+  filterDocumentsForUser,
+  filterTopicsForUser,
+  filterSearchHitsForUser,
+  requireDocumentAccess,
+  requireTopicAccess,
+} = require('../services/accessRules/accessRulesService');
 
 const router = express.Router();
 
@@ -22,6 +29,29 @@ const getUserFilters = (req) => {
   if (docIds.length === 0 && topicIds.length === 0 && !releaseNotesOnly) return null;
   return { docIds, topicIds, releaseNotesOnly };
 };
+
+const DOC_ACCESS_SELECT = 'title originalFilename sourceFormat metadata publication language status topicIds isPaligoFormat tocTree prettyUrl createdAt';
+const TOPIC_ACCESS_SELECT = 'title slug metadata hierarchy documentId originId permalink prettyUrl content.html content.text timeModified accessLevel updatedAt';
+
+async function loadCompletedDocumentForAccess(id, projection = DOC_ACCESS_SELECT) {
+  return Document.findOne({ _id: id, status: 'completed' }).select(projection).lean();
+}
+
+function pruneTocTreeForTopics(tocTree, topics) {
+  if (!Array.isArray(tocTree) || !Array.isArray(topics)) return tocTree || null;
+  const allowedOriginIds = new Set(topics.map((t) => t.originId).filter(Boolean));
+  const allowedPermalinks = new Set(topics.map((t) => t.permalink).filter(Boolean));
+  const prune = (nodes) => nodes
+    .map((node) => {
+      const children = prune(node.children || []);
+      const selfAllowed = (node.originId && allowedOriginIds.has(node.originId))
+        || (node.permalink && allowedPermalinks.has(node.permalink));
+      if (!selfAllowed && children.length === 0) return null;
+      return { ...node, children };
+    })
+    .filter(Boolean);
+  return prune(tocTree);
+}
 
 // ---------------------------------------------------------------------------
 // GET /api/portal/by-pretty-url?path=foo/bar — resolve a pretty URL.
@@ -52,6 +82,7 @@ router.get('/by-pretty-url', optionalAuth, async (req, res, next) => {
       .select('title sourceFormat metadata topicIds isPaligoFormat publication tocTree createdAt prettyUrl')
       .lean();
     if (doc) {
+      if (!await requireDocumentAccess(req, res, doc)) return;
       return res.json({ kind: 'document', document: doc, topic: null });
     }
 
@@ -65,6 +96,7 @@ router.get('/by-pretty-url', optionalAuth, async (req, res, next) => {
         .select('title sourceFormat metadata topicIds isPaligoFormat publication tocTree createdAt prettyUrl')
         .lean();
       if (parent) {
+        if (!await requireTopicAccess(req, res, topic, parent)) return;
         return res.json({ kind: 'topic', document: parent, topic });
       }
     }
@@ -108,9 +140,10 @@ router.get('/documents', optionalAuth, async (req, res, next) => {
       .sort({ createdAt: -1 })
       .select('title sourceFormat metadata topicIds isPaligoFormat publication createdAt prettyUrl')
       .lean();
+    const visibleDocs = await filterDocumentsForUser(docs, req.user);
 
     if (priorityDocIds.size) {
-      docs.sort((a, b) => {
+      visibleDocs.sort((a, b) => {
         const ap = priorityDocIds.has(String(a._id)) ? 0 : 1;
         const bp = priorityDocIds.has(String(b._id)) ? 0 : 1;
         return ap - bp;
@@ -118,7 +151,7 @@ router.get('/documents', optionalAuth, async (req, res, next) => {
     }
 
     res.json({
-      documents: docs.map((d) => ({
+      documents: visibleDocs.map((d) => ({
         _id:           d._id,
         title:         d.publication?.portalTitle || d.title,
         format:        d.sourceFormat,
@@ -172,9 +205,10 @@ router.get('/documents/search', optionalAuth, async (req, res, next) => {
     const docs = await Document.find({ _id: { $in: [...ids] }, status: 'completed' })
       .select('title sourceFormat metadata topicIds isPaligoFormat publication createdAt')
       .lean();
+    const visibleDocs = await filterDocumentsForUser(docs, req.user);
     res.json({
-      total: docs.length,
-      documents: docs.map((d) => ({
+      total: visibleDocs.length,
+      documents: visibleDocs.map((d) => ({
         _id: String(d._id),
         title: d.publication?.portalTitle || d.title,
         format: d.sourceFormat,
@@ -200,6 +234,7 @@ router.get('/documents/:id', optionalAuth, async (req, res, next) => {
       .lean();
 
     if (!doc) return res.status(404).json({ error: 'Not found' });
+    if (!await requireDocumentAccess(req, res, doc)) return;
 
     // Increment document view count independently from topics
     Document.updateOne({ _id: req.params.id }, { $inc: { viewCount: 1 } }).catch(() => {});
@@ -215,18 +250,23 @@ router.get('/documents/:id', optionalAuth, async (req, res, next) => {
 
     let topics = await Topic.find(topicQuery)
       .sort({ 'hierarchy.order': 1, createdAt: 1 })
-      .select('title slug originId permalink prettyUrl hierarchy.level hierarchy.parent hierarchy.children hierarchy.order timeModified metadata.author')
+      .select('title slug originId permalink prettyUrl hierarchy documentId timeModified metadata')
       .lean();
+    topics = await filterTopicsForUser(topics, req.user);
 
     // If the topic filter ended up matching nothing in this doc, fall back to
     // the full TOC so the doc isn't an empty page.
     if (filters?.topicIds?.length && topics.length === 0) {
       topics = await Topic.find({ documentId: req.params.id })
         .sort({ 'hierarchy.order': 1, createdAt: 1 })
-        .select('title slug originId permalink prettyUrl hierarchy.level hierarchy.parent hierarchy.children hierarchy.order timeModified metadata.author')
+        .select('title slug originId permalink prettyUrl hierarchy documentId timeModified metadata')
         .lean();
+      topics = await filterTopicsForUser(topics, req.user);
     }
 
+    if (doc.isPaligoFormat && doc.tocTree?.length) {
+      doc.tocTree = pruneTocTreeForTopics(doc.tocTree, topics);
+    }
     res.json({ document: doc, topics });
   } catch (err) {
     next(err);
@@ -236,19 +276,24 @@ router.get('/documents/:id', optionalAuth, async (req, res, next) => {
 // ---------------------------------------------------------------------------
 // GET /api/portal/navigation/:documentId — full TOC tree
 // ---------------------------------------------------------------------------
-router.get('/navigation/:documentId', async (req, res, next) => {
+router.get('/navigation/:documentId', optionalAuth, async (req, res, next) => {
   try {
-    const doc = await Document.findById(req.params.documentId)
-      .select('title isPaligoFormat tocTree publication')
-      .lean();
+    const doc = await loadCompletedDocumentForAccess(req.params.documentId, DOC_ACCESS_SELECT);
 
     if (!doc) return res.status(404).json({ error: 'Not found' });
+    if (!await requireDocumentAccess(req, res, doc)) return;
+    const topics = await filterTopicsForUser(
+      await Topic.find({ documentId: req.params.documentId })
+        .select('title slug metadata hierarchy documentId originId permalink')
+        .lean(),
+      req.user
+    );
 
     res.json({
       documentTitle: doc.publication?.portalTitle || doc.title,
       isPaligo:      doc.isPaligoFormat || false,
       publication:   doc.publication || {},
-      tocTree:       doc.tocTree || null,
+      tocTree:       pruneTocTreeForTopics(doc.tocTree, topics),
     });
   } catch (err) {
     next(err);
@@ -261,22 +306,23 @@ router.get('/navigation/:documentId', async (req, res, next) => {
 router.get('/documents/:id/toc', optionalAuth, async (req, res, next) => {
   try {
     const doc = await Document.findOne({ _id: req.params.id, status: 'completed' })
-      .select('isPaligoFormat tocTree')
+      .select(DOC_ACCESS_SELECT)
       .lean();
     if (!doc) return res.status(404).json({ error: 'Not found' });
+    if (!await requireDocumentAccess(req, res, doc)) return;
 
-    if (doc.isPaligoFormat && doc.tocTree?.length) {
-      return res.json({ tocTree: doc.tocTree });
-    }
-
-    // Build a flat→tree TOC from the topic list when no Paligo tree exists.
     const filters = getUserFilters(req);
     const topicQuery = { documentId: req.params.id };
     if (filters?.topicIds?.length) topicQuery._id = { $in: filters.topicIds };
-    const topics = await Topic.find(topicQuery)
+    let topics = await Topic.find(topicQuery)
       .sort({ 'hierarchy.order': 1, createdAt: 1 })
-      .select('title slug hierarchy.parent hierarchy.order')
+      .select('title slug metadata hierarchy documentId originId permalink')
       .lean();
+    topics = await filterTopicsForUser(topics, req.user);
+
+    if (doc.isPaligoFormat && doc.tocTree?.length) {
+      return res.json({ tocTree: pruneTocTreeForTopics(doc.tocTree, topics) });
+    }
 
     const byId = new Map();
     topics.forEach((t) => byId.set(String(t._id), { _id: String(t._id), title: t.title, slug: t.slug, children: [] }));
@@ -295,12 +341,15 @@ router.get('/documents/:id/toc', optionalAuth, async (req, res, next) => {
 // ---------------------------------------------------------------------------
 // GET /api/portal/documents/:id/pagination?topicId= — prev/next pointers
 // ---------------------------------------------------------------------------
-router.get('/documents/:id/pagination', async (req, res, next) => {
+router.get('/documents/:id/pagination', optionalAuth, async (req, res, next) => {
   try {
-    const topics = await Topic.find({ documentId: req.params.id })
+    const doc = await loadCompletedDocumentForAccess(req.params.id);
+    if (!doc) return res.status(404).json({ error: 'Not found' });
+    if (!await requireDocumentAccess(req, res, doc)) return;
+    const topics = await filterTopicsForUser(await Topic.find({ documentId: req.params.id })
       .sort({ 'hierarchy.order': 1, createdAt: 1 })
-      .select('_id title slug')
-      .lean();
+      .select('_id title slug metadata hierarchy documentId originId permalink')
+      .lean(), req.user);
     if (topics.length === 0) return res.status(404).json({ error: 'No topics' });
 
     const targetId = req.query.topicId ? String(req.query.topicId) : String(topics[0]._id);
@@ -327,8 +376,11 @@ router.get('/documents/:id/pagination', async (req, res, next) => {
 // GET /api/portal/documents/:id/resources/:rid/content
 // GET /api/portal/documents/:id/resources/:rid/image?width=
 // ---------------------------------------------------------------------------
-router.get('/documents/:id/resources', async (req, res, next) => {
+router.get('/documents/:id/resources', optionalAuth, async (req, res, next) => {
   try {
+    const doc = await loadCompletedDocumentForAccess(req.params.id);
+    if (!doc) return res.status(404).json({ error: 'Not found' });
+    if (!await requireDocumentAccess(req, res, doc)) return;
     const items = await Attachment.find({ documentId: req.params.id })
       .sort({ createdAt: -1 })
       .lean();
@@ -346,8 +398,11 @@ router.get('/documents/:id/resources', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.get('/documents/:id/resources/:rid/metadata', async (req, res, next) => {
+router.get('/documents/:id/resources/:rid/metadata', optionalAuth, async (req, res, next) => {
   try {
+    const doc = await loadCompletedDocumentForAccess(req.params.id);
+    if (!doc) return res.status(404).json({ error: 'Not found' });
+    if (!await requireDocumentAccess(req, res, doc)) return;
     const a = await Attachment.findOne({ _id: req.params.rid, documentId: req.params.id }).lean();
     if (!a) return res.status(404).json({ error: 'Not found' });
     res.json({
@@ -361,8 +416,11 @@ router.get('/documents/:id/resources/:rid/metadata', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.get('/documents/:id/resources/:rid/content', async (req, res, next) => {
+router.get('/documents/:id/resources/:rid/content', optionalAuth, async (req, res, next) => {
   try {
+    const doc = await loadCompletedDocumentForAccess(req.params.id);
+    if (!doc) return res.status(404).json({ error: 'Not found' });
+    if (!await requireDocumentAccess(req, res, doc)) return;
     const a = await Attachment.findOne({ _id: req.params.rid, documentId: req.params.id }).lean();
     if (!a) return res.status(404).json({ error: 'Not found' });
     const filePath = path.resolve(config.upload.dir, a.path);
@@ -374,8 +432,11 @@ router.get('/documents/:id/resources/:rid/content', async (req, res, next) => {
 });
 
 // ?width=… resizes (via Sharp if installed; otherwise falls back to original).
-router.get('/documents/:id/resources/:rid/image', async (req, res, next) => {
+router.get('/documents/:id/resources/:rid/image', optionalAuth, async (req, res, next) => {
   try {
+    const doc = await loadCompletedDocumentForAccess(req.params.id);
+    if (!doc) return res.status(404).json({ error: 'Not found' });
+    if (!await requireDocumentAccess(req, res, doc)) return;
     const a = await Attachment.findOne({ _id: req.params.rid, documentId: req.params.id }).lean();
     if (!a) return res.status(404).json({ error: 'Not found' });
     if (!/^image\//.test(a.mimeType)) return res.status(400).json({ error: 'Not an image resource' });
@@ -414,6 +475,9 @@ router.get('/maps/:mapId/topics/:topicId', optionalAuth, async (req, res, next) 
       .select('-content.html')
       .lean();
     if (!topic) return res.status(404).json({ error: 'Topic not in this map' });
+    const doc = await loadCompletedDocumentForAccess(req.params.mapId);
+    if (!doc) return res.status(404).json({ error: 'Document not found' });
+    if (!await requireTopicAccess(req, res, topic, doc)) return;
     res.json({ topic });
   } catch (err) { next(err); }
 });
@@ -423,8 +487,11 @@ router.get('/maps/:mapId/topics/:topicId/content', optionalAuth, async (req, res
     const topic = await Topic.findOne({
       _id: req.params.topicId,
       documentId: req.params.mapId,
-    }).select('content.html').lean();
+    }).select('content.html title slug metadata hierarchy documentId originId permalink').lean();
     if (!topic) return res.status(404).json({ error: 'Topic not in this map' });
+    const doc = await loadCompletedDocumentForAccess(req.params.mapId);
+    if (!doc) return res.status(404).json({ error: 'Document not found' });
+    if (!await requireTopicAccess(req, res, topic, doc)) return;
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(topic.content?.html || '');
   } catch (err) { next(err); }
@@ -434,7 +501,7 @@ router.get('/maps/:mapId/topics/:topicId/content', optionalAuth, async (req, res
 // GET /api/portal/documents/:id/by-permalink?permalink=shifts/create-a-shift.html
 // Returns the topic matching a Paligo permalink
 // ---------------------------------------------------------------------------
-router.get('/documents/:id/by-permalink', async (req, res, next) => {
+router.get('/documents/:id/by-permalink', optionalAuth, async (req, res, next) => {
   try {
     const { permalink } = req.query;
     if (!permalink) return res.status(400).json({ error: 'permalink is required' });
@@ -445,6 +512,9 @@ router.get('/documents/:id/by-permalink', async (req, res, next) => {
     }).lean();
 
     if (!topic) return res.status(404).json({ error: 'Topic not found' });
+    const doc = await loadCompletedDocumentForAccess(req.params.id);
+    if (!doc) return res.status(404).json({ error: 'Document not found' });
+    if (!await requireTopicAccess(req, res, topic, doc)) return;
     res.json({ topic });
   } catch (err) {
     next(err);
@@ -461,6 +531,9 @@ router.get('/documents/:id/search', optionalAuth, async (req, res, next) => {
     const q = (req.query.q || '').toString().trim();
     const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
     if (!q) return res.json({ total: 0, matches: [] });
+    const doc = await loadCompletedDocumentForAccess(req.params.id);
+    if (!doc) return res.status(404).json({ error: 'Not found' });
+    if (!await requireDocumentAccess(req, res, doc)) return;
 
     const filters = getUserFilters(req);
 
@@ -479,7 +552,7 @@ router.get('/documents/:id/search', optionalAuth, async (req, res, next) => {
     }
 
     if (atlasResult && atlasResult.hits.length) {
-      const hits = atlasResult.hits;
+      const hits = await filterSearchHitsForUser(atlasResult.hits, req.user);
 
       // Look up parent ancestry for breadcrumbs (single batched query)
       const ids = hits.map((h) => h._id);
@@ -525,7 +598,7 @@ router.get('/documents/:id/search', optionalAuth, async (req, res, next) => {
         };
       });
 
-      return res.json({ total: atlasResult.total, matches });
+      return res.json({ total: hits.length, matches });
     }
 
     // -------- Mongo fallback (regex on title + content.text) --------
@@ -538,10 +611,11 @@ router.get('/documents/:id/search', optionalAuth, async (req, res, next) => {
     if (filters?.topicIds?.length) {
       mongoQuery._id = { $in: filters.topicIds };
     }
-    const topics = await Topic.find(mongoQuery)
-      .select('_id title content.text hierarchy.parent')
+    let topics = await Topic.find(mongoQuery)
+      .select('_id title content.text hierarchy documentId metadata originId permalink')
       .limit(limit)
       .lean();
+    topics = await filterTopicsForUser(topics, req.user);
 
     const parentIds = topics.map((t) => t.hierarchy?.parent).filter(Boolean);
     const parents = parentIds.length
@@ -594,15 +668,16 @@ router.get('/documents/:id/search', optionalAuth, async (req, res, next) => {
 // Used by the search-preferences "Edit filters" panel to populate the
 // FT:TITLE picker. Optional ?documentId= filter narrows to one document.
 // ---------------------------------------------------------------------------
-router.get('/topics-index', async (req, res, next) => {
+router.get('/topics-index', optionalAuth, async (req, res, next) => {
   try {
     const query = {};
     if (req.query.documentId) query.documentId = req.query.documentId;
-    const topics = await Topic.find(query)
-      .select('_id title documentId')
+    let topics = await Topic.find(query)
+      .select('_id title documentId metadata hierarchy originId permalink')
       .sort({ title: 1 })
       .limit(5000)
       .lean();
+    topics = await filterTopicsForUser(topics, req.user);
     res.json({
       topics: topics.map((t) => ({
         _id: String(t._id),
@@ -625,6 +700,8 @@ router.get('/topics/:id', optionalAuth, async (req, res, next) => {
       .lean();
 
     if (!topic) return res.status(404).json({ error: 'Not found' });
+    const doc = await loadCompletedDocumentForAccess(topic.documentId);
+    if (!doc) return res.status(404).json({ error: 'Document not found' });
 
     // Enforce access control
     if (topic.accessLevel === 'authenticated' && !req.user) {
@@ -633,6 +710,7 @@ router.get('/topics/:id', optionalAuth, async (req, res, next) => {
     if (topic.accessLevel === 'admin' && !['admin', 'superadmin'].includes(req.user?.role)) {
       return res.status(403).json({ error: 'Insufficient permissions' });
     }
+    if (!await requireTopicAccess(req, res, topic, doc)) return;
 
     // Increment view count
     Topic.updateOne({ _id: req.params.id }, { $inc: { viewCount: 1 } }).catch(() => {});
@@ -658,7 +736,7 @@ router.get('/topics/:id', optionalAuth, async (req, res, next) => {
 // Allows serving images/media stored in the CAS S3 bucket (extracted/)
 // without local disk storage or presigned URLs in the DB.
 // ---------------------------------------------------------------------------
-router.get('/media/*', async (req, res, next) => {
+router.get('/media/*', optionalAuth, async (req, res, next) => {
   try {
     const { getObjectStream } = require('../services/storage/s3Service');
     const mime = require('mime-types');
@@ -667,6 +745,19 @@ router.get('/media/*', async (req, res, next) => {
     const key = req.params[0];
     if (!key || key.includes('..')) {
       return res.status(400).send('Invalid media key');
+    }
+    if (req.query.topicId) {
+      const topic = await Topic.findById(req.query.topicId)
+        .select('title slug metadata hierarchy documentId originId permalink')
+        .lean();
+      if (!topic) return res.status(404).send('Media not found');
+      const doc = await loadCompletedDocumentForAccess(topic.documentId);
+      if (!doc) return res.status(404).send('Media not found');
+      if (!await requireTopicAccess(req, res, topic, doc)) return;
+    } else if (req.query.documentId) {
+      const doc = await loadCompletedDocumentForAccess(req.query.documentId);
+      if (!doc) return res.status(404).send('Media not found');
+      if (!await requireDocumentAccess(req, res, doc)) return;
     }
 
     // Try to stream from S3.

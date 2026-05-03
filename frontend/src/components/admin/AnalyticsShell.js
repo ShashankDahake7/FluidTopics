@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { getStoredToken, getStoredUser, syncCurrentUserFromServer } from '@/lib/api';
 import { TicketCostProvider } from '@/components/admin/TicketCostDialog';
 
 const Caret = ({ open }) => (
@@ -132,13 +133,24 @@ export default function AnalyticsShell({
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    if (!localStorage.getItem('ft_token')) { router.replace('/login'); return; }
-    try {
-      const u = JSON.parse(localStorage.getItem('ft_user') || 'null');
-      if (!u || u.role !== 'superadmin') { router.replace('/dashboard'); return; }
-    } catch { router.replace('/login'); return; }
-    setAuthChecked(true);
-  }, []);
+    let cancelled = false;
+    (async () => {
+      try {
+        await syncCurrentUserFromServer();
+      } finally {
+        if (cancelled) return;
+        if (!getStoredToken()) { router.replace('/login'); return; }
+        try {
+          const u = getStoredUser();
+          const tierOk = u && ['superadmin', 'admin', 'editor'].includes(u.role);
+          const analyticsOk = u && Array.isArray(u.adminRoles) && u.adminRoles.includes('ANALYTICS_ADMIN');
+          if (!u || (!tierOk && !analyticsOk)) { router.replace('/dashboard'); return; }
+        } catch { router.replace('/login'); return; }
+        setAuthChecked(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [router]);
 
   if (!authChecked) {
     return <div style={{ padding: '40px', textAlign: 'center' }}><div className="spinner" /></div>;

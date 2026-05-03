@@ -1,13 +1,13 @@
 const express = require('express');
 const upload = require('../middleware/upload');
-const { auth, requireRole } = require('../middleware/auth');
+const { auth, requireTierOrAdminRoles } = require('../middleware/auth');
+const { CONTENT_PIPELINE: AR_CONTENT } = require('../constants/adminRoles');
+
+const adminOrEditor = requireTierOrAdminRoles(['admin', 'editor'], AR_CONTENT);
+const adminOnlyContent = requireTierOrAdminRoles(['admin'], AR_CONTENT);
 const publicationService = require('../services/publishing/publicationService');
 
 const router = express.Router();
-
-// All publishing endpoints require an authenticated admin/editor — same gate
-// as /api/ingest. Superadmin is implicitly allowed via the role check.
-const adminOrEditor = requireRole('admin', 'editor');
 
 // POST /api/publications — upload a .zip into the raw bucket and persist a
 // Publication row. Does NOT trigger extraction; the caller must POST to
@@ -161,7 +161,7 @@ router.get('/:id/files', auth, adminOrEditor, async (req, res, next) => {
 });
 
 // DELETE /api/publications/clean — wipes all non-running publications.
-router.post('/clean', auth, requireRole('admin'), async (req, res, next) => {
+router.post('/clean', auth, adminOnlyContent, async (req, res, next) => {
   try {
     const { deletedCount } = await publicationService.cleanHistory();
     res.json({ message: `Cleaned ${deletedCount} publications`, deletedCount });
@@ -170,7 +170,7 @@ router.post('/clean', auth, requireRole('admin'), async (req, res, next) => {
 
 // DELETE /api/publications/:id — wipes the raw zip, the extracted prefix,
 // and all log rows. Restricted to admins.
-router.delete('/:id', auth, requireRole('admin'), async (req, res, next) => {
+router.delete('/:id', auth, adminOnlyContent, async (req, res, next) => {
   try {
     const ok = await publicationService.deletePublication(req.params.id);
     if (!ok) return res.status(404).json({ error: 'Publication not found' });

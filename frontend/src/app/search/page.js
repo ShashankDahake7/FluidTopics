@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect, useCallback, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
+import Link from 'next/link';
 import api, { getStoredToken } from '@/lib/api';
 import { useTranslation } from '@/lib/i18n';
 import { hrefForTopic } from '@/lib/prettyUrl';
@@ -344,6 +345,50 @@ function SearchContent() {
                 </div>
               )}
 
+              {results.unstructuredHits?.length > 0 && (
+                <div style={{ marginBottom: 28 }}>
+                  <div
+                    style={{
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      letterSpacing: '0.06em',
+                      color: '#64748b',
+                      marginBottom: 12,
+                    }}
+                  >
+                    FILES & PUBLICATIONS
+                  </div>
+                  {results.unstructuredHits.map((hit) => (
+                    <Link
+                      key={hit.id}
+                      href={`/dashboard/file/${hit.unstructuredId}`}
+                      style={s.resultCard}
+                    >
+                      <span style={s.fileBadge}>File</span>
+                      <h3
+                        style={s.resultTitle}
+                        dangerouslySetInnerHTML={{
+                          __html: hit.highlight?.title?.[0] || hit.title,
+                        }}
+                      />
+                      {hit.highlight?.content?.[0] && (
+                        <p
+                          style={s.resultSnippet}
+                          dangerouslySetInnerHTML={{ __html: hit.highlight.content[0] }}
+                        />
+                      )}
+                      {(hit.tags || []).length > 0 && (
+                        <div style={s.tagRow}>
+                          {hit.tags.slice(0, 4).map((tg, j) => (
+                            <span key={j} style={s.tagBadge}>{tg}</span>
+                          ))}
+                        </div>
+                      )}
+                    </Link>
+                  ))}
+                </div>
+              )}
+
               {results.hits?.map((hit) => {
                 // Search hits are topics. Resolve the link with our
                 // shared helper so we use:
@@ -360,7 +405,7 @@ function SearchContent() {
                   : null;
                 return (
                 <a
-                  key={hit.id}
+                  key={hit.topicId || hit.id}
                   href={hrefForTopic(topicLike, parentDoc)}
                   style={s.resultCard}
                 >
@@ -562,6 +607,18 @@ const s = {
     padding: '6px 12px', cursor: 'pointer', fontSize: '0.85rem',
   },
   pagerBtnActive: { background: '#1d4ed8', color: '#fff', borderColor: '#1d4ed8' },
+  fileBadge: {
+    display: 'inline-block',
+    background: '#fef3c7',
+    color: '#92400e',
+    padding: '2px 8px',
+    borderRadius: '4px',
+    fontSize: '0.65rem',
+    fontWeight: 700,
+    letterSpacing: '0.06em',
+    textTransform: 'uppercase',
+    marginBottom: '8px',
+  },
   // Custom-template "Pages" block — distinct from topic hits so readers
   // can tell at a glance these are dashboard pages, not document snippets.
   templateBlock: {

@@ -1,6 +1,6 @@
 // Use relative URL so requests go through the Next.js rewrite proxy (/api → localhost:4000/api).
 // This keeps all API calls same-origin and avoids CORS preflight issues.
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || '/api';
+export const API_BASE = process.env.NEXT_PUBLIC_API_URL || '/api';
 
 /** Prefer session token (Remember me off) then persistent token. */
 export function getStoredToken() {
@@ -104,6 +104,31 @@ export function storeAuthSession({ token, refreshToken, user }, rememberMe) {
     import('./i18n')
       .then(({ syncUiLanguageFromUser }) => syncUiLanguageFromUser(user))
       .catch(() => {});
+  }
+}
+
+/**
+ * Refresh stored user from GET /auth/me. JWTs only carry user id — administrative
+ * roles (KHUB_ADMIN, etc.) live on the user document and must be synced here.
+ */
+export async function syncCurrentUserFromServer() {
+  if (typeof window === 'undefined') return;
+  if (!getStoredToken()) return;
+  try {
+    const res = await fetchWithOptionalRefresh('/auth/me', { method: 'GET' });
+    if (!res.ok) return;
+    const data = await res.json().catch(() => ({}));
+    const fresh = data.user;
+    if (!fresh) return;
+    const rememberMe = !!localStorage.getItem('ft_token');
+    const refresh = getStoredRefreshToken();
+    storeAuthSession(
+      { token: getStoredToken(), refreshToken: refresh || undefined, user: fresh },
+      rememberMe
+    );
+    window.dispatchEvent(new Event('ft-auth'));
+  } catch {
+    /* ignore */
   }
 }
 

@@ -9,6 +9,8 @@ const {
   matchAllRequirements,
   ruleGrantsAccessToUser,
   defaultRuleAllows,
+  filterTopicsForUser: filterTopicsByAccessRules,
+  requireTopicAccess,
 } = require('../services/accessRules/accessRulesService');
 const { optionalAuth, auth } = require('../middleware/auth');
 const { trackEvent } = require('../services/analytics/analyticsService');
@@ -20,35 +22,7 @@ const router = express.Router();
 // short-circuits BRD: "ADMIN, KHUB_ADMIN, and CONTENT_PUBLISHER users can see
 // all content".
 async function filterTopicsForUser(topics, user) {
-  if (!Array.isArray(topics) || topics.length === 0) return topics;
-  if (userCanBypass(user)) return topics;
-
-  const cfg = await AccessRulesConfig.getSingleton();
-  const activeRules = await AccessRule.find({ status: 'Active', inactiveSet: false })
-    .populate('groups', 'name').lean();
-
-  // If no active rules and default rule allows everyone, skip evaluation.
-  if (activeRules.length === 0 && defaultRuleAllows(cfg, user)) return topics;
-
-  const docIds = Array.from(new Set(topics.map((t) => String(t.documentId)).filter(Boolean)));
-  const docs = await Document.find({ _id: { $in: docIds } }).select('title originalFilename sourceFormat metadata').lean();
-  const docById = new Map(docs.map((d) => [String(d._id), d]));
-
-  return topics.filter((t) => {
-    const doc = docById.get(String(t.documentId)) || null;
-    const bag = buildMetaBagForTopic(t, doc);
-    const matching = activeRules.filter((r) => matchAllRequirements(r, bag));
-    if (matching.length === 0) return defaultRuleAllows(cfg, user);
-    for (const r of matching) {
-      if (r.authMode === 'auto') {
-        const autoVals = bag[r.autoBindKey] || [];
-        if (ruleGrantsAccessToUser({ ...r, _autoMatchedValues: autoVals }, user)) return true;
-      } else if (ruleGrantsAccessToUser(r, user)) {
-        return true;
-      }
-    }
-    return false;
-  });
+  return filterTopicsByAccessRules(topics, user);
 }
 
 // GET /api/topics — List topics with pagination & filtering
@@ -102,58 +76,61 @@ router.get('/', optionalAuth, async (req, res, next) => {
 });
 
 // GET /api/topics/popular — Most viewed topics
-router.get('/popular', async (req, res, next) => {
+router.get('/popular', optionalAuth, async (req, res, next) => {
   try {
     const limit = parseInt(req.query.limit) || 10;
     const topics = await Topic.find()
       .sort({ viewCount: -1 })
-      .limit(limit)
-      .select('title slug metadata viewCount hierarchy.level')
+      .limit(limit * 3)
+      .select('title slug metadata viewCount hierarchy documentId originId permalink')
       .lean();
 
-    res.json({ topics });
+    res.json({ topics: (await filterTopicsForUser(topics, req.user)).slice(0, limit) });
   } catch (error) {
     next(error);
   }
 });
 
 // GET /api/topics/recent — Recently updated topics
-router.get('/recent', async (req, res, next) => {
+router.get('/recent', optionalAuth, async (req, res, next) => {
   try {
     const limit = parseInt(req.query.limit) || 10;
     const topics = await Topic.find()
       .sort({ updatedAt: -1 })
-      .limit(limit)
-      .select('title slug metadata viewCount hierarchy.level updatedAt')
+      .limit(limit * 3)
+      .select('title slug metadata viewCount hierarchy documentId originId permalink updatedAt')
       .lean();
 
-    res.json({ topics });
+    res.json({ topics: (await filterTopicsForUser(topics, req.user)).slice(0, limit) });
   } catch (error) {
     next(error);
   }
 });
 
 // GET /api/topics/tree — Topic tree for navigation
-router.get('/tree', async (req, res, next) => {
+router.get('/tree', optionalAuth, async (req, res, next) => {
   try {
     const { documentId } = req.query;
-    const filter = { 'hierarchy.level': 1 };
+    const filter = {};
     if (documentId) filter.documentId = documentId;
 
-    const rootTopics = await Topic.find(filter)
+    const topics = await Topic.find(filter)
       .sort({ 'hierarchy.order': 1 })
-      .select('title slug hierarchy documentId')
-      .populate({
-        path: 'hierarchy.children',
-        select: 'title slug hierarchy',
-        populate: {
-          path: 'hierarchy.children',
-          select: 'title slug hierarchy',
-        },
-      })
+      .select('title slug hierarchy documentId metadata originId permalink')
       .lean();
 
-    res.json({ tree: rootTopics });
+    const visible = await filterTopicsForUser(topics, req.user);
+    const byId = new Map(visible.map((t) => [String(t._id), { ...t, children: [] }]));
+    const tree = [];
+    visible.forEach((t) => {
+      const node = byId.get(String(t._id));
+      const parentId = t.hierarchy?.parent ? String(t.hierarchy.parent) : '';
+      const parent = parentId ? byId.get(parentId) : null;
+      if (parent) parent.children.push(node);
+      else if (!documentId || t.hierarchy?.level === 1 || !parentId) tree.push(node);
+    });
+
+    res.json({ tree });
   } catch (error) {
     next(error);
   }
@@ -240,12 +217,12 @@ router.get('/:id', optionalAuth, async (req, res, next) => {
 });
 
 // GET /api/topics/:id/related — Get related topics
-router.get('/:id/related', async (req, res, next) => {
+router.get('/:id/related', optionalAuth, async (req, res, next) => {
   try {
     const { getRecommendations } = require('../services/recommendation/recommendationService');
     const limit = parseInt(req.query.limit) || 5;
     const recommendations = await getRecommendations(req.params.id, limit);
-    res.json({ related: recommendations });
+    res.json({ related: await filterTopicsForUser(recommendations, req.user) });
   } catch (error) {
     next(error);
   }
@@ -258,8 +235,11 @@ router.post('/:id/translate', auth, async (req, res, next) => {
     const { translateText } = require('../services/ai/groqService');
     const { targetLocale = 'en', sourceLocale, profile } = req.body || {};
 
-    const topic = await Topic.findById(req.params.id).select('title slug content metadata');
+    const topic = await Topic.findById(req.params.id).select('title slug content metadata hierarchy documentId originId permalink').lean();
     if (!topic) return res.status(404).json({ error: 'Topic not found' });
+    const document = await Document.findById(topic.documentId).select('title originalFilename sourceFormat metadata publication language').lean();
+    if (!document) return res.status(404).json({ error: 'Document not found' });
+    if (!await requireTopicAccess(req, res, topic, document)) return;
 
     const raw = topic.content?.html || topic.content?.text || '';
     if (!raw.trim()) return res.status(400).json({ error: 'Topic has no translatable content' });

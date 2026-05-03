@@ -1,10 +1,11 @@
 const express = require('express');
-const { auth, requireRole } = require('../middleware/auth');
+const { auth, requireTierOrAdminRoles } = require('../middleware/auth');
+const { PORTAL: AR_PORTAL } = require('../constants/adminRoles');
 const DesignerPage = require('../models/DesignerPage');
 
 const router = express.Router();
 
-const adminOrEditor = [auth, requireRole('admin', 'editor')];
+const adminOrEditor = [auth, requireTierOrAdminRoles(['admin', 'editor'], AR_PORTAL)];
 
 // GET /api/designer/pages — list all pages
 router.get('/pages', ...adminOrEditor, async (req, res, next) => {

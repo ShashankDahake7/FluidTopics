@@ -8,6 +8,8 @@ const MetadataKey = require('../models/MetadataKey');
 const DefaultRolesConfig = require('../models/DefaultRolesConfig');
 const ratingRulesService = require('../services/ratings/ratingRules');
 const { writeAudit, diffContext } = require('../services/users/auditService');
+const { logConfigChange, authorFromRequest } = require('../services/configAudit');
+const { snapshotRating, snapshotAlerts } = require('../services/configHistorySnapshots');
 
 const router = express.Router();
 
@@ -266,6 +268,7 @@ router.get('/admin/notifications/rating', requirePortalOrAdmin, async (req, res,
 
 router.put('/admin/notifications/rating', requirePortalOrAdmin, async (req, res, next) => {
   try {
+    const snapBefore = await snapshotRating();
     const body = req.body || {};
     if (!Array.isArray(body.rules)) {
       return res.status(400).json({ error: 'rules must be an array.' });
@@ -297,6 +300,14 @@ router.put('/admin/notifications/rating', requirePortalOrAdmin, async (req, res,
       context: diffContext(before, after, ['rules']),
     });
 
+    const snapAfter = await snapshotRating();
+    await logConfigChange({
+      category: 'Rating',
+      ...authorFromRequest(req),
+      before: snapBefore,
+      after: snapAfter,
+    });
+
     res.json({ settings: after });
   } catch (err) { next(err); }
 });
@@ -323,6 +334,7 @@ router.get('/admin/notifications/alerts', requirePortalOrAdmin, async (req, res,
 router.put('/admin/notifications/alerts', requirePortalOrAdmin, async (req, res, next) => {
   try {
     const cfg = await AlertsConfig.getSingleton();
+    const snapBefore = await snapshotAlerts();
     const before = publicAlertsConfig(cfg);
     const body = req.body || {};
 
@@ -357,6 +369,14 @@ router.put('/admin/notifications/alerts', requirePortalOrAdmin, async (req, res,
       action:  'alerts-config.update',
       summary: 'Updated alerts settings',
       context: diffContext(before, after, ['matchMode', 'recurrenceDays', 'bodyMetadataKeys']),
+    });
+
+    const snapAfter = await snapshotAlerts();
+    await logConfigChange({
+      category: 'Alerts',
+      ...authorFromRequest(req),
+      before: snapBefore,
+      after: snapAfter,
     });
 
     res.json({ settings: after });

@@ -20,15 +20,19 @@ const mongoose = require('mongoose');
 const path = require('path');
 const { Worker } = require('worker_threads');
 
-const { auth, requireRole } = require('../middleware/auth');
+const { auth, requireTierOrAdminRoles } = require('../middleware/auth');
+const { METADATA: AR_META } = require('../constants/adminRoles');
+
+const adminOrEditor = requireTierOrAdminRoles(['admin', 'editor'], AR_META);
 const PrettyUrlTemplate = require('../models/PrettyUrlTemplate');
 const PrettyUrlConfig = require('../models/PrettyUrlConfig');
 const PrettyUrlReprocessJob = require('../models/PrettyUrlReprocessJob');
 const Document = require('../models/Document');
 const { invalidateCache } = require('../services/prettyUrl/prettyUrlService');
+const { logConfigChange, authorFromRequest } = require('../services/configAudit');
+const { snapshotPrettyUrl } = require('../services/configHistorySnapshots');
 
 const router = express.Router();
-const adminOrEditor = requireRole('admin', 'editor');
 
 const REPROCESS_WORKER_PATH = path.resolve(
   __dirname,
@@ -124,6 +128,7 @@ router.get('/', auth, adminOrEditor, async (req, res, next) => {
 
 router.post('/', auth, adminOrEditor, async (req, res, next) => {
   try {
+    const before = await snapshotPrettyUrl();
     const { scope, state = 'draft', template, requirements = [], priority, notes = '' } = req.body || {};
     if (!['document', 'topic'].includes(scope)) {
       return res.status(400).json({ error: 'scope must be "document" or "topic"' });
@@ -154,12 +159,20 @@ router.post('/', auth, adminOrEditor, async (req, res, next) => {
       updatedBy: req.user?._id || null,
     });
     await markPendingReprocess();
+    const after = await snapshotPrettyUrl();
+    await logConfigChange({
+      category: 'Pretty URL',
+      ...authorFromRequest(req),
+      before,
+      after,
+    });
     res.status(201).json({ item: serialiseTemplate(created) });
   } catch (err) { next(err); }
 });
 
 router.patch('/:id', auth, adminOrEditor, async (req, res, next) => {
   try {
+    const before = await snapshotPrettyUrl();
     if (!mongoose.isValidObjectId(req.params.id)) {
       return res.status(404).json({ error: 'Template not found' });
     }
@@ -181,12 +194,20 @@ router.patch('/:id', auth, adminOrEditor, async (req, res, next) => {
 
     await row.save();
     await markPendingReprocess();
+    const after = await snapshotPrettyUrl();
+    await logConfigChange({
+      category: 'Pretty URL',
+      ...authorFromRequest(req),
+      before,
+      after,
+    });
     res.json({ item: serialiseTemplate(row) });
   } catch (err) { next(err); }
 });
 
 router.delete('/:id', auth, adminOrEditor, async (req, res, next) => {
   try {
+    const before = await snapshotPrettyUrl();
     if (!mongoose.isValidObjectId(req.params.id)) {
       return res.status(404).json({ error: 'Template not found' });
     }
@@ -194,6 +215,13 @@ router.delete('/:id', auth, adminOrEditor, async (req, res, next) => {
     if (!row) return res.status(404).json({ error: 'Template not found' });
     await row.deleteOne();
     await markPendingReprocess();
+    const after = await snapshotPrettyUrl();
+    await logConfigChange({
+      category: 'Pretty URL',
+      ...authorFromRequest(req),
+      before,
+      after,
+    });
     res.status(204).end();
   } catch (err) { next(err); }
 });
@@ -203,6 +231,7 @@ router.delete('/:id', auth, adminOrEditor, async (req, res, next) => {
 // different (scope, state) bucket are ignored.
 router.post('/reorder', auth, adminOrEditor, async (req, res, next) => {
   try {
+    const before = await snapshotPrettyUrl();
     const { scope, state, ids } = req.body || {};
     if (!['document', 'topic'].includes(scope)) {
       return res.status(400).json({ error: 'scope must be "document" or "topic"' });
@@ -223,12 +252,20 @@ router.post('/reorder', auth, adminOrEditor, async (req, res, next) => {
       }));
     if (ops.length) await PrettyUrlTemplate.bulkWrite(ops, { ordered: false });
     await markPendingReprocess();
+    const after = await snapshotPrettyUrl();
+    await logConfigChange({
+      category: 'Pretty URL',
+      ...authorFromRequest(req),
+      before,
+      after,
+    });
     res.json({ ok: true, updated: ops.length });
   } catch (err) { next(err); }
 });
 
 router.patch('/config', auth, adminOrEditor, async (req, res, next) => {
   try {
+    const before = await snapshotPrettyUrl();
     const { removeAccents, lowercase } = req.body || {};
     const cfg = await PrettyUrlConfig.getSingleton();
     if (removeAccents != null) cfg.removeAccents = !!removeAccents;
@@ -236,6 +273,13 @@ router.patch('/config', auth, adminOrEditor, async (req, res, next) => {
     cfg.pendingReprocess = true;
     await cfg.save();
     invalidateCache();
+    const after = await snapshotPrettyUrl();
+    await logConfigChange({
+      category: 'Pretty URL',
+      ...authorFromRequest(req),
+      before,
+      after,
+    });
     res.json({ config: serialiseConfig(cfg) });
   } catch (err) { next(err); }
 });
@@ -245,6 +289,7 @@ router.patch('/config', auth, adminOrEditor, async (req, res, next) => {
 // equal to "what's live right now".
 router.post('/reset-draft', auth, adminOrEditor, async (req, res, next) => {
   try {
+    const before = await snapshotPrettyUrl();
     await PrettyUrlTemplate.deleteMany({ state: 'draft' });
 
     const actives = await PrettyUrlTemplate.find({ state: 'active' }).lean();
@@ -263,6 +308,13 @@ router.post('/reset-draft', auth, adminOrEditor, async (req, res, next) => {
       );
     }
     invalidateCache();
+    const after = await snapshotPrettyUrl();
+    await logConfigChange({
+      category: 'Pretty URL',
+      ...authorFromRequest(req),
+      before,
+      after,
+    });
     res.json({ ok: true, copied: actives.length });
   } catch (err) { next(err); }
 });
@@ -272,6 +324,7 @@ router.post('/reset-draft', auth, adminOrEditor, async (req, res, next) => {
 // then queues a reprocess job.
 router.post('/activate', auth, adminOrEditor, async (req, res, next) => {
   try {
+    const before = await snapshotPrettyUrl();
     await PrettyUrlTemplate.deleteMany({ state: 'active' });
     await PrettyUrlTemplate.updateMany({ state: 'draft' }, { $set: { state: 'active' } });
     const cfg = await PrettyUrlConfig.getSingleton();
@@ -281,6 +334,13 @@ router.post('/activate', auth, adminOrEditor, async (req, res, next) => {
     await cfg.save();
     invalidateCache();
     const job = await queueReprocessJob(req.user?._id);
+    const after = await snapshotPrettyUrl();
+    await logConfigChange({
+      category: 'Pretty URL',
+      ...authorFromRequest(req),
+      before,
+      after,
+    });
     res.status(202).json({ ok: true, job: serialiseJob(job) });
   } catch (err) { next(err); }
 });
@@ -293,6 +353,7 @@ router.post('/activate', auth, adminOrEditor, async (req, res, next) => {
 //     config: { removeAccents, lowercase } }
 router.post('/save-and-activate', auth, adminOrEditor, async (req, res, next) => {
   try {
+    const before = await snapshotPrettyUrl();
     const { documents = [], topics = [], config = {} } = req.body || {};
     const newRows = [
       ...documents.map((d, i) => ({
@@ -328,6 +389,13 @@ router.post('/save-and-activate', auth, adminOrEditor, async (req, res, next) =>
     invalidateCache();
 
     const job = await queueReprocessJob(req.user?._id);
+    const after = await snapshotPrettyUrl();
+    await logConfigChange({
+      category: 'Pretty URL',
+      ...authorFromRequest(req),
+      before,
+      after,
+    });
     res.status(202).json({ ok: true, job: serialiseJob(job) });
   } catch (err) { next(err); }
 });

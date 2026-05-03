@@ -1,7 +1,7 @@
 const express = require('express');
 const SeoConfig = require('../models/SeoConfig');
 const { auth, requireRole } = require('../middleware/auth');
-const { logConfigChange } = require('../services/configAudit');
+const { logConfigChange, authorFromRequest } = require('../services/configAudit');
 
 const router = express.Router();
 
@@ -37,8 +37,7 @@ router.put('/', async (req, res, next) => {
     }
     await logConfigChange({
       category: 'Web search engines',
-      author: req.user.name || req.user.email,
-      authorEmail: req.user.email,
+      ...authorFromRequest(req),
       before,
       after: config.toObject(),
     });

@@ -1,7 +1,7 @@
 const express = require('express');
 const mongoose = require('mongoose');
 
-const { auth, requireRole } = require('../middleware/auth');
+const { auth } = require('../middleware/auth');
 const User = require('../models/User');
 const Group = require('../models/Group');
 const Bookmark = require('../models/Bookmark');
@@ -11,6 +11,8 @@ const Collection = require('../models/Collection');
 const AuditLog = require('../models/AuditLog');
 const DefaultRolesConfig = require('../models/DefaultRolesConfig');
 const { writeAudit, diffContext } = require('../services/users/auditService');
+const { logConfigChange, authorFromRequest } = require('../services/configAudit');
+const { snapshotDefaultUserRoles } = require('../services/configHistorySnapshots');
 const vocab = require('../services/users/rolesVocabulary');
 
 const router = express.Router();
@@ -19,9 +21,8 @@ const router = express.Router();
 // Authorization
 // -----------------------------------------------------------------------------
 //
-// `requireRole('superadmin')` is the existing tier gate. We additionally allow
-// any user that holds the `USERS_ADMIN` administrative role. The `auth`
-// middleware has already populated req.user from JWT so we can read it here.
+// Platform superadmin, or explicit `USERS_ADMIN` on the account. Tenant `admin`
+// tier alone does not grant user management (must tick Manage users / USERS_ADMIN).
 
 function requireUsersAdmin(req, res, next) {
   if (!req.user) return res.status(401).json({ error: 'Authentication required.' });
@@ -47,6 +48,30 @@ const LIST_PROJECTION = [
   'mfa',
   'createdAt updatedAt',
 ].join(' ');
+
+// Legacy or pre-migration users may have empty permissionsDefault (never
+// synced on login). Back-fill from Default roles so the admin list and API
+// match effective portal permissions. Uses `save()` so the pre-save hook
+// recomputes the `permissions` union.
+async function ensureUserDefaultFeaturePermissions(leanUser) {
+  if (!leanUser || !leanUser._id) return;
+  const has = Array.isArray(leanUser.permissionsDefault) && leanUser.permissionsDefault.length > 0;
+  if (has) return;
+  const cfg = await DefaultRolesConfig.getSingleton();
+  const desiredDefault = vocab.sanitizeDefaultRoles(cfg.authenticated || [], 'authenticated');
+  if (!desiredDefault.length) return;
+  const doc = await User.findById(leanUser._id);
+  if (!doc) return;
+  doc.permissionsDefault = desiredDefault;
+  await doc.save();
+  leanUser.permissionsDefault = doc.permissionsDefault;
+  leanUser.permissions = doc.permissions;
+}
+
+async function ensureRowsDefaultFeaturePermissions(rows) {
+  if (!rows?.length) return;
+  await Promise.all(rows.map((row) => ensureUserDefaultFeaturePermissions(row)));
+}
 
 // Convert a populated/lean user into a wire-friendly object that exposes
 // per-dimension origin info. Keeps `permissions`/`groups`/`tags` (effective
@@ -227,6 +252,8 @@ router.get('/users', auth, requireUsersAdmin, async (req, res, next) => {
       User.countDocuments(filter),
     ]);
 
+    await ensureRowsDefaultFeaturePermissions(rows);
+
     // Asset counts — one aggregation per collection; cheap because it's
     // bounded to the current page. Skipped if the page is empty.
     let countsById = {};
@@ -261,6 +288,118 @@ router.get('/users', auth, requireUsersAdmin, async (req, res, next) => {
 });
 
 // -----------------------------------------------------------------------------
+// XLSX EXPORT  GET /api/admin/users/export.xlsx
+// Must be registered BEFORE /users/:id — otherwise "export.xlsx" is captured as :id (Invalid id).
+// -----------------------------------------------------------------------------
+router.get('/users/export.xlsx', auth, requireUsersAdmin, async (req, res, next) => {
+  let ExcelJS;
+  try { ExcelJS = require('exceljs'); }
+  catch (e) {
+    return res.status(503).json({
+      error: 'XLSX export is unavailable. Install the `exceljs` dependency on the backend.',
+    });
+  }
+  try {
+    const filter = await buildListFilter(req.query);
+    const rows = await User.find(filter)
+      .sort('-createdAt')
+      .select(LIST_PROJECTION + ' preferences')
+      .populate('groups groupsManual groupsAuto', 'name')
+      .lean();
+
+    await ensureRowsDefaultFeaturePermissions(rows);
+
+    const counts = await Promise.all([
+      Bookmark.aggregate([{ $match: { userId: { $in: rows.map((r) => r._id) } } }, { $group: { _id: '$userId', n: { $sum: 1 } } }]),
+      SavedSearch.aggregate([{ $match: { userId: { $in: rows.map((r) => r._id) } } }, { $group: { _id: '$userId', n: { $sum: 1 } } }]),
+      PersonalBook.aggregate([{ $match: { userId: { $in: rows.map((r) => r._id) } } }, { $group: { _id: '$userId', n: { $sum: 1 } } }]),
+      Collection.aggregate([{ $match: { userId: { $in: rows.map((r) => r._id) } } }, { $group: { _id: '$userId', n: { $sum: 1 } } }]),
+    ]);
+    const ix = (arr) => Object.fromEntries(arr.map((r) => [r._id.toString(), r.n]));
+    const cmap = { bm: ix(counts[0]), ss: ix(counts[1]), pb: ix(counts[2]), col: ix(counts[3]) };
+
+    const wb = new ExcelJS.Workbook();
+    wb.creator = req.user.email || 'admin';
+    wb.created = new Date();
+    const ws = wb.addWorksheet('users');
+
+    ws.columns = [
+      { header: 'User ID',                  key: 'id',          width: 28 },
+      { header: 'Display name',             key: 'name',        width: 26 },
+      { header: 'Email',                    key: 'email',       width: 30 },
+      { header: 'Creation date',            key: 'createdAt',   width: 22 },
+      { header: 'Last login',               key: 'lastLogin',   width: 22 },
+      { header: 'Last activity',            key: 'lastActivity',width: 22 },
+      { header: 'Account locked',           key: 'locked',      width: 14 },
+      { header: 'Realm',                    key: 'realm',       width: 12 },
+      { header: 'Tier role',                key: 'tier',        width: 12 },
+      { header: 'Feature roles (effective)',key: 'roles',       width: 50 },
+      { header: 'Feature roles (manual)',   key: 'rolesManual', width: 50 },
+      { header: 'Feature roles (auto)',     key: 'rolesAuto',   width: 40 },
+      { header: 'Feature roles (default)',  key: 'rolesDefault',width: 40 },
+      { header: 'Admin roles',              key: 'adminRoles',  width: 36 },
+      { header: 'Groups (effective)',       key: 'groups',      width: 36 },
+      { header: 'Groups (manual)',          key: 'groupsManual',width: 30 },
+      { header: 'Groups (auto)',            key: 'groupsAuto',  width: 30 },
+      { header: 'Tags (effective)',         key: 'tags',        width: 36 },
+      { header: 'Tags (manual)',            key: 'tagsManual',  width: 30 },
+      { header: 'Tags (auto)',              key: 'tagsAuto',    width: 30 },
+      { header: 'Bookmarks',                key: 'bookmarks',   width: 12 },
+      { header: 'Saved searches',           key: 'searches',    width: 14 },
+      { header: 'Personal books',           key: 'books',       width: 14 },
+      { header: 'Collections',              key: 'collections', width: 14 },
+      { header: 'Locale',                   key: 'locale',      width: 10 },
+      { header: 'Theme',                    key: 'theme',       width: 10 },
+    ];
+    ws.getRow(1).font = { bold: true };
+
+    for (const u of rows) {
+      const k = u._id.toString();
+      ws.addRow({
+        id: u._id.toString(),
+        name: u.name || '',
+        email: u.email || '',
+        createdAt: u.createdAt ? new Date(u.createdAt).toISOString() : '',
+        lastLogin: u.lastLogin ? new Date(u.lastLogin).toISOString() : '',
+        lastActivity: u.lastActivityAt ? new Date(u.lastActivityAt).toISOString() : '',
+        locked: u.lockedManually ? 'yes' : 'no',
+        realm: u.realm || 'internal',
+        tier: u.role || 'viewer',
+        roles:        (u.permissions || []).join(', '),
+        rolesManual:  (u.permissionsManual || []).join(', '),
+        rolesAuto:    (u.permissionsAuto || []).join(', '),
+        rolesDefault: (u.permissionsDefault || []).join(', '),
+        adminRoles:   (u.adminRoles || []).join(', '),
+        groups:        (u.groups || []).map((g) => g.name || g).join(', '),
+        groupsManual:  (u.groupsManual || []).map((g) => g.name || g).join(', '),
+        groupsAuto:    (u.groupsAuto || []).map((g) => g.name || g).join(', '),
+        tags:        (u.tags || []).join(', '),
+        tagsManual:  (u.tagsManual || []).join(', '),
+        tagsAuto:    (u.tagsAuto || []).join(', '),
+        bookmarks:   cmap.bm[k] || 0,
+        searches:    cmap.ss[k] || 0,
+        books:       cmap.pb[k] || 0,
+        collections: cmap.col[k]|| 0,
+        locale: u.preferences?.language || '',
+        theme:  u.preferences?.theme || '',
+      });
+    }
+
+    await writeAudit(req, {
+      action: 'users.export.xlsx',
+      summary: `Downloaded XLSX of ${rows.length} users`,
+      context: { filter: req.query },
+    });
+
+    const ts = new Date().toISOString().replace(/:/g, '_').replace(/\..+$/, '');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="ft-users-${ts}.xlsx"`);
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (err) { next(err); }
+});
+
+// -----------------------------------------------------------------------------
 // DETAIL  GET /api/admin/users/:id
 // -----------------------------------------------------------------------------
 router.get('/users/:id', auth, requireUsersAdmin, async (req, res, next) => {
@@ -279,6 +418,8 @@ router.get('/users/:id', auth, requireUsersAdmin, async (req, res, next) => {
       .populate('preferences.adminSet.topicIds',    'title slug')
       .lean();
     if (!u) return res.status(404).json({ error: 'User not found' });
+
+    await ensureUserDefaultFeaturePermissions(u);
 
     const [bm, ss, pb, col] = await Promise.all([
       Bookmark.countDocuments({ userId: u._id }),
@@ -408,6 +549,12 @@ router.patch('/users/:id', auth, requireUsersAdmin, async (req, res, next) => {
     if (Array.isArray(req.body.permissions)) {
       target.permissionsManual = vocab.sanitizeFeatureRoles(req.body.permissions);
     }
+    if (Array.isArray(req.body.permissionsDefault)) {
+      target.permissionsDefault = vocab.sanitizeDefaultRoles(
+        req.body.permissionsDefault,
+        'authenticated',
+      );
+    }
     if (Array.isArray(req.body.adminRoles)) {
       target.adminRolesManual = vocab.sanitizeAdminRoles(req.body.adminRoles);
     }
@@ -432,7 +579,7 @@ router.patch('/users/:id', auth, requireUsersAdmin, async (req, res, next) => {
       summary: `Updated user ${target.email}`,
       context: diffContext(before, target.toObject(), [
         'name', 'email', 'role', 'realm', 'isActive',
-        'permissionsManual', 'adminRolesManual',
+        'permissionsManual', 'permissionsDefault', 'adminRolesManual',
         'groupsManual', 'tagsManual', 'lockedManually',
       ]),
     });
@@ -1000,12 +1147,16 @@ router.post('/users/bulk', auth, requireUsersAdmin, async (req, res, next) => {
 router.get('/default-roles', auth, requireUsersAdmin, async (req, res, next) => {
   try {
     const cfg = await DefaultRolesConfig.getSingleton();
+    const toCanonical = (id) => vocab.FEATURE_ROLE_BY_ID[id]?.alias || id;
+    const dedupe = (arr) => Array.from(new Set((arr || []).map(toCanonical)));
     res.json({
-      unauthenticated: cfg.unauthenticated || [],
-      authenticated:   cfg.authenticated || [],
+      unauthenticated: dedupe(cfg.unauthenticated),
+      authenticated:   dedupe(cfg.authenticated),
       catalogue: {
         unauthenticated: vocab.FEATURE_ROLES.filter((r) => r.bucket === 'unauthenticated' && r.defaultEligible),
-        authenticated:   vocab.FEATURE_ROLES.filter((r) => r.bucket === 'authenticated'   && r.defaultEligible),
+        // Authenticated users inherit unauthenticated capabilities, so the
+        // authenticated chooser lists every default-eligible role.
+        authenticated:   vocab.FEATURE_ROLES.filter((r) => r.defaultEligible),
       },
       updatedAt: cfg.updatedAt || null,
       updatedByUserId: cfg.updatedByUserId || null,
@@ -1016,6 +1167,7 @@ router.get('/default-roles', auth, requireUsersAdmin, async (req, res, next) => 
 router.put('/default-roles', auth, requireUsersAdmin, async (req, res, next) => {
   try {
     const cfg = await DefaultRolesConfig.getSingleton();
+    const snapBefore = await snapshotDefaultUserRoles();
     const before = { unauthenticated: cfg.unauthenticated || [], authenticated: cfg.authenticated || [] };
     cfg.unauthenticated = vocab.sanitizeDefaultRoles(req.body?.unauthenticated || [], 'unauthenticated');
     cfg.authenticated   = vocab.sanitizeDefaultRoles(req.body?.authenticated   || [], 'authenticated');
@@ -1028,126 +1180,20 @@ router.put('/default-roles', auth, requireUsersAdmin, async (req, res, next) => 
       context: diffContext(before, cfg, ['unauthenticated', 'authenticated']),
     });
 
+    const snapAfter = await snapshotDefaultUserRoles();
+    await logConfigChange({
+      category: 'Default user roles',
+      ...authorFromRequest(req),
+      before: snapBefore,
+      after: snapAfter,
+    });
+
     res.json({
       unauthenticated: cfg.unauthenticated,
       authenticated:   cfg.authenticated,
       updatedAt:       cfg.updatedAt,
       updatedByUserId: cfg.updatedByUserId,
     });
-  } catch (err) { next(err); }
-});
-
-// -----------------------------------------------------------------------------
-// XLSX EXPORT
-// -----------------------------------------------------------------------------
-//
-// Streams an XLSX of the *current filter set*. exceljs is required lazily so
-// the rest of the routes still work if the dependency hasn't been installed
-// yet on a given environment.
-router.get('/users/export.xlsx', auth, requireUsersAdmin, async (req, res, next) => {
-  let ExcelJS;
-  try { ExcelJS = require('exceljs'); }
-  catch (e) {
-    return res.status(503).json({
-      error: 'XLSX export is unavailable. Install the `exceljs` dependency on the backend.',
-    });
-  }
-  try {
-    // Reuse the same filter parsing as GET /users
-    const filter = await buildListFilter(req.query);
-    const rows = await User.find(filter)
-      .sort('-createdAt')
-      .select(LIST_PROJECTION + ' preferences')
-      .populate('groups groupsManual groupsAuto', 'name')
-      .lean();
-
-    const counts = await Promise.all([
-      Bookmark.aggregate([{ $match: { userId: { $in: rows.map((r) => r._id) } } }, { $group: { _id: '$userId', n: { $sum: 1 } } }]),
-      SavedSearch.aggregate([{ $match: { userId: { $in: rows.map((r) => r._id) } } }, { $group: { _id: '$userId', n: { $sum: 1 } } }]),
-      PersonalBook.aggregate([{ $match: { userId: { $in: rows.map((r) => r._id) } } }, { $group: { _id: '$userId', n: { $sum: 1 } } }]),
-      Collection.aggregate([{ $match: { userId: { $in: rows.map((r) => r._id) } } }, { $group: { _id: '$userId', n: { $sum: 1 } } }]),
-    ]);
-    const ix = (arr) => Object.fromEntries(arr.map((r) => [r._id.toString(), r.n]));
-    const cmap = { bm: ix(counts[0]), ss: ix(counts[1]), pb: ix(counts[2]), col: ix(counts[3]) };
-
-    const wb = new ExcelJS.Workbook();
-    wb.creator = req.user.email || 'admin';
-    wb.created = new Date();
-    const ws = wb.addWorksheet('users');
-
-    ws.columns = [
-      { header: 'User ID',                  key: 'id',          width: 28 },
-      { header: 'Display name',             key: 'name',        width: 26 },
-      { header: 'Email',                    key: 'email',       width: 30 },
-      { header: 'Creation date',            key: 'createdAt',   width: 22 },
-      { header: 'Last login',               key: 'lastLogin',   width: 22 },
-      { header: 'Last activity',            key: 'lastActivity',width: 22 },
-      { header: 'Account locked',           key: 'locked',      width: 14 },
-      { header: 'Realm',                    key: 'realm',       width: 12 },
-      { header: 'Tier role',                key: 'tier',        width: 12 },
-      { header: 'Feature roles (effective)',key: 'roles',       width: 50 },
-      { header: 'Feature roles (manual)',   key: 'rolesManual', width: 50 },
-      { header: 'Feature roles (auto)',     key: 'rolesAuto',   width: 40 },
-      { header: 'Feature roles (default)',  key: 'rolesDefault',width: 40 },
-      { header: 'Admin roles',              key: 'adminRoles',  width: 36 },
-      { header: 'Groups (effective)',       key: 'groups',      width: 36 },
-      { header: 'Groups (manual)',          key: 'groupsManual',width: 30 },
-      { header: 'Groups (auto)',            key: 'groupsAuto',  width: 30 },
-      { header: 'Tags (effective)',         key: 'tags',        width: 36 },
-      { header: 'Tags (manual)',            key: 'tagsManual',  width: 30 },
-      { header: 'Tags (auto)',              key: 'tagsAuto',    width: 30 },
-      { header: 'Bookmarks',                key: 'bookmarks',   width: 12 },
-      { header: 'Saved searches',           key: 'searches',    width: 14 },
-      { header: 'Personal books',           key: 'books',       width: 14 },
-      { header: 'Collections',              key: 'collections', width: 14 },
-      { header: 'Locale',                   key: 'locale',      width: 10 },
-      { header: 'Theme',                    key: 'theme',       width: 10 },
-    ];
-    ws.getRow(1).font = { bold: true };
-
-    for (const u of rows) {
-      const k = u._id.toString();
-      ws.addRow({
-        id: u._id.toString(),
-        name: u.name || '',
-        email: u.email || '',
-        createdAt: u.createdAt ? new Date(u.createdAt).toISOString() : '',
-        lastLogin: u.lastLogin ? new Date(u.lastLogin).toISOString() : '',
-        lastActivity: u.lastActivityAt ? new Date(u.lastActivityAt).toISOString() : '',
-        locked: u.lockedManually ? 'yes' : 'no',
-        realm: u.realm || 'internal',
-        tier: u.role || 'viewer',
-        roles:        (u.permissions || []).join(', '),
-        rolesManual:  (u.permissionsManual || []).join(', '),
-        rolesAuto:    (u.permissionsAuto || []).join(', '),
-        rolesDefault: (u.permissionsDefault || []).join(', '),
-        adminRoles:   (u.adminRoles || []).join(', '),
-        groups:        (u.groups || []).map((g) => g.name || g).join(', '),
-        groupsManual:  (u.groupsManual || []).map((g) => g.name || g).join(', '),
-        groupsAuto:    (u.groupsAuto || []).map((g) => g.name || g).join(', '),
-        tags:        (u.tags || []).join(', '),
-        tagsManual:  (u.tagsManual || []).join(', '),
-        tagsAuto:    (u.tagsAuto || []).join(', '),
-        bookmarks:   cmap.bm[k] || 0,
-        searches:    cmap.ss[k] || 0,
-        books:       cmap.pb[k] || 0,
-        collections: cmap.col[k]|| 0,
-        locale: u.preferences?.language || '',
-        theme:  u.preferences?.theme || '',
-      });
-    }
-
-    await writeAudit(req, {
-      action: 'users.export.xlsx',
-      summary: `Downloaded XLSX of ${rows.length} users`,
-      context: { filter: req.query },
-    });
-
-    const ts = new Date().toISOString().replace(/:/g, '_').replace(/\..+$/, '');
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="ft-users-${ts}.xlsx"`);
-    await wb.xlsx.write(res);
-    res.end();
   } catch (err) { next(err); }
 });
 

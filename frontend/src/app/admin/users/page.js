@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import api, { getStoredUser, getStoredToken } from '@/lib/api';
+import { createPortal } from 'react-dom';
+import api, { API_BASE, getStoredUser, getStoredToken, syncCurrentUserFromServer } from '@/lib/api';
 import AdminShell from '@/components/admin/AdminShell';
 
 // ---------------------------------------------------------------------------
@@ -26,27 +27,48 @@ function originLabel(origin) {
 
 const REALM_LABELS = { internal: 'Internal', sso: 'SSO', ldap: 'LDAP', oidc: 'OIDC' };
 
-const tierBadge = (tier) => ({
-  superadmin: { bg: '#ede9fe', color: '#5b21b6' },
-  admin:      { bg: '#fee2e2', color: '#991b1b' },
-  editor:     { bg: '#fef3c7', color: '#92400e' },
-  viewer:     { bg: '#f1f5f9', color: '#475569' },
-}[tier] || { bg: '#f1f5f9', color: '#475569' });
+/** Manual grants on a user account — signed-in capabilities only (anonymous-session roles → Default roles). */
+function accountAssignableFeatureRoles(vocab) {
+  return (vocab?.featureRoles || []).filter((r) => !r.alias && r.bucket === 'authenticated');
+}
+
+function featureRoleMeta(vocab, id) {
+  return (vocab?.featureRoles || []).find((r) => r.id === id);
+}
+
+/** Fluid Topics–style long descriptions for the Default roles chooser (fallback: vocabulary label). */
+const DEFAULT_ROLE_LONG_LABEL = {
+  PRINT_USER: 'Can use the print feature in the Reader page',
+  RATING_USER: 'Can rate content',
+  FEEDBACK_USER: 'Can send feedback',
+  GENERATIVE_AI_USER: 'Can use AI features',
+  GENERATIVE_AI_EXPORT_USER: 'Can use and export AI features',
+  AI_USER: 'Can use AI features',
+  AI_EXPORT_USER: 'Can use and export AI features',
+  PERSONAL_BOOK_USER: 'Can create personal books',
+  PERSONAL_BOOK_SHARE_USER: 'Can create and share personal books',
+  HTML_EXPORT_USER: 'Can create personal books and download to HTML',
+  PDF_EXPORT_USER: 'Can create personal books and download to PDF',
+  SAVED_SEARCH_USER: 'Can save searches',
+  COLLECTION_USER: 'Can create collections',
+  OFFLINE_USER: 'Can use offline features',
+  ANALYTICS_USER: 'Can see Analytics (excluding analytics related to individual user behavior)',
+  BETA_USER: 'Can use beta features',
+  DEBUG_USER: 'Can access debug tools',
+};
+
+function defaultRolesChooserLabel(roleId, vocabEntry) {
+  return DEFAULT_ROLE_LONG_LABEL[roleId] || vocabEntry?.label || roleId;
+}
+
+function roleSelectionEqual(sel, snap) {
+  if (!sel || !snap || sel.length !== snap.length) return false;
+  const a = new Set(sel);
+  return snap.every((id) => a.has(id));
+}
 
 const tierLabel = (tier) =>
   tier === 'superadmin' ? 'Super admin' : (tier ? tier.charAt(0).toUpperCase() + tier.slice(1) : '');
-
-function initials(name) {
-  if (!name) return '?';
-  return name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join('').toUpperCase();
-}
-
-function avatarColor(seed = '') {
-  const palette = ['#f87171', '#fbbf24', '#34d399', '#60a5fa', '#a78bfa', '#f472b6', '#fb923c'];
-  let h = 0;
-  for (const c of seed) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-  return palette[h % palette.length];
-}
 
 function formatDate(d) {
   if (!d) return '—';
@@ -79,10 +101,34 @@ function ChipWithOrigin({ origin, children, color = '#0f172a', bg = '#f1f5f9' })
   );
 }
 
+/** Fluid Topics–style access group pill (filled light blue / dot). */
+function GroupPill({ origin, children }) {
+  return (
+    <span style={S.groupPillFt}>
+      <OriginDot origin={origin} />
+      <span>{children}</span>
+    </span>
+  );
+}
+
+/** Outlined role pill with origin dot (feature / tier / admin roles). */
+function RolePill({ origin, children, variant = 'feature' }) {
+  const st =
+    variant === 'tier' ? S.tierPillFt
+    : variant === 'admin' ? S.adminPillFt
+    : S.rolePillFt;
+  return (
+    <span style={st}>
+      <OriginDot origin={origin} />
+      <span>{children}</span>
+    </span>
+  );
+}
+
 // ---------------------------------------------------------------------------
-// Filter dropdown — multi-select with checkbox list
+// Filter — single-select “chosen” style (All X + list), like Fluid Topics admin
 // ---------------------------------------------------------------------------
-function FilterDropdown({ label, options, selected, onChange }) {
+function SingleSelectFilter({ allLabel, options, value, onChange, formatOption }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   useEffect(() => {
@@ -90,17 +136,15 @@ function FilterDropdown({ label, options, selected, onChange }) {
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
   }, []);
-  const summary =
-    selected.length === 0 ? label
-    : selected.length === 1 ? selected[0]
-    : `${selected.length} selected`;
-  const toggle = (val) =>
-    onChange(selected.includes(val) ? selected.filter((s) => s !== val) : [...selected, val]);
+  const display =
+    !value ? allLabel
+    : formatOption ? formatOption(value)
+    : value;
   return (
-    <div ref={ref} style={{ position: 'relative', minWidth: '160px' }}>
-      <button type="button" style={F.trigger} onClick={() => setOpen((v) => !v)}>
-        <span style={{ flex: 1, textAlign: 'left', color: selected.length ? '#0f172a' : '#64748b', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-          {summary}
+    <div ref={ref} style={{ position: 'relative', minWidth: '148px', maxWidth: '200px' }}>
+      <button type="button" style={F.trigger} onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+        <span style={{ flex: 1, textAlign: 'left', color: value ? '#0f172a' : '#64748b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {display}
         </span>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <polyline points="6 9, 12 15, 18 9" />
@@ -108,20 +152,83 @@ function FilterDropdown({ label, options, selected, onChange }) {
       </button>
       {open && (
         <div style={F.menu}>
+          <button type="button" style={F.optionRow} onClick={() => { onChange(''); setOpen(false); }}>
+            {allLabel}
+          </button>
           {options.length === 0 && (
             <div style={{ padding: '10px 12px', fontSize: '0.82rem', color: '#94a3b8' }}>No options</div>
           )}
           {options.map((opt) => (
-            <label key={opt} style={F.item}>
-              <input type="checkbox" checked={selected.includes(opt)} onChange={() => toggle(opt)} style={{ marginRight: '8px' }} />
-              {opt}
-            </label>
+            <button
+              key={opt}
+              type="button"
+              style={{ ...F.optionRow, fontWeight: value === opt ? 600 : 400 }}
+              onClick={() => { onChange(opt); setOpen(false); }}
+            >
+              {formatOption ? formatOption(opt) : opt}
+            </button>
           ))}
-          {selected.length > 0 && (
-            <button type="button" style={F.clear} onClick={() => onChange([])}>Clear selection</button>
-          )}
         </div>
       )}
+    </div>
+  );
+}
+
+const PAGE_SIZE = 20;
+
+function SortableTh({ label, columnId, activeColumn, dir, onSort }) {
+  const isActive = activeColumn === columnId;
+  return (
+    <th
+      style={S.th}
+      aria-sort={isActive ? (dir === 'desc' ? 'descending' : 'ascending') : undefined}
+    >
+      <button
+        type="button"
+        style={S.sortBtn}
+        onClick={() => onSort(columnId)}
+      >
+        <span>{label}</span>
+        <span style={S.sortIcons} aria-hidden="true">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke={isActive && dir === 'asc' ? '#7c3aed' : '#cbd5e1'} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="8 9 12 5 16 9" />
+          </svg>
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke={isActive && dir === 'desc' ? '#7c3aed' : '#cbd5e1'} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="16 15 12 19 8 15" />
+          </svg>
+        </span>
+      </button>
+    </th>
+  );
+}
+
+function Pager({ page, pageSize, total, onPage }) {
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const windowStart = Math.max(1, Math.min(page - 4, totalPages - 9));
+  const pages = [];
+  for (let i = windowStart; i <= Math.min(windowStart + 9, totalPages); i += 1) pages.push(i);
+  const go = (p) => onPage(Math.max(1, Math.min(p, totalPages)));
+  return (
+    <div style={S.pager}>
+      <button type="button" style={S.pagerBtn} disabled={page <= 1} onClick={() => go(1)} aria-label="Go to first page">«</button>
+      <button type="button" style={S.pagerBtn} disabled={page <= 1} onClick={() => go(page - 1)} aria-label="Go to previous page">‹</button>
+      <div style={S.pagerPages}>
+        {pages.map((p) => (
+          <button
+            key={p}
+            type="button"
+            style={{ ...S.pagerBtn, ...(p === page ? S.pagerBtnCurrent : null) }}
+            onClick={() => go(p)}
+            aria-label={`Page ${p}`}
+            aria-current={p === page ? 'page' : undefined}
+            disabled={p === page}
+          >
+            {p}
+          </button>
+        ))}
+      </div>
+      <button type="button" style={S.pagerBtn} disabled={page >= totalPages} onClick={() => go(page + 1)} aria-label="Go to next page">›</button>
+      <button type="button" style={S.pagerBtn} disabled={page >= totalPages} onClick={() => go(totalPages)} aria-label="Go to last page">»</button>
     </div>
   );
 }
@@ -129,17 +236,37 @@ function FilterDropdown({ label, options, selected, onChange }) {
 // ---------------------------------------------------------------------------
 // Right-side drawer scaffold
 // ---------------------------------------------------------------------------
-function Drawer({ open, onClose, title, footer, width = '520px', children }) {
+function Drawer({
+  open, onClose, title, footer, width = '520px', children,
+  closeLeading = false, titleAs = 'h3', dialogLabel,
+}) {
   if (!open) return null;
+  const Heading = titleAs;
+  const ariaLabel = dialogLabel || title;
   return (
     <div style={D.overlay} onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div style={{ ...D.panel, width }}>
-        <div style={D.header}>
-          <h3 style={D.title}>{title}</h3>
-          <button style={D.close} onClick={onClose} aria-label="Close drawer">✕</button>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={ariaLabel}
+        style={{ ...D.panel, width }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div style={{ ...D.header, ...(closeLeading ? D.headerLeading : {}) }}>
+          {closeLeading && (
+            <button type="button" style={D.closeLeading} onClick={onClose} aria-label="Close">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+                <path d="M18 6L6 18M6 6l12 12" />
+              </svg>
+            </button>
+          )}
+          <Heading style={{ ...D.title, ...(closeLeading ? D.titleLeading : {}) }}>{title}</Heading>
+          {!closeLeading && (
+            <button type="button" style={D.close} onClick={onClose} aria-label="Close drawer">✕</button>
+          )}
         </div>
         <div style={D.body}>{children}</div>
-        {footer && <div style={D.footer}>{footer}</div>}
+        {footer && <div style={{ ...D.footer, ...(closeLeading ? D.footerFlush : {}) }}>{footer}</div>}
       </div>
     </div>
   );
@@ -161,6 +288,7 @@ function UserDrawer({
   const [draft, setDraft] = useState({
     name: '', email: '', tier: 'viewer', realm: 'internal',
     permissions: [],         // feature roles (manual)
+    defaultPermissions: [], // permissionsDefault — editable copy for Save
     adminRoles:  [],
     groups:      [],         // ObjectIds (manual)
     tags:        [],
@@ -185,6 +313,7 @@ function UserDrawer({
           tier:        d.user.role || 'viewer',
           realm:       d.user.realm || 'internal',
           permissions: d.user.permissionsManual || [],
+          defaultPermissions: [...(d.user.permissionsDefault || [])],
           adminRoles:  d.user.adminRolesManual  || [],
           groups:      (d.user.groupsManual || []).map((g) => g._id || g),
           tags:        d.user.tagsManual || [],
@@ -203,11 +332,35 @@ function UserDrawer({
       ...d,
       permissions: d.permissions.includes(id) ? d.permissions.filter((p) => p !== id) : [...d.permissions, id],
     }));
-  const toggleAdmin = (id) =>
-    setDraft((d) => ({
-      ...d,
-      adminRoles: d.adminRoles.includes(id) ? d.adminRoles.filter((p) => p !== id) : [...d.adminRoles, id],
-    }));
+
+  /** Toggle signed-in feature role: manual first, then default copy, then grant manual; SSO-only cannot be cleared here. */
+  const toggleFeatureRole = (id) => {
+    setDraft((d) => {
+      if (d.permissions.includes(id)) {
+        return { ...d, permissions: d.permissions.filter((p) => p !== id) };
+      }
+      const defs = d.defaultPermissions || [];
+      if (defs.includes(id)) {
+        return { ...d, defaultPermissions: defs.filter((p) => p !== id) };
+      }
+      if (user && (user.permissionsAuto || []).includes(id)) {
+        return d;
+      }
+      return { ...d, permissions: [...d.permissions, id] };
+    });
+  };
+  /** Prefer clearing manual assignment; SSO-supplied roles cannot be removed here. */
+  const toggleAdminRole = (id) => {
+    setDraft((d) => {
+      if (d.adminRoles.includes(id)) {
+        return { ...d, adminRoles: d.adminRoles.filter((x) => x !== id) };
+      }
+      if (user && (user.adminRolesAuto || []).includes(id)) {
+        return d;
+      }
+      return { ...d, adminRoles: [...d.adminRoles, id] };
+    });
+  };
   const toggleGroup = (id) =>
     setDraft((d) => ({
       ...d,
@@ -247,12 +400,22 @@ function UserDrawer({
         role:        draft.tier,
         realm:       draft.realm,
         permissions: draft.permissions,
+        permissionsDefault: draft.defaultPermissions,
         adminRoles:  draft.adminRoles,
         groups:      draft.groups,
         tags:        draft.tags,
         lockedManually: draft.locked,
       };
       const res = await api.patch(`/admin/users/${userId}`, payload);
+      if (res?.user) {
+        setUser(res.user);
+        setDraft((prev) => ({
+          ...prev,
+          permissions:       res.user.permissionsManual || [],
+          defaultPermissions: [...(res.user.permissionsDefault || [])],
+          adminRoles:        res.user.adminRolesManual || [],
+        }));
+      }
       onSaved?.(res.user);
     } catch (e) {
       setError(e.message || 'Failed to save user');
@@ -294,15 +457,53 @@ function UserDrawer({
     finally { setMfaBusy(false); }
   };
 
+  const assignableFeatureList = useMemo(() => accountAssignableFeatureRoles(vocab), [vocab]);
+  const assignableFeatureIds = useMemo(
+    () => new Set(assignableFeatureList.map((r) => r.id)),
+    [assignableFeatureList],
+  );
   const featureGroups = useMemo(() => {
     const buckets = {};
-    (vocab?.featureRoles || []).forEach((r) => {
-      if (r.alias) return; // hide legacy aliases from picker
+    assignableFeatureList.forEach((r) => {
       buckets[r.bucket] = buckets[r.bucket] || [];
       buckets[r.bucket].push(r);
     });
     return buckets;
-  }, [vocab]);
+  }, [assignableFeatureList]);
+
+  const unauthManualPermissions = useMemo(
+    () => (draft.permissions || []).filter((id) => {
+      const r = featureRoleMeta(vocab, id);
+      return r && r.bucket === 'unauthenticated';
+    }),
+    [draft.permissions, vocab],
+  );
+
+  /** Manual ∪ editable default ∪ SSO — drives checkbox checked state for signed-in feature roles. */
+  const effectiveFeatureIds = useMemo(() => {
+    const set = new Set();
+    (draft.permissions || []).forEach((id) => set.add(id));
+    (draft.defaultPermissions || []).forEach((id) => set.add(id));
+    if (user) (user.permissionsAuto || []).forEach((id) => set.add(id));
+    return set;
+  }, [draft.permissions, draft.defaultPermissions, user]);
+
+  const effectiveAdminRoleIds = useMemo(() => {
+    const set = new Set();
+    (draft.adminRoles || []).forEach((id) => set.add(id));
+    if (user) (user.adminRolesAuto || []).forEach((id) => set.add(id));
+    return set;
+  }, [draft.adminRoles, user]);
+
+  const inheritedAutoFeatureChips = useMemo(
+    () => (user?.permissionsAuto || []).filter((p) => !assignableFeatureIds.has(p)),
+    [user?.permissionsAuto, assignableFeatureIds],
+  );
+  /** Default-granted roles not in the signed-in checkbox grid (e.g. anonymous-bucket defaults). */
+  const inheritedDefaultFeatureChips = useMemo(
+    () => (draft.defaultPermissions || []).filter((p) => !assignableFeatureIds.has(p)),
+    [draft.defaultPermissions, assignableFeatureIds],
+  );
 
   const tiersForSelect = useMemo(() => {
     const list = actor?.role === 'superadmin'
@@ -311,15 +512,28 @@ function UserDrawer({
     return [...new Set([...list, draft.tier].filter(Boolean))];
   }, [actor, draft.tier]);
 
-  const featureCount  = draft.permissions.length;
-  const featureMax    = (vocab?.featureRoles || []).filter((r) => !r.alias).length;
-  const adminCount    = draft.adminRoles.length;
-  const adminMax      = (vocab?.administrativeRoles || []).length;
+  const featureCount = useMemo(
+    () => assignableFeatureList.filter((r) => effectiveFeatureIds.has(r.id)).length,
+    [assignableFeatureList, effectiveFeatureIds],
+  );
+  const featureMax = assignableFeatureList.length;
+  const adminEffectiveCount = useMemo(
+    () => (vocab?.administrativeRoles || []).filter((r) => effectiveAdminRoleIds.has(r.id)).length,
+    [vocab?.administrativeRoles, effectiveAdminRoleIds],
+  );
+  const adminMax = (vocab?.administrativeRoles || []).length;
 
   if (loading || !user) {
     return (
-      <Drawer open onClose={onClose} title="User details">
-        <div style={{ padding: '40px', textAlign: 'center' }}><div className="spinner" style={{ margin: '0 auto' }} /></div>
+      <Drawer open onClose={onClose} title="User details" width="600px">
+        {error ? (
+          <div style={{ padding: '24px' }}>
+            <div style={modal.error}>{error}</div>
+            <button type="button" style={{ ...modal.cancelBtn, marginTop: '12px' }} onClick={onClose}>Close</button>
+          </div>
+        ) : (
+          <div style={{ padding: '40px', textAlign: 'center' }}><div className="spinner" style={{ margin: '0 auto' }} /></div>
+        )}
       </Drawer>
     );
   }
@@ -468,35 +682,65 @@ function UserDrawer({
         </div>
       </Section>
 
-      {/* Feature roles */}
+      {/* Feature roles — authenticated catalogue only; anonymous-session defaults live under Default roles */}
       <Section
         title="Feature roles"
-        subtitle={`${featureCount} of ${featureMax} assigned`}
+        subtitle={`${featureCount} of ${featureMax} signed-in roles effective${unauthManualPermissions.length ? ` · ${unauthManualPermissions.length} anonymous-session (manual)` : ''}`}
       >
+        <div style={{ fontSize: '0.78rem', color: '#64748b', marginBottom: '10px' }}>
+          Uncheck to remove a default grant for this user (saved with <strong>Save</strong>), or add roles manually. SSO-mapped roles stay until your IdP changes.
+        </div>
         {Object.keys(featureGroups).map((bucket) => (
           <div key={bucket} style={{ marginBottom: '12px' }}>
             <div style={modal.permGroup}>{bucket} users</div>
             <div style={modal.permGrid}>
               {featureGroups[bucket].map((r) => (
                 <label key={r.id} style={modal.permItem}>
-                  <input type="checkbox" checked={draft.permissions.includes(r.id)} onChange={() => togglePerm(r.id)} style={{ marginRight: '6px' }} />
+                  <input
+                    type="checkbox"
+                    checked={effectiveFeatureIds.has(r.id)}
+                    onChange={() => toggleFeatureRole(r.id)}
+                    style={{ marginRight: '6px' }}
+                  />
                   {r.label}
                 </label>
               ))}
             </div>
           </div>
         ))}
-        {/* Auto-applied / default permissions, read-only */}
-        {(user.permissionsAuto?.length || user.permissionsDefault?.length) ? (
+        {unauthManualPermissions.length > 0 && (
+          <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px dashed #e5e7eb' }}>
+            <div style={modal.permGroup}>Anonymous-session roles (manual)</div>
+            <div style={{ fontSize: '0.72rem', color: '#64748b', marginBottom: '8px' }}>
+              Normally configured for anonymous users via Default roles. Remove if this assignment was unintended.
+            </div>
+            <div style={S.tagWrap}>
+              {unauthManualPermissions.map((id) => {
+                const label = featureRoleMeta(vocab, id)?.label || id;
+                return (
+                  <span key={id} style={{ ...S.chip, background: '#fef9c3', color: '#854d0e' }}>
+                    <span>{label}</span>
+                    <button type="button" style={S.chipX} onClick={() => togglePerm(id)} aria-label={`Remove ${label}`}>×</button>
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+        )}
+        {/* Auto/default permissions not shown above (e.g. anonymous-bucket defaults) */}
+        {(inheritedAutoFeatureChips.length > 0 || inheritedDefaultFeatureChips.length > 0) ? (
           <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px dashed #e5e7eb' }}>
             <div style={{ ...modal.permGroup, marginBottom: '6px' }}>Inherited (read-only)</div>
+            <div style={{ fontSize: '0.72rem', color: '#64748b', marginBottom: '6px' }}>
+              Other inherited roles (signed-in roles also appear checked above).
+            </div>
             <div style={S.tagWrap}>
-              {(user.permissionsAuto || []).map((p) => (
+              {inheritedAutoFeatureChips.map((p) => (
                 <span key={`auto-${p}`} style={{ ...S.chip, background: '#dcfce7', color: '#166534' }}>
                   <OriginDot origin="auto" /><span>{p}</span>
                 </span>
               ))}
-              {(user.permissionsDefault || []).map((p) => (
+              {inheritedDefaultFeatureChips.map((p) => (
                 <span key={`def-${p}`} style={{ ...S.chip, background: '#fee2e2', color: '#991b1b' }}>
                   <OriginDot origin="default" /><span>{p}</span>
                 </span>
@@ -507,11 +751,19 @@ function UserDrawer({
       </Section>
 
       {/* Admin roles */}
-      <Section title="Administrative roles" subtitle={`${adminCount} of ${adminMax} assigned`}>
+      <Section title="Administrative roles" subtitle={`${adminEffectiveCount} of ${adminMax} effective`}>
+        <div style={{ fontSize: '0.78rem', color: '#64748b', marginBottom: '10px' }}>
+          Toggle manual assignments here. Roles still supplied by SSO remain until updated in your identity provider.
+        </div>
         <div style={modal.permGrid}>
           {(vocab?.administrativeRoles || []).map((r) => (
             <label key={r.id} style={modal.permItem}>
-              <input type="checkbox" checked={draft.adminRoles.includes(r.id)} onChange={() => toggleAdmin(r.id)} style={{ marginRight: '6px' }} />
+              <input
+                type="checkbox"
+                checked={effectiveAdminRoleIds.has(r.id)}
+                onChange={() => toggleAdminRole(r.id)}
+                style={{ marginRight: '6px' }}
+              />
               {r.label}
             </label>
           ))}
@@ -699,72 +951,137 @@ function Field({ label, children }) {
 }
 
 // ---------------------------------------------------------------------------
-// Default roles drawer
+// Default roles drawer (Fluid Topics layout: sections, label + ROLE_ID column)
 // ---------------------------------------------------------------------------
 function DefaultRolesDrawer({ onClose, vocab }) {
   const [data, setData] = useState(null);
+  const [snapshot, setSnapshot] = useState(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   useEffect(() => {
-    api.get('/admin/default-roles').then(setData).catch((e) => setError(e.message));
+    api.get('/admin/default-roles')
+      .then((d) => {
+        setData(d);
+        setSnapshot({
+          unauthenticated: [...(d.unauthenticated || [])],
+          authenticated: [...(d.authenticated || [])],
+        });
+      })
+      .catch((e) => setError(e.message));
   }, []);
+
   const toggle = (bucket, id) => {
     setData((d) => {
       const arr = d[bucket].includes(id) ? d[bucket].filter((x) => x !== id) : [...d[bucket], id];
       return { ...d, [bucket]: arr };
     });
   };
+
+  const dirty = data && snapshot && (
+    !roleSelectionEqual(data.unauthenticated, snapshot.unauthenticated)
+    || !roleSelectionEqual(data.authenticated, snapshot.authenticated)
+  );
+
   const save = async () => {
+    if (!data) return;
     setSaving(true);
     try {
       const res = await api.put('/admin/default-roles', {
         unauthenticated: data.unauthenticated,
-        authenticated:   data.authenticated,
+        authenticated: data.authenticated,
       });
-      setData({ ...data, ...res });
+      const merged = { ...data, ...res };
+      setData(merged);
+      setSnapshot({
+        unauthenticated: [...(merged.unauthenticated || [])],
+        authenticated: [...(merged.authenticated || [])],
+      });
       onClose();
     } catch (e) { setError(e.message); }
     finally { setSaving(false); }
   };
+
+  const unauthCatalogue = (data?.catalogue?.unauthenticated
+    || vocab?.featureRoles?.filter((r) => r.bucket === 'unauthenticated' && r.defaultEligible)
+    || []).filter((r) => !r.alias);
+  const authCatalogue = (data?.catalogue?.authenticated
+    || vocab?.featureRoles?.filter((r) => r.bucket === 'authenticated' && r.defaultEligible)
+    || []).filter((r) => !r.alias);
+
   return (
     <Drawer
-      open onClose={onClose}
-      title="Edit default roles"
-      footer={
-        <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', width: '100%' }}>
-          <button style={modal.cancelBtn} onClick={onClose}>Cancel</button>
-          <button style={modal.saveBtn} disabled={saving || !data} onClick={save}>{saving ? 'Saving…' : 'Save'}</button>
+      open
+      onClose={onClose}
+      title="Default roles"
+      dialogLabel="Default roles"
+      titleAs="h2"
+      closeLeading
+      width="min(760px, 100vw)"
+      footer={(
+        <div style={DR.footerActions}>
+          <button type="button" style={DR.btnCancel} onClick={onClose} aria-label="Cancel">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
+              <path d="M18 6L6 18M6 6l12 12" />
+            </svg>
+            <span>Cancel</span>
+          </button>
+          <button
+            type="button"
+            style={{ ...DR.btnSave, ...((!dirty || saving || !data) ? DR.btnSaveDisabled : {}) }}
+            disabled={!dirty || saving || !data}
+            onClick={save}
+            aria-label="Save"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+            <span>{saving ? 'Saving…' : 'Save'}</span>
+          </button>
         </div>
-      }
+      )}
     >
       {error && <div style={modal.error}>{error}</div>}
       {!data ? (
         <div style={{ padding: '40px', textAlign: 'center' }}><div className="spinner" style={{ margin: '0 auto' }} /></div>
       ) : (
-        <>
-          <Section title="Unauthenticated users" subtitle="Roles applied to anonymous sessions.">
-            <div style={modal.permGrid}>
-              {(data.catalogue?.unauthenticated || vocab?.featureRoles?.filter((r) => r.bucket === 'unauthenticated' && r.defaultEligible) || []).map((r) => (
-                <label key={r.id} style={modal.permItem}>
-                  <input type="checkbox" checked={data.unauthenticated.includes(r.id)}
-                         onChange={() => toggle('unauthenticated', r.id)} style={{ marginRight: '6px' }} />
-                  {r.label || r.id}
-                </label>
+        <div style={DR.scroll}>
+          <div style={DR.widgetGroup}>
+            <div style={DR.widgetGroupLabel}>Select roles to assign to all unauthenticated users</div>
+            <ul style={DR.roleList}>
+              {unauthCatalogue.map((r) => (
+                <li key={r.id} style={DR.roleListItem}>
+                  <label style={DR.roleRowLabel}>
+                    <input
+                      type="checkbox"
+                      checked={data.unauthenticated.includes(r.id)}
+                      onChange={() => toggle('unauthenticated', r.id)}
+                    />
+                    <span>{defaultRolesChooserLabel(r.id, r)}</span>
+                  </label>
+                  <span style={DR.roleName}>{r.id}</span>
+                </li>
               ))}
-            </div>
-          </Section>
-          <Section title="Authenticated users" subtitle="Roles auto-assigned to every signed-in user with no manual roles.">
-            <div style={modal.permGrid}>
-              {(data.catalogue?.authenticated || vocab?.featureRoles?.filter((r) => r.bucket === 'authenticated' && r.defaultEligible) || []).map((r) => (
-                <label key={r.id} style={modal.permItem}>
-                  <input type="checkbox" checked={data.authenticated.includes(r.id)}
-                         onChange={() => toggle('authenticated', r.id)} style={{ marginRight: '6px' }} />
-                  {r.label || r.id}
-                </label>
+            </ul>
+          </div>
+          <div style={DR.widgetGroup}>
+            <div style={DR.widgetGroupLabel}>Select roles to assign to all authenticated users</div>
+            <ul style={DR.roleList}>
+              {authCatalogue.map((r) => (
+                <li key={r.id} style={DR.roleListItem}>
+                  <label style={DR.roleRowLabel}>
+                    <input
+                      type="checkbox"
+                      checked={data.authenticated.includes(r.id)}
+                      onChange={() => toggle('authenticated', r.id)}
+                    />
+                    <span>{defaultRolesChooserLabel(r.id, r)}</span>
+                  </label>
+                  <span style={DR.roleName}>{r.id}</span>
+                </li>
               ))}
-            </div>
-          </Section>
-        </>
+            </ul>
+          </div>
+        </div>
       )}
     </Drawer>
   );
@@ -781,19 +1098,50 @@ function NewUserModal({ onClose, onSaved, vocab, allGroups, actor }) {
   const [saving, setSaving] = useState(false);
   const [error, setError]   = useState('');
   const [newTag, setNewTag] = useState('');
+  /** 'defaults' = match tenant Default roles (authenticated); 'empty' = no manual picks — server still applies full defaults on create. */
+  const [featurePreset, setFeaturePreset] = useState('defaults');
+  const [tenantDefaultAssignableIds, setTenantDefaultAssignableIds] = useState([]);
 
   const tiers = actor?.role === 'superadmin'
     ? ['viewer', 'editor', 'admin', 'superadmin']
     : DEFAULT_ASSIGNABLE_TIERS;
   const featureGroups = useMemo(() => {
     const buckets = {};
-    (vocab?.featureRoles || []).forEach((r) => {
-      if (r.alias) return;
+    accountAssignableFeatureRoles(vocab).forEach((r) => {
       buckets[r.bucket] = buckets[r.bucket] || [];
       buckets[r.bucket].push(r);
     });
     return buckets;
   }, [vocab]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const assignableSet = new Set(accountAssignableFeatureRoles(vocab).map((r) => r.id));
+    api.get('/admin/default-roles')
+      .then((d) => {
+        if (cancelled) return;
+        const ids = (d.authenticated || []).filter((id) => assignableSet.has(id));
+        setTenantDefaultAssignableIds(ids);
+      })
+      .catch(() => {
+        if (!cancelled) setTenantDefaultAssignableIds([]);
+      });
+    return () => { cancelled = true; };
+  }, [vocab]);
+
+  useEffect(() => {
+    if (featurePreset !== 'defaults') return;
+    setForm((f) => ({ ...f, permissions: [...tenantDefaultAssignableIds] }));
+  }, [tenantDefaultAssignableIds, featurePreset]);
+
+  const setFeatureRolePreset = (preset) => {
+    setFeaturePreset(preset);
+    if (preset === 'defaults') {
+      setForm((f) => ({ ...f, permissions: [...tenantDefaultAssignableIds] }));
+    } else {
+      setForm((f) => ({ ...f, permissions: [] }));
+    }
+  };
 
   const toggle = (k, v) => setForm((f) => ({ ...f, [k]: v }));
   const togglePerm = (id) => toggle('permissions', form.permissions.includes(id) ? form.permissions.filter((p) => p !== id) : [...form.permissions, id]);
@@ -820,16 +1168,19 @@ function NewUserModal({ onClose, onSaved, vocab, allGroups, actor }) {
           <h3 style={modal.title}>New user</h3>
           <button style={modal.close} onClick={onClose}>✕</button>
         </div>
-        <form onSubmit={submit} style={modal.body}>
+        <form onSubmit={submit} style={modal.body} autoComplete="off">
+          {/* Hidden decoys absorb Chrome's heuristic autofill, which ignores autocomplete=off on the real fields. */}
+          <input type="text" name="fakeusernameremembered" autoComplete="username" style={{ display: 'none' }} aria-hidden="true" tabIndex={-1} />
+          <input type="password" name="fakepasswordremembered" autoComplete="new-password" style={{ display: 'none' }} aria-hidden="true" tabIndex={-1} />
           {error && <div style={modal.error}>{error}</div>}
           <Field label="Name *">
-            <input style={modal.input} value={form.name} required onChange={(e) => toggle('name', e.target.value)} />
+            <input style={modal.input} value={form.name} required autoComplete="off" onChange={(e) => toggle('name', e.target.value)} />
           </Field>
           <Field label="Email *">
-            <input style={modal.input} type="email" value={form.email} required onChange={(e) => toggle('email', e.target.value)} />
+            <input style={modal.input} type="email" value={form.email} required autoComplete="off" onChange={(e) => toggle('email', e.target.value)} />
           </Field>
           <Field label="Password *">
-            <input style={modal.input} type="password" value={form.password} required onChange={(e) => toggle('password', e.target.value)} />
+            <input style={modal.input} type="password" value={form.password} required autoComplete="new-password" onChange={(e) => toggle('password', e.target.value)} />
           </Field>
           <div style={{ display: 'flex', gap: '12px' }}>
             <Field label="Tier role">
@@ -889,7 +1240,44 @@ function NewUserModal({ onClose, onSaved, vocab, allGroups, actor }) {
             </div>
           </Section>
 
-          <Section title="Feature roles">
+          <Section
+            title="Default feature roles"
+            subtitle="Choose how signed-in feature roles are applied first; you can fine-tune each role in the next section."
+          >
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <label style={{ ...modal.permItem, cursor: 'pointer', alignItems: 'flex-start' }}>
+                <input
+                  type="radio"
+                  name="newUserFeaturePreset"
+                  checked={featurePreset === 'defaults'}
+                  onChange={() => setFeatureRolePreset('defaults')}
+                  style={{ marginRight: '8px', marginTop: '3px' }}
+                />
+                <span style={{ fontSize: '0.84rem', lineHeight: 1.45, color: '#334155' }}>
+                  <strong style={{ color: '#0f172a' }}>Use tenant default roles</strong>
+                  {' — '}
+                  Select the same authenticated-user defaults as <strong>Edit default roles</strong> (checkboxes below match this list).
+                </span>
+              </label>
+              <label style={{ ...modal.permItem, cursor: 'pointer', alignItems: 'flex-start' }}>
+                <input
+                  type="radio"
+                  name="newUserFeaturePreset"
+                  checked={featurePreset === 'empty'}
+                  onChange={() => setFeatureRolePreset('empty')}
+                  style={{ marginRight: '8px', marginTop: '3px' }}
+                />
+                <span style={{ fontSize: '0.84rem', lineHeight: 1.45, color: '#334155' }}>
+                  <strong style={{ color: '#0f172a' }}>Start with no selections here</strong>
+                  {' — '}
+                  Leave feature checkboxes empty; on create, the server still applies full tenant defaults for this account (not shown as manual picks below).
+                </span>
+              </label>
+            </div>
+          </Section>
+
+          <Section title="Feature roles" subtitle="Signed-in capabilities only — adjust individual roles after your default choice above. Anonymous defaults are under Default roles.">
+            {Object.keys(featureGroups).length === 0 && <span style={S.muted}>Loading roles…</span>}
             {Object.keys(featureGroups).map((bucket) => (
               <div key={bucket} style={{ marginBottom: '8px' }}>
                 <div style={modal.permGroup}>{bucket} users</div>
@@ -959,7 +1347,7 @@ function CopyMergeBar({ users, selected, onClear, onDone }) {
   if (!src || !tgt) return null;
 
   return (
-    <div style={S.copyBar}>
+    <div style={S.copyBarInner}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
         <strong style={{ color: '#0f172a' }}>Copy / merge</strong>
         <span style={{ ...S.muted }}>{src.email}</span>
@@ -999,77 +1387,166 @@ function labelForItem(k) {
 }
 
 // ---------------------------------------------------------------------------
-// Bulk-action footer — appears when ≥1 row is checked.
+// Bulk-action bar — tab strip like Fluid Topics (always visible; actions gated).
 // ---------------------------------------------------------------------------
-function BulkBar({ selectedCount, onAssign, onDelete, vocab, allGroups }) {
-  const [tab, setTab]       = useState('groups');
+function BulkBar({
+  selectedCount,
+  onAssign,
+  onDelete,
+  vocab,
+  allGroups,
+  copySlot,
+}) {
+  const [tab, setTab] = useState('groups');
   const [picked, setPicked] = useState('');
-  const [busy, setBusy]     = useState(false);
-  const [err, setErr]       = useState('');
+  const [pickedAdmin, setPickedAdmin] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
   const [newName, setNewName] = useState('');
 
-  const options = tab === 'groups'
-    ? (allGroups || [])
-    : tab === 'roles'
-      ? (vocab?.featureRoles || []).filter((r) => !r.alias)
-      : tab === 'adminRoles'
-        ? (vocab?.administrativeRoles || [])
-        : []; // tags handled by free input
+  const featureOptions = accountAssignableFeatureRoles(vocab);
+  const adminOptions = (vocab?.administrativeRoles || []);
 
-  async function apply() {
-    if (tab === 'delete') return onDelete?.();
+  const run = async (fn) => {
     setBusy(true); setErr('');
-    try {
-      const value = tab === 'tags' ? newName.trim() : picked;
-      if (!value) throw new Error('Pick a value first');
-      await onAssign?.(tab, [value]);
-      setPicked(''); setNewName('');
-    } catch (e) { setErr(e.message || 'Failed'); }
+    try { await fn(); } catch (e) { setErr(e.message || 'Failed'); }
     finally { setBusy(false); }
-  }
+  };
+
+  const disabled = selectedCount === 0;
 
   return (
     <div style={S.bulkBar}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '8px' }}>
-        <strong style={{ color: '#0f172a' }}>{selectedCount} selected</strong>
-        {['groups','tags','roles','adminRoles','delete'].map((t) => (
-          <button key={t}
-                  onClick={() => setTab(t)}
-                  style={{ ...S.bulkTab, ...(tab === t ? S.bulkTabActive : null), color: t === 'delete' ? '#dc2626' : '#0f172a' }}>
+      <div style={S.bulkTabRow}>
+        <span style={{ ...S.bulkCount, color: disabled ? '#94a3b8' : '#0f172a' }}>
+          {selectedCount === 0 ? 'No users selected' : `${selectedCount} selected`}
+        </span>
+        {['groups', 'roles', 'tags', 'delete', 'copy'].map((t) => (
+          <button
+            key={t}
+            type="button"
+            onClick={() => setTab(t)}
+            style={{
+              ...S.bulkTab,
+              ...(tab === t ? S.bulkTabActive : null),
+              color: t === 'delete' ? '#dc2626' : '#0f172a',
+            }}
+          >
             {labelForBulkTab(t)}
           </button>
         ))}
       </div>
-      <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-        {tab === 'tags' ? (
-          <input style={modal.input} placeholder="Add tag…" value={newName} onChange={(e) => setNewName(e.target.value)} />
-        ) : tab !== 'delete' ? (
-          <select style={modal.select} value={picked} onChange={(e) => setPicked(e.target.value)}>
-            <option value="">Choose…</option>
-            {options.map((opt) => (
-              <option key={opt._id || opt.id} value={opt._id || opt.id}>
-                {opt.name || opt.label || opt.id}
-              </option>
-            ))}
-          </select>
-        ) : (
-          <span style={S.muted}>Permanently remove the selected users.</span>
-        )}
-        <button
-          style={tab === 'delete' ? { ...modal.saveBtn, background: '#dc2626' } : modal.saveBtn}
-          disabled={busy}
-          onClick={apply}
-        >
-          {tab === 'delete' ? 'Delete those users' : busy ? 'Working…' : 'Add'}
-        </button>
-      </div>
+      {tab === 'copy' ? (
+        <div style={{ marginTop: '10px' }}>{copySlot}</div>
+      ) : (
+        <div style={{ marginTop: '10px' }}>
+          {tab === 'groups' && (
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <select style={{ ...modal.select, maxWidth: '280px', opacity: disabled ? 0.5 : 1 }} value={picked} disabled={disabled} onChange={(e) => setPicked(e.target.value)}>
+                <option value="">Choose group…</option>
+                {(allGroups || []).map((opt) => (
+                  <option key={opt._id} value={opt._id}>{opt.name}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                style={modal.saveBtn}
+                disabled={busy || disabled || !picked}
+                onClick={() => run(async () => {
+                  await onAssign?.('groups', [picked]);
+                  setPicked('');
+                })}
+              >
+                {busy ? 'Working…' : 'Add'}
+              </button>
+            </div>
+          )}
+          {tab === 'roles' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                <select style={{ ...modal.select, maxWidth: '300px', opacity: disabled ? 0.5 : 1 }} value={picked} disabled={disabled} onChange={(e) => setPicked(e.target.value)}>
+                  <option value="">Feature role…</option>
+                  {featureOptions.map((opt) => (
+                    <option key={opt.id} value={opt.id}>{opt.label || opt.id}</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  style={modal.saveBtn}
+                  disabled={busy || disabled || !picked}
+                  onClick={() => run(async () => {
+                    await onAssign?.('roles', [picked]);
+                    setPicked('');
+                  })}
+                >
+                  {busy ? '…' : 'Add'}
+                </button>
+              </div>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                <select style={{ ...modal.select, maxWidth: '300px', opacity: disabled ? 0.5 : 1 }} value={pickedAdmin} disabled={disabled} onChange={(e) => setPickedAdmin(e.target.value)}>
+                  <option value="">Admin role…</option>
+                  {adminOptions.map((opt) => (
+                    <option key={opt.id} value={opt.id}>{opt.label || opt.id}</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  style={modal.saveBtn}
+                  disabled={busy || disabled || !pickedAdmin}
+                  onClick={() => run(async () => {
+                    await onAssign?.('adminRoles', [pickedAdmin]);
+                    setPickedAdmin('');
+                  })}
+                >
+                  {busy ? '…' : 'Add'}
+                </button>
+              </div>
+            </div>
+          )}
+          {tab === 'tags' && (
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <input
+                style={{ ...modal.input, maxWidth: '280px', opacity: disabled ? 0.5 : 1 }}
+                placeholder="Add tag…"
+                value={newName}
+                disabled={disabled}
+                onChange={(e) => setNewName(e.target.value)}
+              />
+              <button
+                type="button"
+                style={modal.saveBtn}
+                disabled={busy || disabled || !newName.trim()}
+                onClick={() => run(async () => {
+                  await onAssign?.('tags', [newName.trim()]);
+                  setNewName('');
+                })}
+              >
+                {busy ? 'Working…' : 'Add'}
+              </button>
+            </div>
+          )}
+          {tab === 'delete' && (
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <span style={S.muted}>Permanently remove the selected users.</span>
+              <button
+                type="button"
+                style={{ ...modal.saveBtn, background: '#dc2626' }}
+                disabled={busy || disabled}
+                onClick={() => run(async () => { await onDelete?.(); })}
+              >
+                {busy ? 'Working…' : 'Delete'}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
       {err && <div style={{ ...modal.error, marginTop: '6px' }}>{err}</div>}
     </div>
   );
 }
 
 function labelForBulkTab(t) {
-  return ({ groups: 'Groups', tags: 'Tags', roles: 'Feature roles', adminRoles: 'Admin roles', delete: 'Delete' }[t] || t);
+  return ({ groups: 'Groups', roles: 'Roles', tags: 'Tags', delete: 'Delete', copy: 'Copy' }[t] || t);
 }
 
 // ---------------------------------------------------------------------------
@@ -1081,21 +1558,39 @@ async function downloadXlsx(filterParams) {
     if (v) params.set(k, v);
   }
   const token = getStoredToken();
-  const res = await fetch(`/api/admin/users/export.xlsx?${params}`, {
+  const qs = params.toString();
+  const url = `${API_BASE}/admin/users/export.xlsx${qs ? `?${qs}` : ''}`;
+  const res = await fetch(url, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
+    credentials: 'include',
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error || `Failed (${res.status})`);
   }
   const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
+  const objUrl = URL.createObjectURL(blob);
   const a = document.createElement('a');
   const ts = new Date().toISOString().replace(/:/g, '_').replace(/\..+$/, '');
-  a.href = url;
+  a.href = objUrl;
   a.download = `ft-users-${ts}.xlsx`;
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(url);
+  a.remove();
+  URL.revokeObjectURL(objUrl);
+}
+
+function formatStatsLine(u) {
+  const c = u.counts;
+  if (!c) return '';
+  const { bookmarks = 0, savedSearches = 0, personalBooks = 0, collections: cols = 0 } = c;
+  if (!bookmarks && !savedSearches && !personalBooks && !cols) return '';
+  const parts = [];
+  if (bookmarks) parts.push(`${bookmarks} bookmark${bookmarks === 1 ? '' : 's'}`);
+  if (savedSearches) parts.push(`${savedSearches} saved`);
+  if (personalBooks) parts.push(`${personalBooks} books`);
+  if (cols) parts.push(`${cols} collections`);
+  return parts.join(' · ');
 }
 
 // ---------------------------------------------------------------------------
@@ -1111,12 +1606,17 @@ function ManageUsersInner() {
   const [vocab,  setVocab]  = useState(null);
   const [allGroups, setAllGroups] = useState([]);
 
-  const [search,  setSearch]  = useState('');
-  const [fRealms, setFRealms] = useState([]);
-  const [fGroups, setFGroups] = useState([]);
-  const [fRoles,  setFRoles]  = useState([]);
-  const [fTags,   setFTags]   = useState([]);
-  const [fOrigins,setFOrigins]= useState([]);
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
+  const [realmFilter, setRealmFilter] = useState('');
+  const [groupFilter, setGroupFilter] = useState('');
+  const [roleFilter, setRoleFilter] = useState('');
+  const [tagFilter, setTagFilter] = useState('');
+  const [originFilter, setOriginFilter] = useState('');
+
+  const [page, setPage] = useState(1);
+  const [sortKey, setSortKey] = useState('created');
+  const [sortDir, setSortDir] = useState('desc');
 
   const [drawerUserId,        setDrawerUserId]        = useState(null);
   const [defaultRolesOpen,    setDefaultRolesOpen]    = useState(false);
@@ -1138,32 +1638,60 @@ function ManageUsersInner() {
 
   useEffect(() => { loadVocab(); loadGroups(); }, [loadVocab, loadGroups]);
 
-  // Server-side filtering — debounced query string.
-  const filterParams = useMemo(() => ({
-    q:     search.trim() || '',
-    realm: fRealms[0] || '',
-    group: fGroups[0] || '',
-    role:  fRoles[0]  || '',
-    tag:   fTags[0]   || '',
-    origin: ORIGIN_QUERY_VALUES[fOrigins[0]] || '',
-  }), [search, fRealms, fGroups, fRoles, fTags, fOrigins]);
+  useEffect(() => {
+    const t = setTimeout(() => setSearch(searchInput), 200);
+    return () => clearTimeout(t);
+  }, [searchInput]);
+
+  const baseFilters = useMemo(() => ({
+    q: search.trim() || '',
+    realm: realmFilter || '',
+    group: groupFilter || '',
+    role: roleFilter || '',
+    tag: tagFilter || '',
+    origin: originFilter ? (ORIGIN_QUERY_VALUES[originFilter] || '') : '',
+  }), [search, realmFilter, groupFilter, roleFilter, tagFilter, originFilter]);
+
+  const sortMongo = useMemo(() => {
+    const field = ({ user: 'name', last: 'lastActivityAt', created: 'createdAt', realm: 'realm' })[sortKey] || 'createdAt';
+    return (sortDir === 'desc' ? '-' : '') + field;
+  }, [sortKey, sortDir]);
+
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- new filter set must show page 1
+  useEffect(() => { setPage(1); }, [baseFilters]);
+
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- row selection applies to current page only
+  useEffect(() => { setSelectedIds([]); }, [page]);
+
+  const exportFilters = baseFilters;
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
-      for (const [k, v] of Object.entries(filterParams)) if (v) params.set(k, v);
-      params.set('limit', '100');
+      for (const [k, v] of Object.entries(baseFilters)) if (v) params.set(k, v);
+      params.set('limit', String(PAGE_SIZE));
+      params.set('page', String(page));
+      params.set('sort', sortMongo);
       const res = await api.get(`/admin/users?${params}`);
       setUsers(res.users || []);
       setTotal(res.total ?? (res.users?.length ?? 0));
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
-  }, [filterParams]);
+  }, [baseFilters, page, sortMongo]);
+  useEffect(() => { load(); }, [load]);
+
   useEffect(() => {
-    const t = setTimeout(load, 200);
-    return () => clearTimeout(t);
-  }, [load]);
+    syncCurrentUserFromServer();
+  }, []);
+
+  const handleSort = (key) => {
+    if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else {
+      setSortKey(key);
+      setSortDir(key === 'user' || key === 'realm' ? 'asc' : 'desc');
+    }
+  };
 
   // Outside-click close for kebab menu
   useEffect(() => {
@@ -1179,6 +1707,10 @@ function ManageUsersInner() {
       const idx = prev.findIndex((u) => u._id === user._id);
       return idx >= 0 ? prev.map((u) => (u._id === user._id ? user : u)) : [user, ...prev];
     });
+    const self = getStoredUser();
+    if (self && String(user._id) === String(self._id)) {
+      syncCurrentUserFromServer();
+    }
   };
   const handleDeleted = (id) => {
     setUsers((prev) => prev.filter((u) => u._id !== id));
@@ -1191,9 +1723,12 @@ function ManageUsersInner() {
   const toggleAll = () =>
     setSelectedIds((s) => (s.length === users.length ? [] : users.map((u) => u._id)));
 
-  const bulkAssign = async (tab, values) => {
-    const dimension = tab === 'roles' ? 'roles' : tab === 'adminRoles' ? 'adminRoles' : tab;
+  const bulkAssign = async (dimension, values) => {
     await api.post('/admin/users/bulk-assign', { userIds: selectedIds, dimension, values, op: 'add' });
+    const self = getStoredUser();
+    if (self && selectedIds.some((id) => String(id) === String(self._id))) {
+      await syncCurrentUserFromServer();
+    }
     await load();
   };
   const bulkDelete = async () => {
@@ -1218,11 +1753,6 @@ function ManageUsersInner() {
   }, [users]);
   const originLabels  = ['authentication provider', 'manually added', 'default'];
 
-  const isBehaviorAdmin =
-    actor?.role === 'superadmin' ||
-    (actor?.permissions || []).includes('BEHAVIOR_DATA_USER') ||
-    (actor?.adminRoles || []).includes('USERS_ADMIN');
-
   return (
     <>
       <div style={S.headerRow}>
@@ -1237,7 +1767,7 @@ function ManageUsersInner() {
             </svg>
             Edit default roles
           </button>
-          <button type="button" style={S.linkBtn} onClick={() => downloadXlsx(filterParams).catch((e) => alert(e.message))}>
+          <button type="button" style={S.linkBtn} onClick={() => downloadXlsx(exportFilters).catch((e) => alert(e.message))}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
               <polyline points="7 10 12 15 17 10" />
@@ -1253,28 +1783,27 @@ function ManageUsersInner() {
         <div style={S.filterGroup}>
           <span style={S.filterLabel}>Search</span>
           <input style={S.searchInput} placeholder="Username, email, user ID"
-                 value={search} onChange={(e) => setSearch(e.target.value)} />
+                 value={searchInput} onChange={(e) => setSearchInput(e.target.value)} type="search" />
         </div>
         <div style={S.filterGroup}>
           <span style={S.filterLabel}>Filtering by</span>
-          <FilterDropdown label="All Realms"  options={realmOptions} selected={fRealms} onChange={setFRealms} />
-          <FilterDropdown label="All Groups"  options={groupOptions} selected={fGroups} onChange={setFGroups} />
-          <FilterDropdown label="All Roles"   options={roleOptions}  selected={fRoles}  onChange={setFRoles} />
-          <FilterDropdown label="All Tags"    options={tagOptions}   selected={fTags}   onChange={setFTags} />
-          <FilterDropdown label="All Origins" options={originLabels} selected={fOrigins} onChange={setFOrigins} />
-        </div>
-        <div style={S.legend}>
-          <div style={S.legendTitle}>Origin</div>
-          {Object.entries(ORIGINS).map(([k, o]) => (
-            <div key={k} style={S.legendItem}>
-              <span style={{ ...S.dot, background: o.color }} />
-              <span>{o.label}</span>
-            </div>
-          ))}
+          <SingleSelectFilter allLabel="All Realms" options={realmOptions} value={realmFilter} onChange={setRealmFilter} formatOption={(v) => REALM_LABELS[v] || v} />
+          <SingleSelectFilter allLabel="All Groups" options={groupOptions} value={groupFilter} onChange={setGroupFilter} />
+          <SingleSelectFilter allLabel="All Roles" options={roleOptions} value={roleFilter} onChange={setRoleFilter} />
+          <SingleSelectFilter allLabel="All Tags" options={tagOptions} value={tagFilter} onChange={setTagFilter} />
+          <SingleSelectFilter allLabel="All Origins" options={originLabels} value={originFilter} onChange={setOriginFilter} />
         </div>
       </div>
 
-      <div style={S.tableWrap}>
+      <div style={S.encryptionNotice} role="status">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0369a1" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="10" />
+          <path d="M12 16v-4M12 8h.01" />
+        </svg>
+        <span>Due to data encryption, search by username or email only returns exact matches.</span>
+      </div>
+
+      <div style={S.tableWrap} data-displayed-entries={users.length} data-available-entries={total}>
         {loading ? (
           <div style={{ padding: '60px', textAlign: 'center' }}><div className="spinner" style={{ margin: '0 auto' }} /></div>
         ) : (
@@ -1287,64 +1816,59 @@ function ManageUsersInner() {
                          onChange={toggleAll}
                          aria-label="Select all" />
                 </th>
-                {['User', 'Last activity', 'Created on', 'Realm', 'Access groups', 'Roles', 'Tags', 'Stats', ''].map((h) => (
-                  <th key={h} style={S.th}>
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                      {h}
-                      {h && (
-                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ opacity: 0.5 }}>
-                          <polyline points="8 9 12 5 16 9" /><polyline points="16 15 12 19 8 15" />
-                        </svg>
-                      )}
-                    </span>
-                  </th>
-                ))}
+                <SortableTh label="User" columnId="user" activeColumn={sortKey} dir={sortDir} onSort={handleSort} />
+                <SortableTh label="Last activity" columnId="last" activeColumn={sortKey} dir={sortDir} onSort={handleSort} />
+                <SortableTh label="Created on" columnId="created" activeColumn={sortKey} dir={sortDir} onSort={handleSort} />
+                <SortableTh label="Realms" columnId="realm" activeColumn={sortKey} dir={sortDir} onSort={handleSort} />
+                <th style={S.th}>Access groups</th>
+                <th style={S.th}>Roles</th>
+                <th style={S.th}>Tags</th>
+                <th style={S.th}>Stats</th>
+                <th style={S.th} aria-label="Actions" />
               </tr>
             </thead>
             <tbody>
               {users.map((u) => {
-                const tb = tierBadge(u.role);
                 const checked = selectedIds.includes(u._id);
+                const statsLine = formatStatsLine(u);
+                const realmLabel = REALM_LABELS[u.realm] || u.realm;
                 return (
                   <tr key={u._id} style={{ ...S.row, ...(u.lockedManually ? { background: '#fef2f2' } : null) }}>
                     <td style={{ ...S.td, paddingLeft: '8px' }}>
                       <input type="checkbox" checked={checked} onChange={() => toggleRow(u._id)} aria-label="Select user" />
                     </td>
                     <td style={S.td}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                        <span style={{ ...S.avatar, background: avatarColor(u.email || u.name) }}>{initials(u.name)}</span>
-                        <div style={{ minWidth: 0 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            <button
-                              type="button"
-                              style={S.userNameBtn}
-                              onClick={() => setDrawerUserId(u._id)}
-                            >
-                              {u.name}
-                            </button>
-                            {u.lockedManually && (
-                              <span style={{ ...S.statusPill, background: '#fee2e2', color: '#991b1b' }}>Locked</span>
-                            )}
-                          </div>
-                          <div style={S.userMeta}>{u.email}</div>
-                          <div style={{ ...S.userMeta, fontFamily: 'monospace', fontSize: '0.7rem', opacity: 0.85 }}>
-                            ID: {u._id}
-                          </div>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                          <button
+                            type="button"
+                            style={S.userNameBtn}
+                            onClick={() => setDrawerUserId(String(u._id))}
+                          >
+                            {u.name}
+                          </button>
+                          {u.lockedManually && (
+                            <span style={{ ...S.statusPill, background: '#fee2e2', color: '#991b1b' }}>Locked</span>
+                          )}
+                        </div>
+                        <div style={S.userMeta}>{u.email}</div>
+                        <div style={{ ...S.userMeta, fontFamily: 'monospace', fontSize: '0.7rem', opacity: 0.85 }}>
+                          ID: {u._id}
                         </div>
                       </div>
                     </td>
                     <td style={S.td}><span style={S.dateText}>{formatDateTime(u.lastActivityAt)}</span></td>
                     <td style={S.td}><span style={S.dateText}>{formatDate(u.createdAt)}</span></td>
                     <td style={S.td}>
-                      <span style={{ ...S.realmTag, background: realmBg(u.realm), color: realmColor(u.realm) }}>
-                        {REALM_LABELS[u.realm] || u.realm}
+                      <span style={{ ...S.realmTag, background: realmBg(u.realm), color: realmColor(u.realm) }} title={u.realm}>
+                        {realmLabel}
                       </span>
                     </td>
                     <td style={S.td}>
                       <div style={S.tagWrap}>
                         {(u.groupsWithOrigin || []).length === 0 && <span style={S.muted}>—</span>}
                         {(u.groupsWithOrigin || []).slice(0, 4).map((g) => (
-                          <ChipWithOrigin key={g._id} origin={g.origin} bg="#dbeafe" color="#1d4ed8">#{g.name}</ChipWithOrigin>
+                          <GroupPill key={g._id} origin={g.origin}>{g.name}</GroupPill>
                         ))}
                         {(u.groupsWithOrigin || []).length > 4 && (
                           <span style={S.moreTag}>+{u.groupsWithOrigin.length - 4}</span>
@@ -1353,17 +1877,15 @@ function ManageUsersInner() {
                     </td>
                     <td style={S.td}>
                       <div style={S.tagWrap}>
-                        <span style={{ ...S.tierBadge, background: tb.bg, color: tb.color }}>
-                          #{(u.role || '').toUpperCase()}
-                        </span>
-                        {(u.featureRolesWithOrigin || []).slice(0, 3).map((p) => (
-                          <ChipWithOrigin key={p.value} origin={p.origin} bg="#fee2e2" color="#991b1b">#{p.value}</ChipWithOrigin>
+                        <RolePill origin="default" variant="tier">{(u.role || '').toUpperCase()}</RolePill>
+                        {(u.featureRolesWithOrigin || []).slice(0, 6).map((p) => (
+                          <RolePill key={p.value} origin={p.origin}>{p.value}</RolePill>
                         ))}
-                        {(u.featureRolesWithOrigin || []).length > 3 && (
-                          <span style={S.moreTag}>+{u.featureRolesWithOrigin.length - 3}</span>
+                        {(u.featureRolesWithOrigin || []).length > 6 && (
+                          <span style={S.moreTag}>+{u.featureRolesWithOrigin.length - 6}</span>
                         )}
-                        {(u.adminRolesWithOrigin || []).slice(0, 2).map((p) => (
-                          <ChipWithOrigin key={`admin-${p.value}`} origin={p.origin} bg="#ede9fe" color="#5b21b6">#{p.value}</ChipWithOrigin>
+                        {(u.adminRolesWithOrigin || []).slice(0, 4).map((p) => (
+                          <RolePill key={`admin-${p.value}`} origin={p.origin} variant="admin">{p.value}</RolePill>
                         ))}
                       </div>
                     </td>
@@ -1376,13 +1898,13 @@ function ManageUsersInner() {
                       </div>
                     </td>
                     <td style={S.td}>
-                      <button type="button" style={S.statsBtn} onClick={() => setDrawerUserId(u._id)} title="View stats">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                          <line x1="18" y1="20" x2="18" y2="10" />
-                          <line x1="12" y1="20" x2="12" y2="4" />
-                          <line x1="6"  y1="20" x2="6"  y2="14" />
-                        </svg>
-                      </button>
+                      {statsLine ? (
+                        <button type="button" style={S.statsLineBtn} onClick={() => setDrawerUserId(String(u._id))} title="Open user details">
+                          {statsLine}
+                        </button>
+                      ) : (
+                        <span style={S.muted}>—</span>
+                      )}
                     </td>
                     <td style={{ ...S.td, position: 'relative', textAlign: 'right' }}>
                       <button style={S.kebab}
@@ -1390,19 +1912,18 @@ function ManageUsersInner() {
                               aria-label="Actions">⋮</button>
                       {openMenu === u._id && (
                         <div style={S.kebabMenu} onMouseDown={(e) => e.stopPropagation()}>
-                          <button style={S.kebabItem} onClick={() => { setDrawerUserId(u._id); setOpenMenu(null); }}>
+                          <button
+                            type="button"
+                            style={S.kebabItem}
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setDrawerUserId(String(u._id));
+                              setOpenMenu(null);
+                            }}
+                          >
                             Edit user
                           </button>
-                          {isBehaviorAdmin && (
-                            <>
-                              <a href={`/admin/analytics/document-views?user=${u._id}`} style={{ ...S.kebabItem, textDecoration: 'none', display: 'block' }}>
-                                Viewed documents
-                              </a>
-                              <a href={`/admin/analytics/sessions?user=${u._id}`} style={{ ...S.kebabItem, textDecoration: 'none', display: 'block' }}>
-                                Session list
-                              </a>
-                            </>
-                          )}
                         </div>
                       )}
                     </td>
@@ -1421,27 +1942,36 @@ function ManageUsersInner() {
         )}
       </div>
 
-      {selectedIds.length > 0 && selectedIds.length !== 2 && (
+      {!loading && total > 0 && (
+        <Pager page={page} pageSize={PAGE_SIZE} total={total} onPage={setPage} />
+      )}
+
+      {selectedIds.length > 0 && (
         <BulkBar
           selectedCount={selectedIds.length}
           onAssign={bulkAssign}
           onDelete={bulkDelete}
           vocab={vocab}
           allGroups={allGroups}
-        />
-      )}
-      {selectedIds.length === 2 && (
-        <CopyMergeBar
-          users={users}
-          selected={selectedIds}
-          onClear={() => setSelectedIds([])}
-          onDone={async () => { setSelectedIds([]); await load(); }}
+          copySlot={
+            selectedIds.length === 2 ? (
+              <CopyMergeBar
+                users={users}
+                selected={selectedIds}
+                onClear={() => setSelectedIds([])}
+                onDone={async () => { setSelectedIds([]); await load(); }}
+              />
+            ) : (
+              <span style={S.muted}>Select exactly two users to copy or merge accounts.</span>
+            )
+          }
         />
       )}
 
-      {drawerUserId && (
+      {drawerUserId && typeof document !== 'undefined' && createPortal(
         <UserDrawer
-          userId={drawerUserId}
+          key={String(drawerUserId)}
+          userId={String(drawerUserId)}
           vocab={vocab}
           actor={actor}
           allGroups={allGroups}
@@ -1449,7 +1979,8 @@ function ManageUsersInner() {
           onClose={() => setDrawerUserId(null)}
           onSaved={(u) => { handleSaved(u); }}
           onDeleted={handleDeleted}
-        />
+        />,
+        document.body,
       )}
       {defaultRolesOpen && (
         <DefaultRolesDrawer onClose={() => setDefaultRolesOpen(false)} vocab={vocab} />
@@ -1478,7 +2009,7 @@ export default function AdminUsersPage() {
   return (
     <AdminShell
       active="manage-users-list"
-      allowedRoles={['superadmin', 'admin']}
+      allowedRoles={['superadmin']}
       allowedAdminRoles={['USERS_ADMIN']}
       fullWidth
     >
@@ -1530,6 +2061,62 @@ const S = {
   legendTitle: { fontWeight: 600, color: '#0f172a' },
   legendItem: { display: 'inline-flex', alignItems: 'center', gap: '6px' },
   dot: { width: '8px', height: '8px', borderRadius: '50%', display: 'inline-block', flexShrink: 0 },
+  encryptionNotice: {
+    display: 'flex', alignItems: 'flex-start', gap: '10px',
+    padding: '10px 14px', marginBottom: '14px',
+    background: '#e0f2fe', border: '1px solid #bae6fd', borderRadius: '8px',
+    fontSize: '0.82rem', color: '#0c4a6e', lineHeight: 1.45,
+  },
+  pager: {
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    gap: '6px', padding: '14px 8px', flexWrap: 'wrap',
+  },
+  pagerPages: { display: 'flex', gap: '4px', flexWrap: 'wrap', alignItems: 'center' },
+  pagerBtn: {
+    minWidth: '32px', height: '32px', padding: '0 8px',
+    border: '1px solid #e5e7eb', borderRadius: '6px',
+    background: '#fff', cursor: 'pointer', fontSize: '0.82rem', fontFamily: 'inherit',
+    color: '#475569',
+  },
+  pagerBtnCurrent: {
+    borderColor: '#a855f7', background: '#f5f3ff', color: '#6b21a8', fontWeight: 700,
+  },
+  sortBtn: {
+    display: 'inline-flex', alignItems: 'center', gap: '4px',
+    background: 'transparent', border: 'none', padding: 0, cursor: 'pointer',
+    font: 'inherit', color: 'inherit', fontWeight: 600, textTransform: 'inherit',
+    letterSpacing: 'inherit', fontSize: 'inherit',
+  },
+  sortIcons: { display: 'inline-flex', flexDirection: 'column', gap: 0, marginLeft: '2px' },
+  statsLineBtn: {
+    background: 'transparent', border: 'none', cursor: 'pointer',
+    padding: 0, fontSize: '0.72rem', color: '#64748b', textAlign: 'left',
+    fontFamily: 'inherit', maxWidth: '220px', lineHeight: 1.35,
+  },
+  groupPillFt: {
+    display: 'inline-flex', alignItems: 'center', gap: '4px',
+    borderRadius: '999px', padding: '2px 8px', fontSize: '0.7rem', fontWeight: 500,
+    background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe',
+    whiteSpace: 'nowrap',
+  },
+  rolePillFt: {
+    display: 'inline-flex', alignItems: 'center', gap: '4px',
+    borderRadius: '999px', padding: '2px 8px', fontSize: '0.68rem', fontWeight: 600,
+    background: '#fff', color: '#991b1b', border: '1px solid #fca5a5',
+    whiteSpace: 'nowrap',
+  },
+  tierPillFt: {
+    display: 'inline-flex', alignItems: 'center', gap: '4px',
+    borderRadius: '999px', padding: '2px 8px', fontSize: '0.68rem', fontWeight: 700,
+    background: '#fff', color: '#475569', border: '1px solid #cbd5e1',
+    whiteSpace: 'nowrap',
+  },
+  adminPillFt: {
+    display: 'inline-flex', alignItems: 'center', gap: '4px',
+    borderRadius: '999px', padding: '2px 8px', fontSize: '0.68rem', fontWeight: 600,
+    background: '#fff', color: '#5b21b6', border: '1px solid #c4b5fd',
+    whiteSpace: 'nowrap',
+  },
   tableWrap: {
     border: '1px solid #e5e7eb', borderRadius: '8px',
     overflow: 'auto', background: '#fff',
@@ -1544,12 +2131,6 @@ const S = {
   },
   row:  { borderBottom: '1px solid #f1f5f9' },
   td:   { padding: '12px 12px', verticalAlign: 'middle', color: '#0f172a' },
-  avatar: {
-    width: '32px', height: '32px', borderRadius: '50%',
-    color: '#fff', fontSize: '0.75rem', fontWeight: 700,
-    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-    flexShrink: 0,
-  },
   userNameBtn: {
     fontWeight: 600, fontSize: '0.85rem', color: '#0f172a',
     background: 'transparent', border: 'none', padding: 0, cursor: 'pointer',
@@ -1572,19 +2153,11 @@ const S = {
     background: 'transparent', border: 'none', cursor: 'pointer',
     color: 'inherit', fontSize: '1rem', lineHeight: 1, padding: '0 0 0 2px',
   },
-  tierBadge: {
-    borderRadius: '4px', padding: '1px 6px',
-    fontSize: '0.7rem', fontWeight: 700, whiteSpace: 'nowrap',
-  },
   moreTag: {
     background: '#f1f5f9', color: '#475569', borderRadius: '4px',
     padding: '1px 6px', fontSize: '0.7rem', fontWeight: 500,
   },
   statusPill: { borderRadius: '4px', padding: '1px 6px', fontSize: '0.65rem', fontWeight: 700 },
-  statsBtn: {
-    background: 'transparent', border: 'none', cursor: 'pointer',
-    color: '#94a3b8', padding: '4px',
-  },
   kebab: {
     background: 'transparent', border: 'none', cursor: 'pointer',
     fontSize: '1.2rem', color: '#475569', padding: '0 6px', lineHeight: 1,
@@ -1614,6 +2187,12 @@ const S = {
     borderRadius: '4px', fontFamily: 'inherit',
   },
   bulkTabActive: { background: '#ede9fe', color: '#5b21b6' },
+  bulkTabRow: {
+    display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap',
+    borderBottom: '1px solid #f1f5f9', paddingBottom: '6px',
+  },
+  bulkCount: { fontSize: '0.8rem', fontWeight: 600, marginRight: '6px' },
+  copyBarInner: { padding: '4px 0' },
   copyBar: {
     position: 'sticky', bottom: 0, background: '#fff',
     borderTop: '1px solid #e5e7eb', padding: '14px 16px',
@@ -1672,12 +2251,18 @@ const F = {
     color: '#a855f7', fontWeight: 600, fontFamily: 'inherit',
     borderTop: '1px solid #f1f5f9',
   },
+  optionRow: {
+    display: 'block', width: '100%', textAlign: 'left',
+    padding: '8px 10px', fontSize: '0.85rem', cursor: 'pointer',
+    background: 'transparent', border: 'none', borderRadius: '4px',
+    color: '#0f172a', fontFamily: 'inherit',
+  },
 };
 
 const D = {
   overlay: {
     position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.4)',
-    zIndex: 1000, display: 'flex', justifyContent: 'flex-end',
+    zIndex: 10050, display: 'flex', justifyContent: 'flex-end',
   },
   panel: {
     background: '#f8fafc', height: '100%',
@@ -1691,11 +2276,52 @@ const D = {
   },
   title: { fontSize: '1rem', fontWeight: 700, color: '#0f172a', margin: 0 },
   close: { background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', fontSize: '1rem' },
+  headerLeading: { justifyContent: 'flex-start', gap: '6px', padding: '16px 18px' },
+  closeLeading: {
+    background: 'none', border: 'none', cursor: 'pointer', color: '#64748b',
+    padding: '4px', borderRadius: '6px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+  },
+  titleLeading: { flex: 1, fontSize: '1.125rem', fontWeight: 600 },
   body:  { padding: '14px 16px', flex: 1, overflowY: 'auto' },
   footer:{
     padding: '12px 16px', borderTop: '1px solid #e2e8f0',
     background: '#fff', display: 'flex', alignItems: 'center',
   },
+  footerFlush: { padding: '16px 20px', justifyContent: 'flex-end' },
+};
+
+const DR = {
+  scroll: { maxHeight: 'calc(100vh - 200px)', overflowY: 'auto' },
+  widgetGroup: { marginBottom: '24px' },
+  widgetGroupLabel: {
+    fontSize: '0.95rem', fontWeight: 600, color: '#0f172a',
+    marginBottom: '4px', lineHeight: 1.4,
+  },
+  roleList: { listStyle: 'none', margin: 0, padding: 0 },
+  roleListItem: {
+    display: 'flex', alignItems: 'center',
+    gap: '12px', padding: '4px 0',
+  },
+  roleRowLabel: {
+    display: 'inline-flex', alignItems: 'center', gap: '8px', cursor: 'pointer',
+    fontSize: '0.875rem', color: '#0f172a', lineHeight: 1.4,
+  },
+  roleName: {
+    fontSize: '0.78rem', color: '#7c3aed', fontFamily: 'ui-monospace, Menlo, monospace',
+    whiteSpace: 'nowrap', letterSpacing: '0.02em',
+  },
+  footerActions: { display: 'flex', justifyContent: 'flex-end', gap: '10px', width: '100%', alignItems: 'center' },
+  btnCancel: {
+    display: 'inline-flex', alignItems: 'center', gap: '6px',
+    padding: '8px 16px', borderRadius: '6px', border: '1px solid #a855f7',
+    background: '#fff', color: '#6b21a8', fontWeight: 600, fontSize: '0.875rem', cursor: 'pointer', fontFamily: 'inherit',
+  },
+  btnSave: {
+    display: 'inline-flex', alignItems: 'center', gap: '6px',
+    padding: '8px 18px', borderRadius: '6px', border: 'none',
+    background: '#7c3aed', color: '#fff', fontWeight: 600, fontSize: '0.875rem', cursor: 'pointer', fontFamily: 'inherit',
+  },
+  btnSaveDisabled: { opacity: 0.45, cursor: 'not-allowed' },
 };
 
 const modal = {

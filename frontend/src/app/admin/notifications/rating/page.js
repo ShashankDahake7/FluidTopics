@@ -150,6 +150,8 @@ export default function RatingNotificationsPage() {
   return (
     <AdminShell
       active="notif-rating"
+      allowedRoles={['superadmin', 'admin']}
+      allowedAdminRoles={['PORTAL_ADMIN']}
       footer={<ActionFooter dirty={dirty && !saving} onCancel={handleCancel} onSave={handleSave} />}
     >
       <h1 style={S.h1}>Rating</h1>

@@ -1,6 +1,8 @@
 const express = require('express');
 const { OriginPortal, ImportRecord } = require('../models/ImportConfig');
 const { auth, requireRole } = require('../middleware/auth');
+const { logConfigChange, authorFromRequest } = require('../services/configAudit');
+const { snapshotGeneralPortalParameters } = require('../services/configHistorySnapshots');
 
 const router = express.Router();
 router.use(auth, requireRole('superadmin', 'admin'));
@@ -23,10 +25,18 @@ router.post('/portals', async (req, res, next) => {
     if (!/^https?:\/\//.test(baseUrl.trim())) {
       return res.status(400).json({ error: 'URL must start with https://' });
     }
+    const before = await snapshotGeneralPortalParameters();
     const portal = await OriginPortal.create({
       baseUrl: baseUrl.trim(),
       apiKey,
       addedBy: req.user._id,
+    });
+    const after = await snapshotGeneralPortalParameters();
+    await logConfigChange({
+      category: 'General portal parameters',
+      ...authorFromRequest(req),
+      before,
+      after,
     });
     res.status(201).json(portal);
   } catch (err) { next(err); }
@@ -35,9 +45,17 @@ router.post('/portals', async (req, res, next) => {
 // DELETE /api/import-config/portals/:id
 router.delete('/portals/:id', async (req, res, next) => {
   try {
+    const before = await snapshotGeneralPortalParameters();
     await OriginPortal.findByIdAndDelete(req.params.id);
     // Also remove related imports
     await ImportRecord.deleteMany({ portalId: req.params.id });
+    const after = await snapshotGeneralPortalParameters();
+    await logConfigChange({
+      category: 'General portal parameters',
+      ...authorFromRequest(req),
+      before,
+      after,
+    });
     res.status(204).end();
   } catch (err) { next(err); }
 });

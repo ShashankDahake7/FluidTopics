@@ -5,7 +5,10 @@ const fs = require('fs');
 const multer = require('multer');
 const Attachment = require('../models/Attachment');
 const config = require('../config/env');
-const { auth, requireRole } = require('../middleware/auth');
+const { auth, requireTierOrAdminRoles } = require('../middleware/auth');
+const { CONTENT_PIPELINE: AR_CONTENT } = require('../constants/adminRoles');
+
+const contentEditor = requireTierOrAdminRoles(['admin', 'editor'], AR_CONTENT);
 
 const { putFile, getObjectStream, deleteOne } = require('../services/storage/s3Service');
 
@@ -107,7 +110,7 @@ router.get('/:id/download', async (req, res, next) => {
 });
 
 // POST /api/attachments — admin upload to S3.
-router.post('/', auth, requireRole('admin', 'editor'), upload.single('file'), async (req, res, next) => {
+router.post('/', auth, contentEditor, upload.single('file'), async (req, res, next) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'file is required' });
 
@@ -140,7 +143,7 @@ router.post('/', auth, requireRole('admin', 'editor'), upload.single('file'), as
 });
 
 // DELETE /api/attachments/:id — admin only.
-router.delete('/:id', auth, requireRole('admin', 'editor'), async (req, res, next) => {
+router.delete('/:id', auth, contentEditor, async (req, res, next) => {
   try {
     if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: 'Invalid id' });
     const a = await Attachment.findByIdAndDelete(req.params.id);

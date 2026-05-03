@@ -3,136 +3,42 @@ import { useEffect, useMemo, useState } from 'react';
 import AdminShell from '@/components/admin/AdminShell';
 import api from '@/lib/api';
 
+// `value` must match `ConfigChange.category` strings written by `logConfigChange`
+// (and future loggers). Slugs like `rightRules` never matched the DB — filters failed.
 const CATEGORIES = [
-  { value: '',                    label: 'All categories' },
-  { value: 'rightRules',          label: 'Access rules' },
-  { value: 'alerts',              label: 'Alerts' },
-  { value: 'authentication',      label: 'Authentication' },
-  { value: 'confidentiality',     label: 'Confidentiality' },
-  { value: 'contentStyles',       label: 'Content styles' },
-  { value: 'customJs',            label: 'Custom JavaScript' },
-  { value: 'defaultRoles',        label: 'Default user roles' },
-  { value: 'emails',              label: 'Email notifications' },
-  { value: 'enrichAndClean',      label: 'Enrich and Clean' },
-  { value: 'features',            label: 'Feature toggles' },
-  { value: 'feedbackMails',       label: 'Feedback' },
-  { value: 'portal',              label: 'General portal parameters' },
-  { value: 'homePage',            label: 'Homepage' },
-  { value: 'integration',         label: 'Integration security' },
-  { value: 'languages',           label: 'Languages' },
-  { value: 'legalTerms',          label: 'Legal terms' },
-  { value: 'metadata',            label: 'Metadata configuration' },
-  { value: 'metadataDescriptors', label: 'Metadata descriptors' },
-  { value: 'openSearch',          label: 'OpenSearch' },
-  { value: 'prettyUrl',           label: 'Pretty URL' },
-  { value: 'pdfTemplate',         label: 'Print templates' },
-  { value: 'rating',              label: 'Rating' },
-  { value: 'readerPage',          label: 'Reader page' },
-  { value: 'dynamicSuggestions',  label: 'Related links' },
-  { value: 'searchPage',          label: 'Search' },
-  { value: 'sources',             label: 'Sources' },
-  { value: 'theme',               label: 'Theme' },
-  { value: 'vocabularies',        label: 'Vocabularies' },
-  { value: 'webSearchEngine',     label: 'Web search engines' },
-];
-
-// ── Sample configuration snapshots (used to drive the diff dialog) ────────
-const ACCESS_RULES_V1 = {
-  defaultRights: { accessLevel: 'AUTHENTICATED', groups: [] },
-  rules: [
-    {
-      name: 'Public Audience', description: '',
-      rule: {
-        matchType: 'OR',
-        rights: { accessLevel: 'PUBLIC', groups: [] },
-        requirements: [{ key: 'audience', values: ['Public'], matchType: 'OR' }],
-      },
-    },
-    {
-      name: 'DB Internal', description: '',
-      rule: {
-        matchType: 'OR',
-        rights: { accessLevel: 'AUTHENTICATED', groups: ['darwinbox'] },
-        requirements: [{ key: 'audience', values: ['Internal'], matchType: 'OR' }],
-      },
-    },
-    {
-      name: 'AI Pack', description: '',
-      rule: {
-        matchType: 'OR',
-        rights: { accessLevel: 'PUBLIC', groups: [] },
-        requirements: [{
-          key: 'ft:filename',
-          values: ['Darwinbox AI Pack-en.pdf', 'Darwinbox AI Accelerator Pack.pdf'],
-          matchType: 'OR',
-        }],
-      },
-    },
-    {
-      name: 'Images Public', description: '',
-      rule: {
-        matchType: 'OR',
-        rights: { accessLevel: 'PUBLIC', groups: [] },
-        requirements: [{ key: 'ft:contentType', values: ['image'], matchType: 'OR' }],
-      },
-    },
-  ],
-};
-
-const ACCESS_RULES_V2 = JSON.parse(JSON.stringify(ACCESS_RULES_V1));
-ACCESS_RULES_V2.rules[2].rule.requirements[0].values = [
-  'Darwinbox AI Pack-en.pdf',
-  'AI Accelerator Pack + Knowledge Management Platform .pdf',
-];
-
-const ACCESS_RULES_V3 = JSON.parse(JSON.stringify(ACCESS_RULES_V2));
-ACCESS_RULES_V3.rules[1].rule.rights.groups = ['darwinbox', 'darwinbox-india'];
-
-const LANGUAGES_V1 = { defaultLanguage: 'en', languages: ['en', 'fr'] };
-const LANGUAGES_V2 = { defaultLanguage: 'en', languages: ['en', 'fr', 'de'] };
-
-const FEATURES_V1 = { ai_search: false, related_links: true, ratings: false };
-const FEATURES_V2 = { ai_search: true,  related_links: true, ratings: true };
-
-const VOCAB_V1 = { taxonomy: ['Product', 'Audience', 'Language'] };
-const VOCAB_V2 = { taxonomy: ['Product', 'Audience', 'Language', 'Region'] };
-
-const SEARCH_V1 = { defaultSorting: 'relevance', resultsPerPage: 10 };
-const SEARCH_V2 = { defaultSorting: 'lastModification', resultsPerPage: 20 };
-
-const SAMPLES = {
-  'Access rules':     [ACCESS_RULES_V1, ACCESS_RULES_V2, ACCESS_RULES_V3],
-  'Languages':        [LANGUAGES_V1, LANGUAGES_V2],
-  'Vocabularies':     [VOCAB_V1, VOCAB_V2],
-  'Feature toggles':  [FEATURES_V1, FEATURES_V2],
-  'Search':           [SEARCH_V1, SEARCH_V2],
-};
-
-function snapshotFor(label, version /* 'before' | 'after' | 'current' */) {
-  const arr = SAMPLES[label];
-  if (!arr) return { _placeholder: `${label} configuration` };
-  if (version === 'before')  return arr[0];
-  if (version === 'after')   return arr[arr.length > 1 ? 1 : 0];
-  if (version === 'current') return arr[arr.length - 1];
-  return arr[0];
-}
-
-// ── Mirrors the timeline in the reference screenshot ──────────────────────
-const HISTORY = [
-  { date: '3/11/2026, 3:19 PM', author: 'Prem GARUDADRI <prem.g@darwinbox.in>',                            categories: ['Access rules'],            current: true },
-  { date: '3/11/2026, 3:04 PM', author: 'Prem GARUDADRI <prem.g@darwinbox.in>',                            categories: ['Access rules'] },
-  { date: '3/11/2026, 2:31 PM', author: 'System Maintenance Job <system-maintenance-job@fluidtopics.com>', categories: ['Access rules'] },
-  { date: '2/27/2026, 3:26 PM', author: 'Prem GARUDADRI <prem.g@darwinbox.in>',                            categories: ['Access rules'] },
-  { date: '2/27/2026, 3:20 PM', author: 'Prem GARUDADRI <prem.g@darwinbox.in>',                            categories: ['Access rules'] },
-  { date: '2/27/2026, 3:10 PM', author: 'Prem GARUDADRI <prem.g@darwinbox.in>',                            categories: ['Access rules'] },
-  { date: '2/27/2026, 3:10 PM', author: 'Prem GARUDADRI <prem.g@darwinbox.in>',                            categories: ['Languages', 'Vocabularies'] },
-  { date: '1/28/2026, 3:09 PM', author: 'Prem GARUDADRI <prem.g@darwinbox.in>',                            categories: ['Feature toggles', 'Languages'] },
-  { date: '1/8/2026, 4:47 PM',  author: 'Pedro Salles <pedro-henrique.salles@fluidtopics.com>',            categories: ['Search', 'Feature toggles'] },
-  { date: '11/18/2025, 4:35 PM', author: 'Prem GARUDADRI <prem.g@darwinbox.in>',                           categories: ['Access rules'] },
+  { value: '', label: 'All categories' },
+  { value: 'Access rules', label: 'Access rules' },
+  { value: 'Alerts', label: 'Alerts' },
+  { value: 'Authentication', label: 'Authentication' },
+  { value: 'Confidentiality', label: 'Confidentiality' },
+  { value: 'Content Styles', label: 'Content Styles' },
+  { value: 'Custom JavaScript', label: 'Custom JavaScript' },
+  { value: 'Default user roles', label: 'Default user roles' },
+  { value: 'Email notifications', label: 'Email notifications' },
+  { value: 'Enrich and Clean', label: 'Enrich and Clean' },
+  { value: 'Feedback', label: 'Feedback' },
+  { value: 'General portal parameters', label: 'General portal parameters' },
+  { value: 'Homepage', label: 'Homepage' },
+  { value: 'Index metadata', label: 'Index metadata' },
+  { value: 'Integration security', label: 'Integration security' },
+  { value: 'Languages', label: 'Languages' },
+  { value: 'Legal terms', label: 'Legal terms' },
+  { value: 'Metadata configuration', label: 'Metadata configuration' },
+  { value: 'Metadata descriptors', label: 'Metadata descriptors' },
+  { value: 'OpenSearch', label: 'OpenSearch' },
+  { value: 'Pretty URL', label: 'Pretty URL' },
+  { value: 'Print templates', label: 'Print templates' },
+  { value: 'Rating', label: 'Rating' },
+  { value: 'Reader page', label: 'Reader page' },
+  { value: 'Related links', label: 'Related links' },
+  { value: 'Search page', label: 'Search page' },
+  { value: 'Sources', label: 'Sources' },
+  { value: 'Theme', label: 'Theme' },
+  { value: 'Vocabularies', label: 'Vocabularies' },
+  { value: 'Web search engines', label: 'Web search engines' },
 ];
 
 const PAGE_SIZE = 10;
-const TOTAL_FAKE = 225;
 
 export default function ConfigurationHistoryPage() {
   const [category, setCategory] = useState('');
@@ -144,10 +50,14 @@ export default function ConfigurationHistoryPage() {
 
   useEffect(() => {
     setLoading(true);
-    api.get('/config-history', { category, page, limit: PAGE_SIZE })
+    const qs = new URLSearchParams();
+    qs.set('page', String(page));
+    qs.set('limit', String(PAGE_SIZE));
+    if (category) qs.set('category', category);
+    api.get(`/config-history?${qs.toString()}`)
       .then((data) => {
         setHistory(Array.isArray(data.items) ? data.items : []);
-        setTotalPages(data.totalPages || 1);
+        setTotalPages(Math.max(1, data.totalPages || 1));
         setPage(data.page || 1);
       })
       .catch(() => {})
@@ -155,9 +65,12 @@ export default function ConfigurationHistoryPage() {
   }, [category, page]);
 
   return (
-    <AdminShell active="tenant-history" allowedRoles={['superadmin']} fullWidth>
+    <AdminShell active="tenant-history" allowedRoles={['superadmin', 'admin']} fullWidth>
       <div style={{ paddingBottom: '40px' }}>
-        <h1 style={S.h1}>Configuration history</h1>
+        <h1 style={S.h1}>
+          Configuration history{' '}
+          <span style={S.alphaChip} title="Ongoing improvements">Alpha</span>
+        </h1>
         <p style={S.subtitle}>Inspect portal configuration changes.</p>
 
         <div style={S.toolbar}>
@@ -329,19 +242,44 @@ function DiffDialog({ row, mode, onClose }) {
   const author = row.author.match(/^[^<]+/)?.[0]?.trim() || row.author;
   const isCompare = mode === 'compare';
   const [view, setView] = useState('side'); // 'side' | 'inline'
+  const [currentSnap, setCurrentSnap] = useState(null);
+  const [loadingCurrent, setLoadingCurrent] = useState(false);
+
+  useEffect(() => {
+    if (!isCompare) {
+      setCurrentSnap(null);
+      return undefined;
+    }
+    let cancelled = false;
+    setLoadingCurrent(true);
+    const qs = new URLSearchParams({ category: row.category });
+    api.get(`/config-history/current?${qs}`)
+      .then((d) => {
+        if (!cancelled) setCurrentSnap(d.snapshot ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setCurrentSnap(null);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingCurrent(false);
+      });
+    return () => { cancelled = true; };
+  }, [isCompare, row.category]);
 
   const subtitle = isCompare
-    ? <>This screen compares the current configuration with the one applied by <strong>{author}</strong> on <strong>{new Date(row.createdAt).toLocaleString()}</strong>.</>
+    ? <>This screen compares the configuration after <strong>{author}</strong>&apos;s save on <strong>{new Date(row.createdAt).toLocaleString()}</strong> with the <strong>current</strong> portal settings.</>
     : <><strong>{author}</strong> applied the following changes on <strong>{new Date(row.createdAt).toLocaleString()}</strong>.</>;
 
-  // Build section diff. We just display the category that changed.
-  // For 'compare' we'd technically need to fetch the current live config,
-  // but for now we'll just show the row's 'after' vs 'before'.
-  const sections = [{
-    label: row.category,
-    before: row.before,
-    after: row.after,
-  }];
+  const sections = useMemo(() => {
+    if (!isCompare) {
+      return [{ label: row.category, before: row.before, after: row.after }];
+    }
+    return [{
+      label: row.category,
+      before: row.after,
+      after: currentSnap ?? row.after,
+    }];
+  }, [isCompare, row.category, row.before, row.after, currentSnap]);
 
   return (
     <div style={S.modalBackdrop} onClick={onClose}>
@@ -355,6 +293,9 @@ function DiffDialog({ row, mode, onClose }) {
 
         <div style={S.diffBody}>
           <p style={S.diffSubtitle}>{subtitle}</p>
+          {isCompare && loadingCurrent && (
+            <p style={{ ...S.diffSubtitle, marginTop: 0 }}>Loading current configuration…</p>
+          )}
 
           <Tabs
             options={[
@@ -374,6 +315,7 @@ function DiffDialog({ row, mode, onClose }) {
                 after={s.after}
                 view={view}
                 rightHeader={isCompare ? 'Current configuration' : 'Applied changes'}
+                leftHeader={isCompare ? 'Configuration after selected save' : 'Previous configuration'}
               />
             ))}
           </div>
@@ -383,7 +325,7 @@ function DiffDialog({ row, mode, onClose }) {
   );
 }
 
-function DiffSection({ label, before, after, view, rightHeader }) {
+function DiffSection({ label, before, after, view, rightHeader, leftHeader = 'Previous configuration' }) {
   const [open, setOpen] = useState(true);
   const beforeLines = useMemo(() => JSON.stringify(before, null, 4).split('\n'), [before]);
   const afterLines  = useMemo(() => JSON.stringify(after,  null, 4).split('\n'), [after]);
@@ -400,7 +342,7 @@ function DiffSection({ label, before, after, view, rightHeader }) {
       {open && (view === 'side'
         ? (
             <div style={S.sbsGrid}>
-              <DiffPanel title="Previous configuration" lines={beforeLines} sideMarker="left"  diff={inlineDiff} />
+              <DiffPanel title={leftHeader} lines={beforeLines} sideMarker="left"  diff={inlineDiff} />
               <DiffPanel title={rightHeader}            lines={afterLines}  sideMarker="right" diff={inlineDiff} />
             </div>
           )
@@ -593,7 +535,20 @@ function CompareIcon() {
 
 // ── Styles ────────────────────────────────────────────────────────────────
 const S = {
-  h1: { fontSize: '1.4rem', fontWeight: 700, color: '#0f172a', margin: '0 0 4px' },
+  h1: { fontSize: '1.4rem', fontWeight: 700, color: '#0f172a', margin: '0 0 4px', display: 'inline-flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' },
+  alphaChip: {
+    display: 'inline-block',
+    fontSize: '0.65rem',
+    fontWeight: 700,
+    letterSpacing: '0.04em',
+    textTransform: 'uppercase',
+    color: '#0369a1',
+    background: '#e0f2fe',
+    border: '1px solid #bae6fd',
+    borderRadius: '4px',
+    padding: '2px 8px',
+    verticalAlign: 'middle',
+  },
   subtitle: { fontSize: '0.92rem', color: '#475569', margin: '4px 0 18px' },
 
   toolbar: {

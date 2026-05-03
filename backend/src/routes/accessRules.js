@@ -5,11 +5,16 @@ const AccessRule        = require('../models/AccessRule');
 const AccessRulesConfig = require('../models/AccessRulesConfig');
 const Group             = require('../models/Group');
 const Topic             = require('../models/Topic');
+const Document          = require('../models/Document');
+const UnstructuredDocument = require('../models/UnstructuredDocument');
+const MetadataKey       = require('../models/MetadataKey');
 const { writeAudit, diffContext } = require('../services/users/auditService');
 const {
   applyReprocess,
   activateEnhanced,
 } = require('../services/accessRules/accessRulesService');
+const { logConfigChange, authorFromRequest } = require('../services/configAudit');
+const { snapshotAccessRules } = require('../services/configHistorySnapshots');
 
 const router = express.Router();
 
@@ -105,6 +110,7 @@ router.get('/', async (req, res, next) => {
 router.put('/config', async (req, res, next) => {
   try {
     const cfg = await AccessRulesConfig.getSingleton();
+    const snapBefore = await snapshotAccessRules();
     const before = {
       defaultRule:        cfg.defaultRule,
       legacyDefaultGroup: cfg.legacyDefaultGroup,
@@ -126,6 +132,14 @@ router.put('/config', async (req, res, next) => {
       }, ['defaultRule', 'legacyDefaultGroup', 'topicLevelEnabled']),
     });
 
+    const snapAfter = await snapshotAccessRules();
+    await logConfigChange({
+      category: 'Access rules',
+      ...authorFromRequest(req),
+      before: snapBefore,
+      after: snapAfter,
+    });
+
     res.json({ ok: true, config: cfg });
   } catch (err) { next(err); }
 });
@@ -140,6 +154,7 @@ router.post('/rules', async (req, res, next) => {
     const cfg = await AccessRulesConfig.getSingleton();
     const body = req.body || {};
     const actor = actorMeta(req);
+    const snapBefore = await snapshotAccessRules();
 
     const rule = await AccessRule.create({
       name:             String(body.name || '').trim(),
@@ -162,6 +177,14 @@ router.post('/rules', async (req, res, next) => {
       context: { ruleId: String(rule._id), inactiveSet: rule.inactiveSet },
     });
 
+    const snapAfter = await snapshotAccessRules();
+    await logConfigChange({
+      category: 'Access rules',
+      ...authorFromRequest(req),
+      before: snapBefore,
+      after: snapAfter,
+    });
+
     const populated = await rule.populate('groups', 'name');
     res.status(201).json(publicRule(populated));
   } catch (err) { next(err); }
@@ -179,6 +202,7 @@ router.put('/rules/:id', async (req, res, next) => {
     const rule = await AccessRule.findById(req.params.id);
     if (!rule) return res.status(404).json({ error: 'Rule not found.' });
 
+    const snapBefore = await snapshotAccessRules();
     const before = rule.toObject();
     const body = req.body || {};
     const actor = actorMeta(req);
@@ -207,6 +231,14 @@ router.put('/rules/:id', async (req, res, next) => {
         ['name', 'description', 'requirements', 'requirementsMode', 'authMode', 'groups', 'autoBindKey', 'targetTopics']),
     });
 
+    const snapAfter = await snapshotAccessRules();
+    await logConfigChange({
+      category: 'Access rules',
+      ...authorFromRequest(req),
+      before: snapBefore,
+      after: snapAfter,
+    });
+
     const populated = await rule.populate('groups', 'name');
     res.json(publicRule(populated));
   } catch (err) { next(err); }
@@ -224,6 +256,7 @@ router.delete('/rules/:id', async (req, res, next) => {
     const rule = await AccessRule.findById(req.params.id);
     if (!rule) return res.status(404).json({ error: 'Rule not found.' });
 
+    const snapBefore = await snapshotAccessRules();
     const summary = `Deleted access rule "${rule.name || rule._id}"`;
     if (rule.inactiveSet || rule.status === 'New') {
       await rule.deleteOne();
@@ -238,6 +271,14 @@ router.delete('/rules/:id', async (req, res, next) => {
       context: { ruleId: String(rule._id) },
     });
 
+    const snapAfter = await snapshotAccessRules();
+    await logConfigChange({
+      category: 'Access rules',
+      ...authorFromRequest(req),
+      before: snapBefore,
+      after: snapAfter,
+    });
+
     res.json({ ok: true });
   } catch (err) { next(err); }
 });
@@ -249,11 +290,19 @@ router.delete('/rules/:id', async (req, res, next) => {
 // ---------------------------------------------------------------------------
 router.post('/reprocess', async (req, res, next) => {
   try {
+    const snapBefore = await snapshotAccessRules();
     const summary = await applyReprocess(req.user);
     await writeAudit(req, {
       action: 'access-rules.reprocess',
       summary: `Reprocessed access rules — promoted ${summary.promoted}, purged ${summary.purged}`,
       context: summary,
+    });
+    const snapAfter = await snapshotAccessRules();
+    await logConfigChange({
+      category: 'Access rules',
+      ...authorFromRequest(req),
+      before: snapBefore,
+      after: snapAfter,
     });
     res.json({ ok: true, ...summary });
   } catch (err) { next(err); }
@@ -266,6 +315,7 @@ router.post('/reprocess', async (req, res, next) => {
 // ---------------------------------------------------------------------------
 router.post('/activate-enhanced', async (req, res, next) => {
   try {
+    const snapBefore = await snapshotAccessRules();
     const result = await activateEnhanced(req.user);
     await writeAudit(req, {
       action: 'access-rules.activate-enhanced',
@@ -273,6 +323,13 @@ router.post('/activate-enhanced', async (req, res, next) => {
         ? 'Activate enhanced — already enhanced (no-op)'
         : 'Switched to enhanced access rules; legacy rules deleted',
       context: result,
+    });
+    const snapAfter = await snapshotAccessRules();
+    await logConfigChange({
+      category: 'Access rules',
+      ...authorFromRequest(req),
+      before: snapBefore,
+      after: snapAfter,
     });
     res.json({ ok: true, ...result });
   } catch (err) { next(err); }
@@ -284,17 +341,28 @@ router.post('/activate-enhanced', async (req, res, next) => {
 // ---------------------------------------------------------------------------
 router.get('/metadata-keys', async (req, res, next) => {
   try {
-    const docs = await Topic.aggregate([
+    res.setHeader('Cache-Control', 'no-store');
+    const topicKeys = await Topic.aggregate([
       { $project: { keys: { $objectToArray: { $ifNull: ['$metadata.custom', {}] } }, tags: '$metadata.tags' } },
       { $project: { keys: '$keys.k', tags: 1 } },
       { $unwind: { path: '$keys', preserveNullAndEmptyArrays: true } },
     ]).allowDiskUse(true);
+    const documentKeys = await Document.aggregate([
+      { $project: { keys: { $objectToArray: { $ifNull: ['$metadata.customFields', {}] } } } },
+      { $project: { keys: '$keys.k' } },
+      { $unwind: { path: '$keys', preserveNullAndEmptyArrays: true } },
+    ]).allowDiskUse(true);
 
     const set = new Set([
-      'tags', 'product', 'language', 'author',
+      'tags', 'product', 'version', 'language', 'author',
       'ft:publication_title', 'ft:filename', 'ft:sourceName', 'ft:isAttachment',
     ]);
-    for (const row of docs) {
+    const registryKeys = await MetadataKey.find({}).select('name displayName').lean();
+    for (const row of registryKeys) {
+      if (row.displayName) set.add(row.displayName);
+      else if (row.name) set.add(row.name);
+    }
+    for (const row of [...topicKeys, ...documentKeys]) {
       if (row.keys) set.add(row.keys);
     }
     res.json({ keys: Array.from(set).sort() });
@@ -307,32 +375,56 @@ router.get('/metadata-keys', async (req, res, next) => {
 // ---------------------------------------------------------------------------
 router.get('/metadata-values', async (req, res, next) => {
   try {
+    res.setHeader('Cache-Control', 'no-store');
     const key = String(req.query.key || '').trim();
     if (!key) return res.json({ values: [] });
 
     let values = [];
     if (key === 'tags') {
-      values = await Topic.distinct('metadata.tags');
-    } else if (['product', 'language', 'author'].includes(key)) {
-      values = await Topic.distinct(`metadata.${key}`);
+      values = [
+        ...(await Topic.distinct('metadata.tags')),
+        ...(await Document.distinct('metadata.tags')),
+        ...(await UnstructuredDocument.distinct('metadata.tags')),
+      ];
+    } else if (['product', 'version', 'language', 'author'].includes(key)) {
+      values = [
+        ...(await Topic.distinct(`metadata.${key}`)),
+        ...(await Document.distinct(key === 'language' ? 'language' : `metadata.${key}`)),
+        ...(await UnstructuredDocument.distinct(`metadata.${key}`)),
+      ];
     } else if (key === 'ft:publication_title') {
-      const Document = require('../models/Document');
-      values = await Document.distinct('title');
+      values = [
+        ...(await Document.distinct('title')),
+        ...(await UnstructuredDocument.distinct('title')),
+      ];
     } else if (key === 'ft:filename') {
-      const Document = require('../models/Document');
       values = await Document.distinct('originalFilename');
     } else if (key === 'ft:sourceName') {
-      const Document = require('../models/Document');
-      values = await Document.distinct('sourceFormat');
+      values = [
+        ...(await Document.distinct('sourceFormat')),
+        ...(await UnstructuredDocument.distinct('mimeType')),
+      ];
     } else if (key === 'ft:isAttachment') {
       values = ['True', 'False'];
     } else {
-      const docs = await Topic.aggregate([
+      const registry = await MetadataKey.findOne({
+        name: key.toLowerCase(),
+      }).select('valuesSample').lean();
+      const topicValues = await Topic.aggregate([
         { $project: { v: { $ifNull: [{ $getField: { field: key, input: '$metadata.custom' } }, []] } } },
         { $unwind: '$v' },
         { $group: { _id: '$v' } },
       ]).allowDiskUse(true);
-      values = docs.map((d) => d._id).filter((v) => v != null);
+      const documentValues = await Document.aggregate([
+        { $project: { v: { $ifNull: [{ $getField: { field: key, input: '$metadata.customFields' } }, null] } } },
+        { $match: { v: { $ne: null } } },
+        { $group: { _id: '$v' } },
+      ]).allowDiskUse(true);
+      values = [
+        ...((registry?.valuesSample || [])),
+        ...topicValues.map((d) => d._id),
+        ...documentValues.map((d) => d._id),
+      ].filter((v) => v != null);
     }
     res.json({
       key,

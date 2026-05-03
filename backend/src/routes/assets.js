@@ -5,7 +5,10 @@ const fs = require('fs');
 const multer = require('multer');
 const Asset = require('../models/Asset');
 const config = require('../config/env');
-const { auth, requireRole } = require('../middleware/auth');
+const { auth, requireTierOrAdminRoles } = require('../middleware/auth');
+const { CONTENT_PIPELINE: AR_CONTENT } = require('../constants/adminRoles');
+
+const contentEditor = requireTierOrAdminRoles(['admin', 'editor'], AR_CONTENT);
 
 const router = express.Router();
 
@@ -76,7 +79,7 @@ router.get('/:id', async (req, res, next) => {
 });
 
 // POST /api/assets — admin upload.
-router.post('/', auth, requireRole('admin', 'editor'), upload.single('file'), async (req, res, next) => {
+router.post('/', auth, contentEditor, upload.single('file'), async (req, res, next) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'file is required' });
     const tags = (req.body.tags || '').split(',').map((s) => s.trim()).filter(Boolean);
@@ -94,7 +97,7 @@ router.post('/', auth, requireRole('admin', 'editor'), upload.single('file'), as
 });
 
 // PATCH /api/assets/:id — admin metadata update.
-router.patch('/:id', auth, requireRole('admin', 'editor'), async (req, res, next) => {
+router.patch('/:id', auth, contentEditor, async (req, res, next) => {
   try {
     if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: 'Invalid id' });
     const update = {};
@@ -107,7 +110,7 @@ router.patch('/:id', auth, requireRole('admin', 'editor'), async (req, res, next
 });
 
 // DELETE /api/assets/:id — admin only.
-router.delete('/:id', auth, requireRole('admin', 'editor'), async (req, res, next) => {
+router.delete('/:id', auth, contentEditor, async (req, res, next) => {
   try {
     if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: 'Invalid id' });
     const a = await Asset.findByIdAndDelete(req.params.id);

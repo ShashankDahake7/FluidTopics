@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const Topic = require('../../models/Topic');
+const UnstructuredDocument = require('../../models/UnstructuredDocument');
 // Custom templates (Release Notes, FAQs, …) live in the frontend as
 // static React pages so they cannot be indexed by Atlas. We surface
 // them as virtual hits alongside the real Atlas results — see
@@ -24,6 +25,100 @@ const toObjectIds = (ids) =>
 // The frontend / RAG code expects the legacy ES shape:
 //   { title: ['<mark>foo</mark> bar'], content: ['…snippet…', '…snippet…'] }
 // Convert here so callers don't change.
+/** Snippet + crude <mark> highlight for unstructured text search (non-Atlas). */
+function highlightUnstructuredSnippet(text, query, maxLen = 220) {
+  const raw = String(text || '');
+  const q = String(query || '').trim();
+  if (!raw) return { html: '', plain: '' };
+  let start = 0;
+  if (q) {
+    const token = q.split(/\s+/).find((t) => t.length >= 2) || q;
+    const idx = raw.toLowerCase().indexOf(token.toLowerCase());
+    if (idx >= 0) start = Math.max(0, idx - 40);
+  }
+  const slice = raw.slice(start, start + maxLen);
+  let html = slice.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  if (q) {
+    for (const token of q.split(/\s+/).filter((t) => t.length >= 2)) {
+      try {
+        const rx = new RegExp(`(${token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+        html = html.replace(rx, '<mark>$1</mark>');
+      } catch (_) { /* ignore bad regex */ }
+    }
+  }
+  const ell = raw.length > start + maxLen ? '…' : '';
+  return { html: html + ell, plain: slice };
+}
+
+function buildUnstructuredHit(doc, query, titlesOnly) {
+  const titleEsc = String(doc.title || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  let titleHtml = titleEsc;
+  const q = String(query || '').trim();
+  if (q) {
+    for (const token of q.split(/\s+/).filter((t) => t.length >= 1)) {
+      try {
+        const rx = new RegExp(`(${token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+        titleHtml = titleHtml.replace(rx, '<mark>$1</mark>');
+      } catch (_) { /* ignore */ }
+    }
+  }
+  const snip = highlightUnstructuredSnippet(doc.contentText, query);
+  return {
+    kind: 'unstructured',
+    id: `ud-${String(doc._id)}`,
+    unstructuredId: String(doc._id),
+    title: doc.title,
+    tags: doc.metadata?.tags || [],
+    mimeType: doc.mimeType || '',
+    highlight: {
+      title: titleHtml !== titleEsc ? [titleHtml] : [],
+      content: snip.html ? [snip.html] : [],
+    },
+    content: { text: (doc.contentText || '').slice(0, 280) },
+  };
+}
+
+async function searchUnstructuredDocuments({ query, filters = {}, page = 1, limit = 20, titlesOnly = false }) {
+  const q = (query || '').trim();
+  if (!q) return { hits: [], total: 0 };
+
+  // MODULE / saved-topic scope applies to structured Topic hits only.
+  if (Array.isArray(filters.topicIds) && filters.topicIds.length) return { hits: [], total: 0 };
+  if (Array.isArray(filters.documentIds) && filters.documentIds.length) return { hits: [], total: 0 };
+
+  const mongoFilter = {};
+  if (titlesOnly) {
+    const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    mongoFilter.title = new RegExp(escaped, 'i');
+  } else {
+    mongoFilter.$text = { $search: q };
+  }
+
+  if (filters.tags?.length) {
+    mongoFilter['metadata.tags'] = { $in: filters.tags };
+  }
+  if (filters.product) mongoFilter['metadata.product'] = filters.product;
+  if (filters.version) mongoFilter['metadata.version'] = filters.version;
+  if (filters.language) mongoFilter['metadata.language'] = filters.language;
+
+  const skip = (page - 1) * limit;
+
+  let cursor = UnstructuredDocument.find(
+    mongoFilter,
+    titlesOnly ? {} : { score: { $meta: 'textScore' } }
+  );
+  if (!titlesOnly) cursor = cursor.sort({ score: { $meta: 'textScore' } });
+  else cursor = cursor.sort({ updatedAt: -1 });
+
+  const [rawDocs, total] = await Promise.all([
+    cursor.skip(skip).limit(limit).select('title description metadata mimeType contentText').lean(),
+    UnstructuredDocument.countDocuments(mongoFilter),
+  ]);
+
+  const hits = rawDocs.map((d) => buildUnstructuredHit(d, q, titlesOnly));
+  return { hits, total };
+}
+
 const toLegacyHighlight = (raw, query) => {
   const out = {};
   if (!Array.isArray(raw)) return out;
@@ -221,7 +316,7 @@ const search = async ({ query, filters = {}, page = 1, limit = 20, sort = 'relev
 
   // Run hits + facets/count in parallel. Splitting the meta call keeps the
   // hits pipeline lean (no facet collector overhead for every query).
-  const [hits, meta] = await Promise.all([
+  const [hits, meta, unstructuredBlock] = await Promise.all([
     Topic.aggregate([
       { $search },
       { $skip: from },
@@ -243,6 +338,7 @@ const search = async ({ query, filters = {}, page = 1, limit = 20, sort = 'relev
           count: { type: 'total' },
       } },
     ]),
+    searchUnstructuredDocuments({ query, filters, page, limit, titlesOnly }),
   ]);
 
   const metaDoc = meta?.[0] || {};
@@ -268,8 +364,11 @@ const search = async ({ query, filters = {}, page = 1, limit = 20, sort = 'relev
 
   return {
     hits: formattedHits,
+    unstructuredHits: unstructuredBlock.hits || [],
+    unstructuredTotal: unstructuredBlock.total || 0,
     templates,
     total,
+    topicTotal: total,
     page,
     limit,
     totalPages: Math.ceil(total / limit),
@@ -422,4 +521,10 @@ const inDocumentSearch = async ({ query, documentId, topicIds = null, releaseNot
   };
 };
 
-module.exports = { search, suggest, semanticSearch, inDocumentSearch };
+module.exports = {
+  search,
+  suggest,
+  semanticSearch,
+  inDocumentSearch,
+  searchUnstructuredDocuments,
+};

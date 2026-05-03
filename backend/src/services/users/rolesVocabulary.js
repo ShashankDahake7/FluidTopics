@@ -12,11 +12,11 @@ const FEATURE_ROLES = [
   { id: 'PRINT_USER',                label: 'Print',                bucket: 'unauthenticated', defaultEligible: true },
   { id: 'RATING_USER',               label: 'Rate content',         bucket: 'unauthenticated', defaultEligible: true },
   { id: 'FEEDBACK_USER',             label: 'Send feedback',        bucket: 'unauthenticated', defaultEligible: true },
-  { id: 'AI_USER',                   label: 'Use AI features',      bucket: 'unauthenticated', defaultEligible: true },
-  { id: 'AI_EXPORT_USER',            label: 'Export AI',            bucket: 'unauthenticated', defaultEligible: true },
+  { id: 'GENERATIVE_AI_USER',        label: 'Use AI features',      bucket: 'unauthenticated', defaultEligible: true },
+  { id: 'GENERATIVE_AI_EXPORT_USER', label: 'Export AI',            bucket: 'unauthenticated', defaultEligible: true },
   // Aliased back-compat permissions — same surface, older identifiers.
-  { id: 'GENERATIVE_AI_USER',        label: 'Use AI features (legacy)',  bucket: 'unauthenticated', defaultEligible: true,  alias: 'AI_USER' },
-  { id: 'GENERATIVE_AI_EXPORT_USER', label: 'Export AI (legacy)',        bucket: 'unauthenticated', defaultEligible: true,  alias: 'AI_EXPORT_USER' },
+  { id: 'AI_USER',                   label: 'Use AI features (legacy)',  bucket: 'unauthenticated', defaultEligible: true,  alias: 'GENERATIVE_AI_USER' },
+  { id: 'AI_EXPORT_USER',            label: 'Export AI (legacy)',        bucket: 'unauthenticated', defaultEligible: true,  alias: 'GENERATIVE_AI_EXPORT_USER' },
 
   // Authenticated bucket — eligible as defaults for signed-in users
   { id: 'PERSONAL_BOOK_USER',        label: 'Personal books',       bucket: 'authenticated', defaultEligible: true },
@@ -88,7 +88,10 @@ function sanitizeDefaultRoles(arr = [], bucket = null) {
     if (typeof id !== 'string') continue;
     if (!isFeatureRole(id))    continue;
     if (!isDefaultEligible(id))continue;
-    if (bucket && FEATURE_ROLE_BY_ID[id].bucket !== bucket) continue;
+    // Authenticated users inherit unauthenticated capabilities, so the
+    // 'authenticated' bucket accepts both 'authenticated' and 'unauthenticated'
+    // roles. The 'unauthenticated' bucket only accepts unauth roles.
+    if (bucket === 'unauthenticated' && FEATURE_ROLE_BY_ID[id].bucket !== 'unauthenticated') continue;
     if (seen.has(id)) continue;
     seen.add(id);
     out.push(id);

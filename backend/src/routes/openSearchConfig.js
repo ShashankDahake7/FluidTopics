@@ -1,7 +1,7 @@
 const express = require('express');
 const OpenSearchConfig = require('../models/OpenSearchConfig');
 const { auth, requireRole } = require('../middleware/auth');
-const { logConfigChange } = require('../services/configAudit');
+const { logConfigChange, authorFromRequest } = require('../services/configAudit');
 
 const router = express.Router();
 
@@ -44,8 +44,7 @@ router.put('/', async (req, res, next) => {
     }
     await logConfigChange({
       category: 'OpenSearch',
-      author: req.user.name || req.user.email,
-      authorEmail: req.user.email,
+      ...authorFromRequest(req),
       before,
       after: config.toObject(),
     });

@@ -5,6 +5,8 @@ const EmailSettings = require('../models/EmailSettings');
 const MetadataKey = require('../models/MetadataKey');
 const emailService = require('../services/email/emailService');
 const { writeAudit, diffContext } = require('../services/users/auditService');
+const { logConfigChange, authorFromRequest } = require('../services/configAudit');
+const { snapshotFeedback } = require('../services/configHistorySnapshots');
 
 const router = express.Router();
 
@@ -164,6 +166,7 @@ router.put('/', requirePortalOrAdmin, async (req, res, next) => {
   try {
     const cfg = await FeedbackSettings.getSingleton();
     const body = req.body || {};
+    const snapBefore = await snapshotFeedback();
     const before = publicSettings(cfg);
 
     if (body.recipients !== undefined) {
@@ -254,6 +257,14 @@ router.put('/', requirePortalOrAdmin, async (req, res, next) => {
         'forbiddenAttachmentExtensions',
         'maxAttachmentSizeMb',
       ]),
+    });
+
+    const snapAfter = await snapshotFeedback();
+    await logConfigChange({
+      category: 'Feedback',
+      ...authorFromRequest(req),
+      before: snapBefore,
+      after: snapAfter,
     });
 
     res.json({ settings: after });

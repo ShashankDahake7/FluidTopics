@@ -2,6 +2,8 @@ const express  = require('express');
 const multer   = require('multer');
 const TileIcon = require('../models/TileIcon');
 const { auth, requireRole } = require('../middleware/auth');
+const { logConfigChange, authorFromRequest } = require('../services/configAudit');
+const { snapshotTileIcons } = require('../services/configHistorySnapshots');
 
 const router = express.Router();
 
@@ -72,6 +74,8 @@ router.post(
 
       const { tileType, tileKey } = req.params;
 
+      const before = await snapshotTileIcons();
+
       const icon = await TileIcon.findOneAndUpdate(
         { tileType, tileKey },
         {
@@ -85,6 +89,14 @@ router.post(
         },
         { upsert: true, new: true, setDefaultsOnInsert: true }
       );
+
+      const after = await snapshotTileIcons();
+      await logConfigChange({
+        category: 'Theme',
+        ...authorFromRequest(req),
+        before,
+        after,
+      });
 
       res.status(201).json({
         icon: {
@@ -105,11 +117,21 @@ router.delete(
   async (req, res, next) => {
     try {
       if (!validateType(req, res)) return;
+      const before = await snapshotTileIcons();
+
       const icon = await TileIcon.findOneAndDelete({
         tileType: req.params.tileType,
         tileKey:  req.params.tileKey,
       });
       if (!icon) return res.status(404).json({ error: 'No custom icon to remove' });
+
+      const after = await snapshotTileIcons();
+      await logConfigChange({
+        category: 'Theme',
+        ...authorFromRequest(req),
+        before,
+        after,
+      });
       res.json({ message: 'Icon removed' });
     } catch (err) { next(err); }
   }

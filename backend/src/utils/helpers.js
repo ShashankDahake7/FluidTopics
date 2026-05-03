@@ -92,12 +92,34 @@ const detectFormat = (filename) => {
   return formatMap[ext] || null;
 };
 
+// Matches validateRefsWorker.js — used to reconcile ValidationCache rows that
+// predate summary.hasBinaryContent or omitted flags after a cache hit.
+function manifestValidationFlags(manifest) {
+  const HTML_RX = /\.(html?|xhtml)$/i;
+  const DITA_RX = /\.(dita|ditamap|bookmap)$/i;
+  const XML_RX = /\.xml$/i;
+  const BINARY_RX = /\.(pdf|pptx?|xlsx?|csv|rtf|odt|ods|odp|epub)$/i;
+  if (!Array.isArray(manifest) || manifest.length === 0) {
+    return { hasParseableContent: false, hasBinaryContent: false };
+  }
+  let parseable = false;
+  let binary = false;
+  for (const m of manifest) {
+    const p = m?.path || '';
+    if (HTML_RX.test(p) || DITA_RX.test(p) || XML_RX.test(p)) parseable = true;
+    if (BINARY_RX.test(p)) binary = true;
+    if (parseable && binary) break;
+  }
+  return { hasParseableContent: parseable, hasBinaryContent: binary };
+}
+
 module.exports = {
   slugify,
   generateUniqueSlug,
   stripHtml,
   truncate,
   detectFormat,
+  manifestValidationFlags,
   BINARY_SOURCE_TYPES,
   STRUCTURED_SOURCE_TYPES,
 };

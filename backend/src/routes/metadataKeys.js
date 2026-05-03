@@ -3,7 +3,10 @@ const mongoose = require('mongoose');
 const path = require('path');
 const { Worker } = require('worker_threads');
 
-const { auth, requireRole } = require('../middleware/auth');
+const { auth, requireTierOrAdminRoles } = require('../middleware/auth');
+const { METADATA: AR_META } = require('../constants/adminRoles');
+
+const adminOrEditor = requireTierOrAdminRoles(['admin', 'editor'], AR_META);
 const MetadataKey = require('../models/MetadataKey');
 const MetadataReprocessJob = require('../models/MetadataReprocessJob');
 const Topic = require('../models/Topic');
@@ -16,11 +19,11 @@ const PrettyUrlTemplate = require('../models/PrettyUrlTemplate');
 const SeoConfig = require('../models/SeoConfig');
 const { syncPaligoMetadataRegistry } = require('../services/metadata/paligoApiMetadataService');
 const { reprojectTopicsForDocument } = require('../services/metadata/registryService');
+const { logConfigChange, authorFromRequest } = require('../services/configAudit');
+const { serialiseMetadataKeysList } = require('../services/configHistorySnapshots');
 
 const router = express.Router();
 
-// Same gate as Sources / Publishing — admin or editor (superadmin implicit).
-const adminOrEditor = requireRole('admin', 'editor');
 
 const REPROCESS_WORKER_PATH = path.resolve(
   __dirname,
@@ -93,6 +96,7 @@ router.get('/', auth, adminOrEditor, async (req, res, next) => {
 // Rejects collisions case-insensitively and refuses reserved built-in names.
 router.post('/', auth, adminOrEditor, async (req, res, next) => {
   try {
+    const before = { keys: await serialiseMetadataKeysList() };
     const { name, isIndexed = false, isDate = false } = req.body || {};
     const display = String(name || '').trim();
     if (!display) {
@@ -113,6 +117,13 @@ router.post('/', auth, adminOrEditor, async (req, res, next) => {
       isDate: !!isDate,
       manual: true,
       createdBy: req.user?._id || null,
+    });
+    const after = { keys: await serialiseMetadataKeysList() };
+    await logConfigChange({
+      category: 'Metadata configuration',
+      ...authorFromRequest(req),
+      before,
+      after,
     });
     res.status(201).json({ item: serialise(created) });
   } catch (err) {
@@ -153,6 +164,7 @@ router.post('/sync-paligo', auth, adminOrEditor, async (req, res, next) => {
 // gesture (which both persists and triggers the worker).
 router.patch('/:id', auth, adminOrEditor, async (req, res, next) => {
   try {
+    const before = { keys: await serialiseMetadataKeysList() };
     if (!mongoose.isValidObjectId(req.params.id)) {
       return res.status(404).json({ error: 'Metadata key not found' });
     }
@@ -208,6 +220,13 @@ router.patch('/:id', auth, adminOrEditor, async (req, res, next) => {
     }
 
     await row.save();
+    const after = { keys: await serialiseMetadataKeysList() };
+    await logConfigChange({
+      category: 'Metadata configuration',
+      ...authorFromRequest(req),
+      before,
+      after,
+    });
     res.json({ item: serialise(row) });
   } catch (err) { next(err); }
 });
@@ -216,6 +235,7 @@ router.patch('/:id', auth, adminOrEditor, async (req, res, next) => {
 // the registry and from every topic/document metadata bag that uses it.
 router.delete('/:id', auth, adminOrEditor, async (req, res, next) => {
   try {
+    const before = { keys: await serialiseMetadataKeysList() };
     if (!mongoose.isValidObjectId(req.params.id)) {
       return res.status(404).json({ error: 'Metadata key not found' });
     }
@@ -226,6 +246,13 @@ router.delete('/:id', auth, adminOrEditor, async (req, res, next) => {
     }
     await deleteMetadataEverywhere(row.name);
     await row.deleteOne();
+    const after = { keys: await serialiseMetadataKeysList() };
+    await logConfigChange({
+      category: 'Metadata configuration',
+      ...authorFromRequest(req),
+      before,
+      after,
+    });
     res.status(204).end();
   } catch (err) { next(err); }
 });
@@ -239,6 +266,7 @@ router.delete('/:id', auth, adminOrEditor, async (req, res, next) => {
 // — easier UX than a 409.
 router.post('/save-and-reprocess', auth, adminOrEditor, async (req, res, next) => {
   try {
+    const before = { keys: await serialiseMetadataKeysList() };
     const { changes = [] } = req.body || {};
 
     // Apply pending toggle changes first so the registry is consistent
@@ -254,6 +282,16 @@ router.post('/save-and-reprocess', auth, adminOrEditor, async (req, res, next) =
       try {
         await MetadataKey.updateOne({ _id: ch.id }, { $set: update });
       } catch (e) { /* skip silently */ }
+    }
+
+    if (changes.length) {
+      const afterKeys = { keys: await serialiseMetadataKeysList() };
+      await logConfigChange({
+        category: 'Metadata configuration',
+        ...authorFromRequest(req),
+        before,
+        after: afterKeys,
+      });
     }
 
     const inflight = await MetadataReprocessJob.findOne({

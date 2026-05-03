@@ -3,17 +3,20 @@ const mongoose = require('mongoose');
 const path = require('path');
 const { Worker } = require('worker_threads');
 
-const { auth, requireRole } = require('../middleware/auth');
+const { auth, requireTierOrAdminRoles } = require('../middleware/auth');
+const { ENRICHMENT: AR_ENR } = require('../constants/adminRoles');
+
+const adminGate = requireTierOrAdminRoles(['admin', 'editor'], AR_ENR);
 const EnrichRule = require('../models/EnrichRule');
 const EnrichConfig = require('../models/EnrichConfig');
 const EnrichReprocessJob = require('../models/EnrichReprocessJob');
 const enrichService = require('../services/enrich/enrichService');
+const { logConfigChange, authorFromRequest } = require('../services/configAudit');
+const { snapshotEnrichAndClean } = require('../services/configHistorySnapshots');
 
 const router = express.Router();
 
-// Same gate as Vocabularies and the rest of the Knowledge Hub admin
-// surface — superadmin only.
-const adminGate = requireRole('superadmin');
+// Admin/editor tier, or ENRICHMENT_ADMIN / KHUB_ADMIN.
 
 const REPROCESS_WORKER_PATH = path.resolve(
   __dirname,
@@ -52,7 +55,15 @@ router.get('/', auth, adminGate, async (req, res, next) => {
 // ── Per-rule CRUD ─────────────────────────────────────────────────────────
 router.post('/', auth, adminGate, async (req, res, next) => {
   try {
+    const before = await snapshotEnrichAndClean();
     const created = await enrichService.createRule(req.body || {}, req.user);
+    const after = await snapshotEnrichAndClean();
+    await logConfigChange({
+      category: 'Enrich and Clean',
+      ...authorFromRequest(req),
+      before,
+      after,
+    });
     res.status(201).json({ rule: created });
   } catch (err) {
     if (err.status) return res.status(err.status).json({ error: err.message });
@@ -62,7 +73,15 @@ router.post('/', auth, adminGate, async (req, res, next) => {
 
 router.patch('/:id', auth, adminGate, async (req, res, next) => {
   try {
+    const before = await snapshotEnrichAndClean();
     const updated = await enrichService.updateRule(req.params.id, req.body || {}, req.user);
+    const after = await snapshotEnrichAndClean();
+    await logConfigChange({
+      category: 'Enrich and Clean',
+      ...authorFromRequest(req),
+      before,
+      after,
+    });
     res.json({ rule: updated });
   } catch (err) {
     if (err.status) return res.status(err.status).json({ error: err.message });
@@ -72,7 +91,15 @@ router.patch('/:id', auth, adminGate, async (req, res, next) => {
 
 router.delete('/:id', auth, adminGate, async (req, res, next) => {
   try {
+    const before = await snapshotEnrichAndClean();
     await enrichService.deleteRule(req.params.id);
+    const after = await snapshotEnrichAndClean();
+    await logConfigChange({
+      category: 'Enrich and Clean',
+      ...authorFromRequest(req),
+      before,
+      after,
+    });
     res.status(204).end();
   } catch (err) {
     if (err.status) return res.status(err.status).json({ error: err.message });
@@ -89,7 +116,15 @@ router.delete('/:id', auth, adminGate, async (req, res, next) => {
 router.put('/', auth, adminGate, async (req, res, next) => {
   try {
     const { rules } = req.body || {};
+    const before = await snapshotEnrichAndClean();
     const stored = await enrichService.replaceAllRules(rules || [], req.user);
+    const after = await snapshotEnrichAndClean();
+    await logConfigChange({
+      category: 'Enrich and Clean',
+      ...authorFromRequest(req),
+      before,
+      after,
+    });
     res.json({ rules: stored });
   } catch (err) {
     if (err.status) return res.status(err.status).json({ error: err.message });

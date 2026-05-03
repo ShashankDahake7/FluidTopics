@@ -4,7 +4,7 @@ const { getSearchBoostParams } = require('../services/personalization/personaliz
 const { generateAnswer } = require('../services/ai/groqService');
 const { trackEvent } = require('../services/analytics/analyticsService');
 const { optionalAuth } = require('../middleware/auth');
-const Topic = require('../models/Topic');
+const UnstructuredDocument = require('../models/UnstructuredDocument');
 const AccessRule = require('../models/AccessRule');
 const AccessRulesConfig = require('../models/AccessRulesConfig');
 const {
@@ -13,6 +13,8 @@ const {
   matchAllRequirements,
   ruleGrantsAccessToUser,
   defaultRuleAllows,
+  filterSearchHitsForUser: filterHitsByAccessRules,
+  filterDocumentsForUser,
 } = require('../services/accessRules/accessRulesService');
 
 const router = express.Router();
@@ -20,41 +22,7 @@ const router = express.Router();
 // Drops search hits whose backing topic is hidden by access rules. Operates on
 // the result.hits[] array shape produced by services/search/searchService.
 async function filterSearchHitsForUser(hits, user) {
-  if (!Array.isArray(hits) || hits.length === 0) return hits;
-  if (userCanBypass(user)) return hits;
-
-  const cfg = await AccessRulesConfig.getSingleton();
-  const activeRules = await AccessRule.find({ status: 'Active', inactiveSet: false })
-    .populate('groups', 'name').lean();
-  if (activeRules.length === 0 && defaultRuleAllows(cfg, user)) return hits;
-
-  const topicIds = hits.map((h) => h.topicId || h._id || h.id).filter(Boolean);
-  const topics = await Topic.find({ _id: { $in: topicIds } })
-    .select('metadata documentId').lean();
-  const topicById = new Map(topics.map((t) => [String(t._id), t]));
-
-  const Document = require('../models/Document');
-  const docIds = Array.from(new Set(topics.map((t) => String(t.documentId)).filter(Boolean)));
-  const docs = await Document.find({ _id: { $in: docIds } })
-    .select('title originalFilename sourceFormat metadata').lean();
-  const docById = new Map(docs.map((d) => [String(d._id), d]));
-
-  return hits.filter((h) => {
-    const t = topicById.get(String(h.topicId || h._id || h.id));
-    if (!t) return false;
-    const bag = buildMetaBagForTopic(t, docById.get(String(t.documentId)) || null);
-    const matching = activeRules.filter((r) => matchAllRequirements(r, bag));
-    if (matching.length === 0) return defaultRuleAllows(cfg, user);
-    for (const r of matching) {
-      if (r.authMode === 'auto') {
-        const autoVals = bag[r.autoBindKey] || [];
-        if (ruleGrantsAccessToUser({ ...r, _autoMatchedValues: autoVals }, user)) return true;
-      } else if (ruleGrantsAccessToUser(r, user)) {
-        return true;
-      }
-    }
-    return false;
-  });
+  return filterHitsByAccessRules(hits, user);
 }
 
 async function resolveSearchLanguage(req, explicit) {
@@ -118,6 +86,25 @@ router.get('/', optionalAuth, async (req, res, next) => {
         results.hits   = visible;
       }
     }
+
+    let unstructuredHits = results.unstructuredHits || [];
+    if (unstructuredHits.length) {
+      const ids = unstructuredHits.map((h) => h.unstructuredId).filter(Boolean);
+      const uDocs = await UnstructuredDocument.find({ _id: { $in: ids } }).lean();
+      const visibleU = await filterDocumentsForUser(uDocs, req.user);
+      const allow = new Set(visibleU.map((d) => String(d._id)));
+      const before = unstructuredHits.length;
+      unstructuredHits = unstructuredHits.filter((h) => allow.has(h.unstructuredId));
+      const uHidden = before - unstructuredHits.length;
+      if (uHidden) {
+        results.unstructuredHidden = uHidden;
+        results.unstructuredTotal = Math.max(0, (results.unstructuredTotal || 0) - uHidden);
+      }
+    }
+    results.unstructuredHits = unstructuredHits;
+
+    const topicTotalForDisplay = results.total || 0;
+    results.total = topicTotalForDisplay + (results.unstructuredTotal || 0);
 
     if (Array.isArray(results.hits) && results.hits.length) {
       const Document = require('../models/Document');
@@ -190,7 +177,8 @@ router.get('/clustered', optionalAuth, async (req, res, next) => {
         .limit(parseInt(limit, 10) || 10)
         .select('title metadata isPaligoFormat publication topicIds createdAt prettyUrl')
         .lean();
-      documents = docHits.map((d) => ({
+      const visibleDocs = await filterDocumentsForUser(docHits, req.user);
+      documents = visibleDocs.map((d) => ({
         _id: String(d._id),
         title: d.publication?.portalTitle || d.title,
         description: d.metadata?.description || '',
@@ -201,8 +189,8 @@ router.get('/clustered', optionalAuth, async (req, res, next) => {
       }));
     }
 
-    // Enrich topic hits with their parent doc prettyUrl (mirrors /search).
-    let enrichedTopics = topicResults.hits;
+    // Filter and enrich topic hits with their parent doc prettyUrl (mirrors /search).
+    let enrichedTopics = await filterSearchHitsForUser(topicResults.hits, req.user);
     if (Array.isArray(enrichedTopics) && enrichedTopics.length) {
       const docIds = [...new Set(enrichedTopics.map((h) => h.documentId).filter(Boolean))];
       if (docIds.length) {
@@ -217,7 +205,7 @@ router.get('/clustered', optionalAuth, async (req, res, next) => {
     }
 
     res.json({
-      total: topicResults.total + documents.length,
+      total: enrichedTopics.length + documents.length,
       topics:    enrichedTopics,
       documents,
       facets:    topicResults.facets,
@@ -234,11 +222,12 @@ router.get('/semantic', optionalAuth, async (req, res, next) => {
     const { q: query = '', limit = 20 } = req.query;
     if (!query.trim()) return res.json({ total: 0, hits: [] });
 
-    const { hits, total } = await semanticSearch({
+    const { hits } = await semanticSearch({
       query: query.trim(),
       limit: parseInt(limit, 10) || 20,
     });
-    res.json({ total, hits });
+    const visible = await filterSearchHitsForUser(hits, req.user);
+    res.json({ total: visible.length, hits: visible });
   } catch (err) { next(err); }
 });
 
@@ -252,18 +241,20 @@ router.get('/semantic/clustered', optionalAuth, async (req, res, next) => {
       query,
       limit: parseInt(req.query.limit, 10) || 10,
     });
+    const visibleHits = await filterSearchHitsForUser(hits, req.user);
 
-    const docIds = [...new Set(hits.map((t) => t.documentId).filter(Boolean))];
+    const docIds = [...new Set(visibleHits.map((t) => t.documentId).filter(Boolean))];
     const Document = require('../models/Document');
     const docs = docIds.length
       ? await Document.find({ _id: { $in: docIds } })
-          .select('title metadata publication topicIds').lean()
+          .select('title metadata publication topicIds sourceFormat originalFilename').lean()
       : [];
+    const visibleDocs = await filterDocumentsForUser(docs, req.user);
 
     res.json({
-      total: hits.length + docs.length,
-      topics: hits,
-      documents: docs.map((d) => ({
+      total: visibleHits.length + visibleDocs.length,
+      topics: visibleHits,
+      documents: visibleDocs.map((d) => ({
         _id: String(d._id),
         title: d.publication?.portalTitle || d.title,
         description: d.metadata?.description || '',
@@ -289,7 +280,7 @@ router.get('/opensearch.xml', (req, res) => {
 });
 
 // GET /api/search/suggest — Auto-complete suggestions
-router.get('/suggest', async (req, res, next) => {
+router.get('/suggest', optionalAuth, async (req, res, next) => {
   try {
     const { q: prefix } = req.query;
     if (!prefix || prefix.length < 2) {
@@ -297,7 +288,15 @@ router.get('/suggest', async (req, res, next) => {
     }
 
     const suggestions = await suggest(prefix);
-    res.json({ suggestions });
+    const topicSuggestions = suggestions.filter((s) => s.id && s.kind !== 'template');
+    const visibleTopicSuggestions = await filterSearchHitsForUser(
+      topicSuggestions.map((s) => ({ ...s, _id: s.id })),
+      req.user
+    );
+    const visibleIds = new Set(visibleTopicSuggestions.map((s) => String(s.id || s._id)));
+    res.json({
+      suggestions: suggestions.filter((s) => s.kind === 'template' || !s.id || visibleIds.has(String(s.id))),
+    });
   } catch (error) {
     next(error);
   }
@@ -323,12 +322,13 @@ router.get('/ask', optionalAuth, async (req, res, next) => {
       boost,
     });
 
-    if (searchResults.hits.length === 0) {
+    const visibleHits = await filterSearchHitsForUser(searchResults.hits || [], req.user);
+    if (visibleHits.length === 0) {
       return res.json({ answer: 'I could not find any documentation relevant to your question.', sources: [] });
     }
 
     // 2. Prepare context for the AI
-    const contexts = searchResults.hits.map(hit => ({
+    const contexts = visibleHits.slice(0, 3).map(hit => ({
       title: hit.title,
       content: hit.content?.text || hit.content?.html?.replace(/<[^>]+>/g, '') || '', // strip html if needed
       id: hit.id,

@@ -6,7 +6,14 @@ const multer = require('multer');
 const UnstructuredDocument = require('../models/UnstructuredDocument');
 const Feedback = require('../models/Feedback');
 const config = require('../config/env');
-const { auth, requireRole } = require('../middleware/auth');
+const { auth, optionalAuth, requireTierOrAdminRoles } = require('../middleware/auth');
+const { CONTENT_PIPELINE: AR_CONTENT } = require('../constants/adminRoles');
+
+const contentEditor = requireTierOrAdminRoles(['admin', 'editor'], AR_CONTENT);
+const {
+  filterDocumentsForUser,
+  requireDocumentAccess,
+} = require('../services/accessRules/accessRulesService');
 
 const { putFile, getObjectStream, deleteFromAllBuckets } = require('../services/storage/s3Service');
 
@@ -30,61 +37,63 @@ const presentMeta = (d) => ({
 });
 
 // GET /api/khub/documents — list (?q=, ?tag=, ?language=)
-router.get('/', async (req, res, next) => {
+router.get('/', optionalAuth, async (req, res, next) => {
   try {
     const { q, tag, language, page = 1, limit = 20 } = req.query;
     const filter = {};
     if (q)        filter.$text = { $search: q };
     if (tag)      filter['metadata.tags'] = tag;
     if (language) filter['metadata.language'] = language;
-    const total = await UnstructuredDocument.countDocuments(filter);
     const items = await UnstructuredDocument.find(filter)
       .sort({ createdAt: -1 })
       .skip((page - 1) * limit)
       .limit(parseInt(limit))
       .select('-contentHtml -contentText -filePath')
       .lean();
-    res.json({ total, documents: items.map(presentMeta) });
+    const visible = await filterDocumentsForUser(items, req.user);
+    res.json({ total: visible.length, documents: visible.map(presentMeta) });
   } catch (err) { next(err); }
 });
 
 // GET /api/khub/documents/search?q=
-router.get('/search', async (req, res, next) => {
+router.get('/search', optionalAuth, async (req, res, next) => {
   try {
     const q = (req.query.q || '').toString().trim();
     if (!q) return res.json({ total: 0, documents: [] });
     const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const rx = new RegExp(escaped, 'i');
     const filter = { $or: [{ title: rx }, { contentText: rx }] };
-    const total = await UnstructuredDocument.countDocuments(filter);
     const items = await UnstructuredDocument.find(filter)
       .sort({ updatedAt: -1 })
       .limit(50)
       .select('-contentHtml -contentText -filePath')
       .lean();
-    res.json({ total, documents: items.map(presentMeta) });
+    const visible = await filterDocumentsForUser(items, req.user);
+    res.json({ total: visible.length, documents: visible.map(presentMeta) });
   } catch (err) { next(err); }
 });
 
 // GET /api/khub/documents/:id/metadata
-router.get('/:id/metadata', async (req, res, next) => {
+router.get('/:id/metadata', optionalAuth, async (req, res, next) => {
   try {
     if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: 'Invalid id' });
     const d = await UnstructuredDocument.findById(req.params.id)
       .select('-contentHtml -contentText -filePath')
       .lean();
     if (!d) return res.status(404).json({ error: 'Not found' });
+    if (!await requireDocumentAccess(req, res, d)) return;
     res.json(presentMeta(d));
   } catch (err) { next(err); }
 });
 
 // GET /api/khub/documents/:id/content — raw HTML preview if rendered, else
 // the original file from S3.
-router.get('/:id/content', async (req, res, next) => {
+router.get('/:id/content', optionalAuth, async (req, res, next) => {
   try {
     if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: 'Invalid id' });
     const d = await UnstructuredDocument.findById(req.params.id).lean();
     if (!d) return res.status(404).json({ error: 'Not found' });
+    if (!await requireDocumentAccess(req, res, d)) return;
 
     // Bump view count, fire and forget.
     UnstructuredDocument.updateOne({ _id: d._id }, { $inc: { viewCount: 1 } }).catch(() => {});
@@ -116,21 +125,25 @@ router.get('/:id/content', async (req, res, next) => {
 });
 
 // GET /api/khub/documents/:id/content/text — plain-text view.
-router.get('/:id/content/text', async (req, res, next) => {
+router.get('/:id/content/text', optionalAuth, async (req, res, next) => {
   try {
     if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: 'Invalid id' });
-    const d = await UnstructuredDocument.findById(req.params.id).select('contentText').lean();
+    const d = await UnstructuredDocument.findById(req.params.id).select('title description mimeType size metadata contentText').lean();
     if (!d) return res.status(404).json({ error: 'Not found' });
+    if (!await requireDocumentAccess(req, res, d)) return;
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.send(d.contentText || '');
   } catch (err) { next(err); }
 });
 
 // POST /api/khub/documents/:id/feedback — feedback on an unstructured doc.
-router.post('/:id/feedback', async (req, res, next) => {
+router.post('/:id/feedback', optionalAuth, async (req, res, next) => {
   try {
     if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: 'Invalid id' });
     const { rating, feedback } = req.body || {};
+    const d = await UnstructuredDocument.findById(req.params.id).select('title description mimeType size metadata').lean();
+    if (!d) return res.status(404).json({ error: 'Not found' });
+    if (!await requireDocumentAccess(req, res, d)) return;
     const text = typeof feedback === 'string' ? feedback.trim() : '';
     const fb = await Feedback.create({
       topicId: null,
@@ -143,7 +156,7 @@ router.post('/:id/feedback', async (req, res, next) => {
 });
 
 // POST /api/khub/documents — upload a new unstructured doc to S3.
-router.post('/', auth, requireRole('admin', 'editor'), upload.single('file'), async (req, res, next) => {
+router.post('/', auth, contentEditor, upload.single('file'), async (req, res, next) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'file is required' });
 
@@ -185,7 +198,7 @@ router.post('/', auth, requireRole('admin', 'editor'), upload.single('file'), as
 });
 
 // DELETE /api/khub/documents/:id
-router.delete('/:id', auth, requireRole('admin', 'editor'), async (req, res, next) => {
+router.delete('/:id', auth, contentEditor, async (req, res, next) => {
   try {
     if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: 'Invalid id' });
     const d = await UnstructuredDocument.findByIdAndDelete(req.params.id);

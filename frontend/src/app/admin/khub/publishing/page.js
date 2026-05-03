@@ -198,7 +198,12 @@ export default function PublishingPage() {
   };
 
   return (
-    <AdminShell active="khub-publishing" allowedRoles={['superadmin']} fullWidth>
+    <AdminShell
+      active="khub-publishing"
+      allowedRoles={['superadmin', 'admin', 'editor']}
+      allowedAdminRoles={['CONTENT_ADMIN', 'CONTENT_PUBLISHER', 'KHUB_ADMIN']}
+      fullWidth
+    >
       <div style={S.headerRow}>
         <div>
           <h1 style={S.h1}>

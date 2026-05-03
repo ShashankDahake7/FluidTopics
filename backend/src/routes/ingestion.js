@@ -1,6 +1,10 @@
 const express = require('express');
 const upload = require('../middleware/upload');
-const { auth, requireRole } = require('../middleware/auth');
+const { auth, requireTierOrAdminRoles } = require('../middleware/auth');
+const { CONTENT_PIPELINE: AR_CONTENT } = require('../constants/adminRoles');
+
+const contentEditor = requireTierOrAdminRoles(['admin', 'editor'], AR_CONTENT);
+const contentAdmin = requireTierOrAdminRoles(['admin'], AR_CONTENT);
 const { ingestFile } = require('../services/ingestion/ingestionService');
 const Document = require('../models/Document');
 const publicationService = require('../services/publishing/publicationService');
@@ -8,7 +12,7 @@ const publicationService = require('../services/publishing/publicationService');
 const router = express.Router();
 
 // POST /api/ingest/upload — Upload file for ingestion
-router.post('/upload', auth, requireRole('admin', 'editor'), upload.single('file'), async (req, res, next) => {
+router.post('/upload', auth, contentEditor, upload.single('file'), async (req, res, next) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
@@ -43,7 +47,7 @@ router.post('/webhook', async (req, res, next) => {
 });
 
 // GET /api/ingest/jobs — List ingestion jobs
-router.get('/jobs', auth, requireRole('admin', 'editor'), async (req, res, next) => {
+router.get('/jobs', auth, contentEditor, async (req, res, next) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
@@ -98,7 +102,7 @@ router.get('/status/:id', auth, async (req, res, next) => {
 });
 
 // DELETE /api/ingest/:id — Delete a document and its topics
-router.delete('/:id', auth, requireRole('admin'), async (req, res, next) => {
+router.delete('/:id', auth, contentAdmin, async (req, res, next) => {
   try {
     const doc = await Document.findById(req.params.id);
     if (!doc) {

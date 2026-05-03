@@ -1,6 +1,8 @@
 const express = require('express');
 const ApiKey = require('../models/ApiKey');
 const { auth, requireRole } = require('../middleware/auth');
+const { logConfigChange, authorFromRequest } = require('../services/configAudit');
+const { snapshotIntegrationSecurityFull } = require('../services/configHistorySnapshots');
 
 const router = express.Router();
 
@@ -32,12 +34,20 @@ router.post('/', async (req, res, next) => {
       return res.status(409).json({ error: 'An API key with this name already exists.' });
     }
 
+    const before = await snapshotIntegrationSecurityFull();
     const key = await ApiKey.create({
       name: name.trim(),
       description: description || '',
       roles: roles || [],
       groups: groups || [],
       ipRestrictions: ipRestrictions || '',
+    });
+    const after = await snapshotIntegrationSecurityFull();
+    await logConfigChange({
+      category: 'Integration security',
+      ...authorFromRequest(req),
+      before,
+      after,
     });
     res.status(201).json(key);
   } catch (err) {
@@ -51,6 +61,7 @@ router.put('/:id', async (req, res, next) => {
     const key = await ApiKey.findById(req.params.id);
     if (!key) return res.status(404).json({ error: 'API key not found.' });
 
+    const before = await snapshotIntegrationSecurityFull();
     const { name, description, roles, groups, ipRestrictions } = req.body;
     if (name !== undefined) {
       if (!name.trim()) return res.status(400).json({ error: 'Name is required.' });
@@ -67,6 +78,13 @@ router.put('/:id', async (req, res, next) => {
     if (ipRestrictions !== undefined) key.ipRestrictions = ipRestrictions;
 
     await key.save();
+    const after = await snapshotIntegrationSecurityFull();
+    await logConfigChange({
+      category: 'Integration security',
+      ...authorFromRequest(req),
+      before,
+      after,
+    });
     res.json(key);
   } catch (err) {
     next(err);
@@ -76,8 +94,16 @@ router.put('/:id', async (req, res, next) => {
 // DELETE /api/api-keys/:id — delete an API key
 router.delete('/:id', async (req, res, next) => {
   try {
+    const before = await snapshotIntegrationSecurityFull();
     const key = await ApiKey.findByIdAndDelete(req.params.id);
     if (!key) return res.status(404).json({ error: 'API key not found.' });
+    const after = await snapshotIntegrationSecurityFull();
+    await logConfigChange({
+      category: 'Integration security',
+      ...authorFromRequest(req),
+      before,
+      after,
+    });
     res.status(204).end();
   } catch (err) {
     next(err);

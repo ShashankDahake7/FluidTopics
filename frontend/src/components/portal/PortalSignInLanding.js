@@ -11,6 +11,24 @@ const ROLES = [
   { id: 'staging', label: 'Sign In as Staging User' },
 ];
 
+const CLIENT_SSO_URL =
+  process.env.NEXT_PUBLIC_DARWINBOX_CLIENT_SSO_URL ||
+  'https://help.darwinbox.com/api/authentication/sso/darwinbox-clients-sso-prod/login?urlAfterLogin=https%3A%2F%2Fhelp.darwinbox.com%2Fhome&Ft-Calling-App=ft%2Fturnkey-portal&Ft-Calling-App-Version=5.3.3';
+
+const EMPLOYEE_SSO_URL =
+  process.env.NEXT_PUBLIC_DARWINBOX_EMPLOYEE_SSO_URL ||
+  'https://help.darwinbox.com/api/authentication/sso/Darwinbox_fluidtopics/login?urlAfterLogin=https%3A%2F%2Fhelp.darwinbox.com%2Fhome&Ft-Calling-App=ft%2Fturnkey-portal&Ft-Calling-App-Version=5.3.3';
+
+const STAGING_SSO_URL =
+  process.env.NEXT_PUBLIC_DARWINBOX_STAGING_SSO_URL ||
+  'https://help.darwinbox.com/api/authentication/sso/sso-stage-realm/login?urlAfterLogin=https%3A%2F%2Fhelp.darwinbox.com%2Fhome&Ft-Calling-App=ft%2Fturnkey-portal&Ft-Calling-App-Version=5.3.3';
+
+const ROLE_SSO_URLS = {
+  client: CLIENT_SSO_URL,
+  employee: EMPLOYEE_SSO_URL,
+  staging: STAGING_SSO_URL,
+};
+
 function DbIcon() {
   return (
     <img src="/image.png" alt="" className="portal-signin-role-icon" />
@@ -41,6 +59,15 @@ export default function PortalSignInLanding({ onSuccess, initialError = '' }) {
   }, []);
 
   const showPasswordAuth = !authConfig || (authConfig.methods || []).includes('password');
+
+  const handleRoleClick = (nextRole) => {
+    setRole(nextRole);
+    const ssoUrl = ROLE_SSO_URLS[nextRole];
+    if (ssoUrl) {
+      setLoading(true);
+      window.location.assign(ssoUrl);
+    }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -78,7 +105,7 @@ export default function PortalSignInLanding({ onSuccess, initialError = '' }) {
                 key={r.id}
                 type="button"
                 className={`portal-signin-role-btn${role === r.id ? ' is-active' : ''}`}
-                onClick={() => setRole(r.id)}
+                onClick={() => handleRoleClick(r.id)}
               >
                 <DbIcon />
                 <span>{r.label}</span>

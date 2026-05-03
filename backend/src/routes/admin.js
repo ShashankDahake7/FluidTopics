@@ -1,15 +1,21 @@
 const express = require('express');
-const { auth, requireRole } = require('../middleware/auth');
+const { auth, requireRole, requireTierOrAdminRoles } = require('../middleware/auth');
+const { ANALYTICS: AR_ANALYTICS, TRANSLATIONS: AR_TR } = require('../constants/adminRoles');
+
+const analyticsStats = requireTierOrAdminRoles(['admin'], AR_ANALYTICS);
+const translationsProfiles = requireTierOrAdminRoles(['admin'], AR_TR);
 const Document = require('../models/Document');
 const Topic    = require('../models/Topic');
 const User     = require('../models/User');
 const config = require('../config/env');
 const SiteConfig = require('../models/SiteConfig');
+const { logConfigChange, authorFromRequest } = require('../services/configAudit');
+const { snapshotLegalTerms } = require('../services/configHistorySnapshots');
 
 const router = express.Router();
 
 // GET /api/admin/stats
-router.get('/stats', auth, requireRole('admin'), async (req, res, next) => {
+router.get('/stats', auth, analyticsStats, async (req, res, next) => {
   try {
     const [docCount, topicCount, userCount, recentDocs] = await Promise.all([
       Document.countDocuments(),
@@ -115,7 +121,7 @@ router.post('/reindex', auth, requireRole('admin'), async (req, res, next) => {
 const TranslationProfile = require('../models/TranslationProfile');
 
 // GET /api/admin/translation-profiles — list AI translation profiles
-router.get('/translation-profiles', auth, requireRole('admin'), async (req, res, next) => {
+router.get('/translation-profiles', auth, translationsProfiles, async (req, res, next) => {
   try {
     const profiles = await TranslationProfile.find().sort({ name: 1 }).lean();
     res.json({ profiles });
@@ -123,7 +129,7 @@ router.get('/translation-profiles', auth, requireRole('admin'), async (req, res,
 });
 
 // POST /api/admin/translation-profiles — create profile (optionally set as default)
-router.post('/translation-profiles', auth, requireRole('admin'), async (req, res, next) => {
+router.post('/translation-profiles', auth, translationsProfiles, async (req, res, next) => {
   try {
     const body = req.body || {};
     if (!body.name || typeof body.name !== 'string') {
@@ -209,6 +215,7 @@ router.get('/legal-terms', auth, requireLegalTermsAdmin({ allowEditor: true }), 
 router.put('/legal-terms', auth, requireLegalTermsAdmin(), async (req, res, next) => {
   try {
     const cfg = await SiteConfig.getSingleton();
+    const snapBefore = await snapshotLegalTerms();
     const defaultLocale = (cfg.defaultLocale || 'en').toLowerCase().split('-')[0];
     const enabled = !!req.body?.enabled;
     const { list } = normalizeLegalMessages(req.body?.messages, defaultLocale);
@@ -248,6 +255,14 @@ router.put('/legal-terms', auth, requireLegalTermsAdmin(), async (req, res, next
       });
     } catch { /* fire-and-forget */ }
 
+    const snapAfter = await snapshotLegalTerms();
+    await logConfigChange({
+      category: 'Legal terms',
+      ...authorFromRequest(req),
+      before: snapBefore,
+      after: snapAfter,
+    });
+
     res.json({
       defaultLocale,
       enabled: cfg.legalTermsEnabled,
@@ -266,6 +281,7 @@ router.post('/legal-terms/new-version', auth, requireLegalTermsAdmin(), async (r
     if (!cfg.legalTermsEnabled) {
       return res.status(400).json({ error: 'Enable legal terms before creating a new version.' });
     }
+    const snapBefore = await snapshotLegalTerms();
     const previousVersion = cfg.legalTermsPolicyVersion || 0;
     cfg.legalTermsPolicyVersion = previousVersion + 1;
     cfg.legalTermsLastPolicyUpdateAt = new Date();
@@ -281,6 +297,14 @@ router.post('/legal-terms/new-version', auth, requireLegalTermsAdmin(), async (r
         },
       });
     } catch { /* fire-and-forget */ }
+
+    const snapAfter = await snapshotLegalTerms();
+    await logConfigChange({
+      category: 'Legal terms',
+      ...authorFromRequest(req),
+      before: snapBefore,
+      after: snapAfter,
+    });
 
     res.json({
       policyVersion: cfg.legalTermsPolicyVersion,

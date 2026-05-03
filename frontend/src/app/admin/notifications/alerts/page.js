@@ -171,6 +171,8 @@ export default function AlertsNotificationsPage() {
   return (
     <AdminShell
       active="notif-alerts"
+      allowedRoles={['superadmin', 'admin']}
+      allowedAdminRoles={['PORTAL_ADMIN']}
       footer={<ActionFooter dirty={dirty && !saving} onCancel={handleCancel} onSave={handleSave} />}
     >
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '14px' }}>

@@ -6,6 +6,8 @@ const AuthRealm    = require('../models/AuthRealm');
 const User         = require('../models/User');
 const Session      = require('../models/Session');
 const { writeAudit, diffContext } = require('../services/users/auditService');
+const { logConfigChange, authorFromRequest } = require('../services/configAudit');
+const { snapshotAuthentication } = require('../services/configHistorySnapshots');
 
 const router = express.Router();
 
@@ -201,6 +203,7 @@ router.get('/general', requirePortalOrAdmin, async (req, res, next) => {
 router.put('/general', requirePortalOrAdmin, async (req, res, next) => {
   try {
     const cfg = await AuthSettings.getSingleton();
+    const snapBefore = await snapshotAuthentication();
     const before = cfg.toObject();
     const body = req.body || {};
 
@@ -238,6 +241,14 @@ router.put('/general', requirePortalOrAdmin, async (req, res, next) => {
       ]),
     });
 
+    const snapAfter = await snapshotAuthentication();
+    await logConfigChange({
+      category: 'Authentication',
+      ...authorFromRequest(req),
+      before: snapBefore,
+      after: snapAfter,
+    });
+
     res.json(publicGeneral(cfg));
   } catch (err) { next(err); }
 });
@@ -272,6 +283,7 @@ async function usersPerRealm(identifiers) {
 // POST /api/admin/auth/realms — create.
 router.post('/realms', requireAdmin, async (req, res, next) => {
   try {
+    const snapBefore = await snapshotAuthentication();
     const { type, identifier } = req.body || {};
     if (!['internal', 'ldap', 'oidc', 'saml', 'jwt'].includes(type)) {
       return res.status(400).json({ error: 'Invalid realm type.' });
@@ -324,6 +336,13 @@ router.post('/realms', requireAdmin, async (req, res, next) => {
       summary: `Created ${type.toUpperCase()} realm "${trimmedId}"`,
       context: { realmId: String(realm._id), type, identifier: trimmedId },
     });
+    const snapAfter = await snapshotAuthentication();
+    await logConfigChange({
+      category: 'Authentication',
+      ...authorFromRequest(req),
+      before: snapBefore,
+      after: snapAfter,
+    });
     res.status(201).json(publicRealm(realm));
   } catch (err) { next(err); }
 });
@@ -333,6 +352,7 @@ router.post('/realms', requireAdmin, async (req, res, next) => {
 // ObjectId.
 router.put('/realms/order', requireAdmin, async (req, res, next) => {
   try {
+    const snapBefore = await snapshotAuthentication();
     const order = Array.isArray(req.body.order) ? req.body.order : null;
     if (!order) return res.status(400).json({ error: 'order array is required.' });
 
@@ -353,6 +373,13 @@ router.put('/realms/order', requireAdmin, async (req, res, next) => {
       summary: `Reordered ${order.length} realm(s)`,
       context: { order: order.map(String) },
     });
+    const snapAfter = await snapshotAuthentication();
+    await logConfigChange({
+      category: 'Authentication',
+      ...authorFromRequest(req),
+      before: snapBefore,
+      after: snapAfter,
+    });
     const fresh = await AuthRealm.find({}).sort({ position: 1 });
     res.json({ realms: fresh.map((r) => publicRealm(r)) });
   } catch (err) { next(err); }
@@ -361,6 +388,7 @@ router.put('/realms/order', requireAdmin, async (req, res, next) => {
 // PUT /api/admin/auth/realms/:id — update.
 router.put('/realms/:id', requireAdmin, async (req, res, next) => {
   try {
+    const snapBefore = await snapshotAuthentication();
     const realm = await AuthRealm.findById(req.params.id);
     if (!realm) return res.status(404).json({ error: 'Realm not found.' });
 
@@ -407,6 +435,13 @@ router.put('/realms/:id', requireAdmin, async (req, res, next) => {
         config: realm.config,
       }, ['enabled', 'mfaEnabled', 'migrateFromRealms', 'profileMapperScript', 'config']),
     });
+    const snapAfter = await snapshotAuthentication();
+    await logConfigChange({
+      category: 'Authentication',
+      ...authorFromRequest(req),
+      before: snapBefore,
+      after: snapAfter,
+    });
     res.json(publicRealm(realm));
   } catch (err) { next(err); }
 });
@@ -415,6 +450,7 @@ router.put('/realms/:id', requireAdmin, async (req, res, next) => {
 // realm and authentication is mandatory).
 router.delete('/realms/:id', requireAdmin, async (req, res, next) => {
   try {
+    const snapBefore = await snapshotAuthentication();
     const realm = await AuthRealm.findById(req.params.id);
     if (!realm) return res.status(404).json({ error: 'Realm not found.' });
 
@@ -433,6 +469,13 @@ router.delete('/realms/:id', requireAdmin, async (req, res, next) => {
       action:  'auth.realm.delete',
       summary: `Deleted ${realm.type.toUpperCase()} realm "${realm.identifier}"`,
       context: { realmId: String(realm._id), type: realm.type, identifier: realm.identifier },
+    });
+    const snapAfter = await snapshotAuthentication();
+    await logConfigChange({
+      category: 'Authentication',
+      ...authorFromRequest(req),
+      before: snapBefore,
+      after: snapAfter,
     });
     res.json({ ok: true });
   } catch (err) { next(err); }

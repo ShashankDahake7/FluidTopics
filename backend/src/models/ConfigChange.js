@@ -6,10 +6,10 @@ const configChangeSchema = new mongoose.Schema({
   authorEmail: { type: String, default: '' },
   before: { type: mongoose.Schema.Types.Mixed, default: {} },
   after: { type: mongoose.Schema.Types.Mixed, default: {} },
+  /** Single-tenant default portal; reserved for multi-portal expansions. */
+  portalId: { type: String, default: 'default', index: true },
 }, { timestamps: true });
 
-// Cap at ~1 GB of BSON documents (roughly 500k entries at ~2KB average)
-// We'll enforce the 1GB limit via a TTL or manual cleanup, but for now
-// we keep the schema simple.
+// Storage capped at ~1 GB per portal in logConfigChange → enforcePortalHistoryLimit
 
 module.exports = mongoose.models.ConfigChange || mongoose.model('ConfigChange', configChangeSchema);

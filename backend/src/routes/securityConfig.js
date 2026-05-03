@@ -1,7 +1,8 @@
 const express = require('express');
 const SecurityConfig = require('../models/SecurityConfig');
 const { auth, requireRole } = require('../middleware/auth');
-const { logConfigChange } = require('../services/configAudit');
+const { logConfigChange, authorFromRequest } = require('../services/configAudit');
+const { snapshotIntegrationSecurityFull } = require('../services/configHistorySnapshots');
 
 const router = express.Router();
 
@@ -25,7 +26,7 @@ router.put('/', async (req, res, next) => {
   try {
     const { trustedOrigins, certificates } = req.body;
     let config = await SecurityConfig.findOne();
-    const before = config ? config.toObject() : {};
+    const before = await snapshotIntegrationSecurityFull();
     if (!config) {
       config = new SecurityConfig({ trustedOrigins, certificates });
     } else {
@@ -33,12 +34,12 @@ router.put('/', async (req, res, next) => {
       if (certificates !== undefined) config.certificates = certificates;
     }
     await config.save();
+    const after = await snapshotIntegrationSecurityFull();
     await logConfigChange({
       category: 'Integration security',
-      author: req.user.name || req.user.email,
-      authorEmail: req.user.email,
+      ...authorFromRequest(req),
       before,
-      after: config.toObject(),
+      after,
     });
     res.json(config);
   } catch (err) {

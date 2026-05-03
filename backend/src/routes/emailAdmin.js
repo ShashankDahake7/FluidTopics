@@ -8,6 +8,8 @@ const { auth } = require('../middleware/auth');
 const EmailSettings = require('../models/EmailSettings');
 const emailService = require('../services/email/emailService');
 const { writeAudit, diffContext } = require('../services/users/auditService');
+const { logConfigChange, authorFromRequest } = require('../services/configAudit');
+const { snapshotEmailNotifications } = require('../services/configHistorySnapshots');
 
 const { putFile, deleteOne } = require('../services/storage/s3Service');
 
@@ -121,6 +123,7 @@ router.put('/', requirePortalOrAdmin, async (req, res, next) => {
     const cfg = await EmailSettings.getSingleton();
     const body = req.body || {};
 
+    const snapBefore = await snapshotEmailNotifications();
     const before = publicSettings(cfg);
 
     // Common fields
@@ -261,6 +264,14 @@ router.put('/', requirePortalOrAdmin, async (req, res, next) => {
       ]),
     });
 
+    const snapAfter = await snapshotEmailNotifications();
+    await logConfigChange({
+      category: 'Email notifications',
+      ...authorFromRequest(req),
+      before: snapBefore,
+      after: snapAfter,
+    });
+
     res.json({ settings: after });
   } catch (err) { next(err); }
 });
@@ -271,6 +282,7 @@ router.put('/', requirePortalOrAdmin, async (req, res, next) => {
 router.post('/logo', requirePortalOrAdmin, logoUpload.single('logo'), async (req, res, next) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No image uploaded.' });
+    const snapBefore = await snapshotEmailNotifications();
     const cfg = await EmailSettings.getSingleton();
 
     // Previous logo cleanup from S3
@@ -305,6 +317,14 @@ router.post('/logo', requirePortalOrAdmin, logoUpload.single('logo'), async (req
       context: { s3Key, originalName: req.file.originalname },
     });
 
+    const snapAfter = await snapshotEmailNotifications();
+    await logConfigChange({
+      category: 'Email notifications',
+      ...authorFromRequest(req),
+      before: snapBefore,
+      after: snapAfter,
+    });
+
     res.json({ settings: publicSettings(cfg) });
   } catch (err) {
     if (req.file?.path) try { fs.unlinkSync(req.file.path); } catch (_) { /* ignore */ }
@@ -317,6 +337,7 @@ router.post('/logo', requirePortalOrAdmin, logoUpload.single('logo'), async (req
 // ---------------------------------------------------------------------------
 router.delete('/logo', requirePortalOrAdmin, async (req, res, next) => {
   try {
+    const snapBefore = await snapshotEmailNotifications();
     const cfg = await EmailSettings.getSingleton();
     const previousFilename = (cfg.logoUrl || '').split('/').pop();
     if (previousFilename && previousFilename.startsWith('email-logo-')) {
@@ -329,6 +350,14 @@ router.delete('/logo', requirePortalOrAdmin, async (req, res, next) => {
     await writeAudit(req, {
       action:  'email-settings.logo.delete',
       summary: 'Removed email logo',
+    });
+
+    const snapAfter = await snapshotEmailNotifications();
+    await logConfigChange({
+      category: 'Email notifications',
+      ...authorFromRequest(req),
+      before: snapBefore,
+      after: snapAfter,
     });
     res.json({ settings: publicSettings(cfg) });
   } catch (err) { next(err); }

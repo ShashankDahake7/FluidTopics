@@ -3,8 +3,21 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useTranslation, LANGUAGES, uiLanguageToIso } from '@/lib/i18n';
-import api, { getStoredUser, getStoredToken } from '@/lib/api';
+import api, { getStoredUser, getStoredToken, syncCurrentUserFromServer } from '@/lib/api';
 import './portal.css';
+
+const ADMIN_TIER_ROLES = ['superadmin', 'admin', 'editor'];
+const ADMINISTRATIVE_ROLE_IDS = [
+  'USERS_ADMIN', 'CONTENT_ADMIN', 'CONTENT_PUBLISHER', 'ANALYTICS_ADMIN',
+  'KHUB_ADMIN', 'PORTAL_ADMIN', 'ENRICHMENT_ADMIN', 'METADATA_ADMIN',
+];
+
+function canAccessAdminSurface(user) {
+  if (!user) return false;
+  if (ADMIN_TIER_ROLES.includes(user.role)) return true;
+  const ar = user.adminRoles || [];
+  return ar.some((r) => ADMINISTRATIVE_ROLE_IDS.includes(r));
+}
 
 const Arrow = () => (
   <svg className="portal-arrow" aria-hidden="true" width="12" height="12" viewBox="0 0 16 16">
@@ -124,6 +137,58 @@ function DropdownItem({ item }) {
         ))}
       </ul>
     </li>
+  );
+}
+
+/** Viewer + administrative roles: show entry points matching AdminShell. */
+function AdministrativeRoleOnlyMenu({ t, user }) {
+  const ar = new Set(user?.adminRoles || []);
+  const Row = ({ href, label, children }) => (
+    <li className="portal-dropdown-item">
+      <Link href={href} className="portal-dropdown-link">
+        <span className="portal-menu-icon">{children}</span>
+        <span>{label}</span>
+      </Link>
+    </li>
+  );
+  const khub = ['KHUB_ADMIN', 'CONTENT_ADMIN', 'CONTENT_PUBLISHER', 'METADATA_ADMIN', 'ENRICHMENT_ADMIN'].some((r) => ar.has(r));
+  return (
+    <>
+      {ar.has('USERS_ADMIN') && (
+        <Row href="/admin/users" label={t('manageUsers')}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+            <circle cx="9" cy="7" r="4" />
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+            <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+          </svg>
+        </Row>
+      )}
+      {khub && (
+        <Row href="/admin/khub/publishing" label={t('knowledgeHub')}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <line x1="22" y1="2" x2="11" y2="13" />
+            <polygon points="22 2 15 22 11 13 2 9 22 2" />
+          </svg>
+        </Row>
+      )}
+      {ar.has('PORTAL_ADMIN') && (
+        <Row href="/admin/notifications/email" label={t('notifications')}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+            <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+          </svg>
+        </Row>
+      )}
+      {ar.has('ANALYTICS_ADMIN') && (
+        <Row href="/admin/analytics" label={t('analyticsNav')}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M3 3v18h18" />
+            <path d="M7 16V9M12 16V5M17 16v-7" />
+          </svg>
+        </Row>
+      )}
+    </>
   );
 }
 
@@ -387,12 +452,22 @@ export default function PortalHeader() {
     const sync = () => {
       setUser(getStoredUser());
     };
-    sync();
-    setMounted(true);
+    let cancelled = false;
+    (async () => {
+      try {
+        await syncCurrentUserFromServer();
+      } finally {
+        if (!cancelled) {
+          sync();
+          setMounted(true);
+        }
+      }
+    })();
     window.addEventListener('storage', sync);
     window.addEventListener('focus', sync);
     window.addEventListener('ft-auth', sync);
     return () => {
+      cancelled = true;
       window.removeEventListener('storage', sync);
       window.removeEventListener('focus', sync);
       window.removeEventListener('ft-auth', sync);
@@ -454,8 +529,8 @@ export default function PortalHeader() {
         </div>
 
         <div className="portal-header-right">
-          {/* Administration — superadmin (full menu), admin & editor (short menu). */}
-          {mounted && user && ['superadmin', 'admin', 'editor'].includes(user.role) && (
+          {/* Administration — tier admins + holders of administrative roles. */}
+          {mounted && user && canAccessAdminSurface(user) && (
             <div className="portal-header-menu">
               {/* Pure dropdown trigger — there is no /admin landing page; users
                   pick a destination from the menu below. */}
@@ -474,10 +549,22 @@ export default function PortalHeader() {
               <ul className="portal-dropdown-menu align-right">
                 {user.role === 'superadmin' ? (
                   <SuperAdministrationMenu t={t} onOpenAbout={() => setAboutOpen(true)} />
-                ) : (
+                ) : ADMIN_TIER_ROLES.includes(user.role) ? (
                   <>
                     <li className="portal-dropdown-item">
-                      <Link href="/admin/legal-terms" className="portal-dropdown-link">
+                      <Link href="/admin/khub/publishing" className="portal-dropdown-link">
+                        <span className="portal-menu-icon">
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <line x1="22" y1="2" x2="11" y2="13" />
+                            <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                          </svg>
+                        </span>
+                        <span>{t('knowledgeHub')}</span>
+                      </Link>
+                    </li>
+                    {(user.adminRoles || []).includes('USERS_ADMIN') && (
+                    <li className="portal-dropdown-item">
+                      <Link href="/admin/users" className="portal-dropdown-link">
                         <span className="portal-menu-icon">
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                             <path d="M17 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
@@ -489,6 +576,7 @@ export default function PortalHeader() {
                         <span>{t('manageUsers')}</span>
                       </Link>
                     </li>
+                    )}
                     <li className="portal-dropdown-item">
                       <Link href="/admin/notifications/email" className="portal-dropdown-link">
                         <span className="portal-menu-icon">
@@ -501,13 +589,15 @@ export default function PortalHeader() {
                       </Link>
                     </li>
                   </>
+                ) : (
+                  <AdministrativeRoleOnlyMenu t={t} user={user} />
                 )}
               </ul>
             </div>
           )}
 
-          {/* Analytics — superadmin only (Fluid Topics header). */}
-          {mounted && user && user.role === 'superadmin' && (
+          {/* Analytics — admin/editor tier or ANALYTICS_ADMIN (Fluid Topics header). */}
+          {mounted && user && (['superadmin', 'admin', 'editor'].includes(user.role) || (user.adminRoles || []).includes('ANALYTICS_ADMIN')) && (
             <div className="portal-header-menu">
               <Link href="/admin/analytics" className="portal-header-btn" title={t('analyticsNav')}>
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

@@ -1,16 +1,18 @@
 const express = require('express');
 const mongoose = require('mongoose');
 
-const { auth, requireRole } = require('../middleware/auth');
+const { auth, requireTierOrAdminRoles } = require('../middleware/auth');
+const { CONTENT_PIPELINE: AR_CONTENT } = require('../constants/adminRoles');
+
+const adminOrEditor = requireTierOrAdminRoles(['admin', 'editor'], AR_CONTENT);
+const adminOnlyContent = requireTierOrAdminRoles(['admin'], AR_CONTENT);
 const Source = require('../models/Source');
 const Publication = require('../models/Publication');
 const publicationService = require('../services/publishing/publicationService');
+const { logConfigChange, authorFromRequest } = require('../services/configAudit');
+const { snapshotSourcesFull } = require('../services/configHistorySnapshots');
 
 const router = express.Router();
-
-// All Sources admin endpoints follow the same gate as the rest of the
-// Knowledge Hub admin surface — admin/editor (superadmin passes implicitly).
-const adminOrEditor = requireRole('admin', 'editor');
 
 // Trim down a Source mongoose doc / lean object to the wire shape consumed by
 // the Sources admin page. `publicationCount` is left to the caller because
@@ -76,6 +78,7 @@ router.get('/', auth, adminOrEditor, async (req, res, next) => {
 // constraints on both `sourceId` and `name`.
 router.post('/', auth, adminOrEditor, async (req, res, next) => {
   try {
+    const before = await snapshotSourcesFull();
     const { sourceId, name, type, category, description, permissions } = req.body || {};
 
     if (!sourceId || !String(sourceId).trim()) {
@@ -109,6 +112,14 @@ router.post('/', auth, adminOrEditor, async (req, res, next) => {
       createdBy: req.user?._id,
     });
 
+    const after = await snapshotSourcesFull();
+    await logConfigChange({
+      category: 'Sources',
+      ...authorFromRequest(req),
+      before,
+      after,
+    });
+
     res.status(201).json({ source: serialise(created, { publicationCount: 0 }) });
   } catch (err) {
     if (err && err.code === 11000) {
@@ -137,6 +148,7 @@ router.patch('/:id', auth, adminOrEditor, async (req, res, next) => {
     const source = await findByEither(req.params.id);
     if (!source) return res.status(404).json({ error: 'Source not found' });
 
+    const before = await snapshotSourcesFull();
     const { name, category, description, permissions } = req.body || {};
     if (typeof name === 'string') {
       const trimmed = name.trim();
@@ -166,6 +178,13 @@ router.patch('/:id', auth, adminOrEditor, async (req, res, next) => {
     }
 
     const publicationCount = await Publication.countDocuments({ sourceId: source._id });
+    const after = await snapshotSourcesFull();
+    await logConfigChange({
+      category: 'Sources',
+      ...authorFromRequest(req),
+      before,
+      after,
+    });
     res.json({ source: serialise(source, { publicationCount }) });
   } catch (err) {
     if (err && err.code === 11000) {
@@ -209,11 +228,12 @@ router.post('/:id/clean', auth, adminOrEditor, async (req, res, next) => {
 // at this source. The docs phrase this as a two-step (Clean, then Delete) to
 // prevent accidental data loss; we preserve that by forcing the user through
 // /clean first when there are linked publications.
-router.delete('/:id', auth, requireRole('admin'), async (req, res, next) => {
+router.delete('/:id', auth, adminOnlyContent, async (req, res, next) => {
   try {
     const source = await findByEither(req.params.id);
     if (!source) return res.status(404).json({ error: 'Source not found' });
 
+    const before = await snapshotSourcesFull();
     const linked = await Publication.countDocuments({ sourceId: source._id });
     if (linked > 0) {
       return res.status(409).json({
@@ -223,6 +243,13 @@ router.delete('/:id', auth, requireRole('admin'), async (req, res, next) => {
     }
 
     await Source.deleteOne({ _id: source._id });
+    const after = await snapshotSourcesFull();
+    await logConfigChange({
+      category: 'Sources',
+      ...authorFromRequest(req),
+      before,
+      after,
+    });
     res.json({ message: 'Source deleted' });
   } catch (err) { next(err); }
 });

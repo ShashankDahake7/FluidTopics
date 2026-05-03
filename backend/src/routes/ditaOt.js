@@ -3,15 +3,18 @@ const fs = require('fs');
 const path = require('path');
 
 const upload = require('../middleware/upload');
-const { auth, requireRole } = require('../middleware/auth');
+const { auth, requireTierOrAdminRoles } = require('../middleware/auth');
+const { CONTENT_PIPELINE: AR_CONTENT } = require('../constants/adminRoles');
+
+const adminOrEditor = requireTierOrAdminRoles(['admin', 'editor'], AR_CONTENT);
 const config = require('../config/env');
 const s3 = require('../services/storage/s3Service');
 const DitaOtConfig = require('../models/DitaOtConfig');
+const { logConfigChange, authorFromRequest } = require('../services/configAudit');
+const { snapshotSourcesFull } = require('../services/configHistorySnapshots');
 
 const router = express.Router();
 
-// Same gate as the rest of the Knowledge Hub admin surface.
-const adminOrEditor = requireRole('admin', 'editor');
 
 // All DITA-OT archives live under this prefix in the existing raw bucket. We
 // reuse the bucket so we don't need additional IAM/env wiring beyond what the
@@ -67,6 +70,8 @@ router.get('/config', auth, adminOrEditor, async (req, res, next) => {
 router.post('/config', auth, adminOrEditor, upload.single('archive'), async (req, res, next) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No archive uploaded (field name: archive)' });
+
+    const before = await snapshotSourcesFull();
 
     const isZip = /\.zip$/i.test(req.file.originalname);
     if (!isZip) {
@@ -127,6 +132,13 @@ router.post('/config', auth, adminOrEditor, upload.single('archive'), async (req
     }
 
     const reloaded = await loadConfig();
+    const after = await snapshotSourcesFull();
+    await logConfigChange({
+      category: 'Sources',
+      ...authorFromRequest(req),
+      before,
+      after,
+    });
     res.status(201).json({ config: serialise(reloaded) });
   } catch (err) { next(err); }
 });
@@ -136,6 +148,7 @@ router.post('/config', auth, adminOrEditor, upload.single('archive'), async (req
 // transtype/parameters never touches S3.
 router.patch('/config', auth, adminOrEditor, async (req, res, next) => {
   try {
+    const before = await snapshotSourcesFull();
     const cfg = await loadConfig();
     const { transtype, parameters } = req.body || {};
     if (typeof transtype === 'string') cfg.transtype = transtype.trim();
@@ -146,6 +159,13 @@ router.patch('/config', auth, adminOrEditor, async (req, res, next) => {
         .filter((p) => p.key.length > 0);
     }
     await cfg.save();
+    const after = await snapshotSourcesFull();
+    await logConfigChange({
+      category: 'Sources',
+      ...authorFromRequest(req),
+      before,
+      after,
+    });
     res.json({ config: serialise(cfg) });
   } catch (err) { next(err); }
 });
@@ -170,6 +190,7 @@ router.get('/archive', auth, adminOrEditor, async (req, res, next) => {
 // settings. Equivalent to "go back to stock DITA-OT 3.5.4".
 router.post('/reset', auth, adminOrEditor, async (req, res, next) => {
   try {
+    const before = await snapshotSourcesFull();
     const cfg = await loadConfig();
     const previousKey = cfg.archive?.key || '';
     const previousBucket = cfg.archive?.bucket || '';
@@ -188,6 +209,13 @@ router.post('/reset', auth, adminOrEditor, async (req, res, next) => {
       }
     }
 
+    const after = await snapshotSourcesFull();
+    await logConfigChange({
+      category: 'Sources',
+      ...authorFromRequest(req),
+      before,
+      after,
+    });
     res.json({ config: serialise(cfg), message: 'Reset to default DITA-OT' });
   } catch (err) { next(err); }
 });

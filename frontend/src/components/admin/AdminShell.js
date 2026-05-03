@@ -1,8 +1,8 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { getStoredToken, getStoredUser } from '@/lib/api';
+import { getStoredToken, getStoredUser, syncCurrentUserFromServer } from '@/lib/api';
 
 const Caret = ({ open }) => (
   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
@@ -15,8 +15,8 @@ const SECTIONS = [
   {
     key: 'khub',
     title: 'Knowledge Hub',
-    allowedRoles: ['superadmin', 'admin'],
-    allowedAdminRoles: ['KHUB_ADMIN'],
+    allowedRoles: ['superadmin', 'admin', 'editor'],
+    allowedAdminRoles: ['KHUB_ADMIN', 'CONTENT_ADMIN', 'CONTENT_PUBLISHER', 'METADATA_ADMIN', 'ENRICHMENT_ADMIN'],
     icon: (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <line x1="22" y1="2" x2="11" y2="13" />
@@ -24,12 +24,49 @@ const SECTIONS = [
       </svg>
     ),
     items: [
-      { key: 'khub-publishing', label: 'Publishing',             href: '/admin/khub/publishing',   allowedRoles: ['superadmin'] },
-      { key: 'khub-sources',    label: 'Sources',                href: '/admin/khub/sources',      allowedRoles: ['superadmin'] },
-      { key: 'khub-enrich',     label: 'Enrich and Clean',       href: '/admin/khub/enrich',       allowedRoles: ['superadmin'] },
-      { key: 'khub-vocab',      label: 'Vocabularies',           href: '/admin/khub/vocabularies', allowedRoles: ['superadmin'] },
-      { key: 'khub-metadata',   label: 'Metadata configuration', href: '/admin/khub/metadata',     allowedRoles: ['superadmin'] },
-      { key: 'khub-pretty-url', label: 'Pretty URL',             href: '/admin/khub/pretty-url',   allowedRoles: ['superadmin'] },
+      {
+        key: 'khub-publishing',
+        label: 'Publishing',
+        href: '/admin/khub/publishing',
+        allowedRoles: ['superadmin', 'admin', 'editor'],
+        allowedAdminRoles: ['CONTENT_ADMIN', 'CONTENT_PUBLISHER', 'KHUB_ADMIN'],
+      },
+      {
+        key: 'khub-sources',
+        label: 'Sources',
+        href: '/admin/khub/sources',
+        allowedRoles: ['superadmin', 'admin', 'editor'],
+        allowedAdminRoles: ['CONTENT_ADMIN', 'CONTENT_PUBLISHER', 'KHUB_ADMIN'],
+      },
+      {
+        key: 'khub-enrich',
+        label: 'Enrich and Clean',
+        href: '/admin/khub/enrich',
+        // Not tenant admin/editor by default — only superadmin or enrichment/KHUB roles.
+        allowedRoles: ['superadmin'],
+        allowedAdminRoles: ['ENRICHMENT_ADMIN', 'KHUB_ADMIN'],
+      },
+      {
+        key: 'khub-vocab',
+        label: 'Vocabularies',
+        href: '/admin/khub/vocabularies',
+        allowedRoles: ['superadmin'],
+        allowedAdminRoles: ['METADATA_ADMIN', 'KHUB_ADMIN'],
+      },
+      {
+        key: 'khub-metadata',
+        label: 'Metadata configuration',
+        href: '/admin/khub/metadata',
+        allowedRoles: ['superadmin'],
+        allowedAdminRoles: ['METADATA_ADMIN', 'KHUB_ADMIN'],
+      },
+      {
+        key: 'khub-pretty-url',
+        label: 'Pretty URL',
+        href: '/admin/khub/pretty-url',
+        allowedRoles: ['superadmin'],
+        allowedAdminRoles: ['METADATA_ADMIN', 'KHUB_ADMIN'],
+      },
       {
         key: 'khub-access',
         label: 'Access rules',
@@ -55,7 +92,7 @@ const SECTIONS = [
         key: 'manage-users-list',
         label: 'Manage users',
         href: '/admin/users',
-        allowedRoles: ['superadmin', 'admin'],
+        allowedRoles: ['superadmin'],
         allowedAdminRoles: ['USERS_ADMIN'],
       },
       {
@@ -98,8 +135,20 @@ const SECTIONS = [
         allowedRoles: ['superadmin', 'admin'],
         allowedAdminRoles: ['PORTAL_ADMIN'],
       },
-      { key: 'notif-rating',   label: 'Rating',   href: '/admin/notifications/rating' },
-      { key: 'notif-alerts',   label: 'Alerts',   href: '/admin/notifications/alerts' },
+      {
+        key: 'notif-rating',
+        label: 'Rating',
+        href: '/admin/notifications/rating',
+        allowedRoles: ['superadmin', 'admin'],
+        allowedAdminRoles: ['PORTAL_ADMIN'],
+      },
+      {
+        key: 'notif-alerts',
+        label: 'Alerts',
+        href: '/admin/notifications/alerts',
+        allowedRoles: ['superadmin', 'admin'],
+        allowedAdminRoles: ['PORTAL_ADMIN'],
+      },
     ],
   },
   {
@@ -123,7 +172,7 @@ const SECTIONS = [
     key: 'my-tenant',
     title: 'My tenant',
     href: '/admin/import-configuration',
-    allowedRoles: ['superadmin'],
+    allowedRoles: ['superadmin', 'admin'],
     icon: (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <circle cx="12" cy="12" r="10" />
@@ -133,7 +182,7 @@ const SECTIONS = [
     ),
     items: [
       { key: 'tenant-import',  label: 'Import configuration',  href: '/admin/import-configuration',  allowedRoles: ['superadmin'] },
-      { key: 'tenant-history', label: 'Configuration history', href: '/admin/configuration-history', allowedRoles: ['superadmin'] },
+      { key: 'tenant-history', label: 'Configuration history', href: '/admin/configuration-history', allowedRoles: ['superadmin', 'admin'] },
     ],
   },
 ];
@@ -163,37 +212,62 @@ export default function AdminShell({
     return init;
   });
 
-  useEffect(() => {
-    // Auth state lives in either sessionStorage (no "Remember me") or
-    // localStorage (Remember me on); use the helpers so we honour both.
+  const allowedRolesRef = useRef(allowedRoles);
+  const allowedAdminRolesRef = useRef(allowedAdminRoles);
+  allowedRolesRef.current = allowedRoles;
+  allowedAdminRolesRef.current = allowedAdminRoles;
+
+  const syncFromStorage = useCallback(() => {
     if (!getStoredToken()) {
       router.replace('/login');
       return;
     }
     try {
       const u = getStoredUser();
-      const tierOk     = u && ['superadmin', 'admin', 'editor'].includes(u.role);
+      const ar = allowedRolesRef.current;
+      const aar = allowedAdminRolesRef.current;
+      const tierOk = u && ['superadmin', 'admin', 'editor'].includes(u.role);
       const adminRoleOk = u && Array.isArray(u.adminRoles)
-        && allowedAdminRoles.length > 0
-        && u.adminRoles.some((r) => allowedAdminRoles.includes(r));
+        && aar.length > 0
+        && u.adminRoles.some((r) => aar.includes(r));
       if (!tierOk && !adminRoleOk) {
         router.replace('/dashboard');
         return;
       }
-      // Per-page restriction (e.g. superadmin-only screens). The /admin landing
-      // dashboard no longer exists, so admins/editors who hit a screen they are
-      // not entitled to are bounced to the user-facing dashboard. The
-      // `allowedAdminRoles` escape hatch lets an admin-role grantee in even if
-      // their tier role would otherwise be too low.
-      if (allowedRoles && !allowedRoles.includes(u.role) && !adminRoleOk) {
+      if (ar && !ar.includes(u.role) && !adminRoleOk) {
         router.replace('/dashboard');
         return;
       }
       setUserRole(u.role);
       setUserAdminRoles(Array.isArray(u.adminRoles) ? u.adminRoles : []);
-    } catch { router.replace('/login'); return; }
-    setAuthChecked(true);
-  }, []);
+    } catch {
+      router.replace('/login');
+    }
+  }, [router]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        await syncCurrentUserFromServer();
+      } finally {
+        if (!cancelled) {
+          syncFromStorage();
+          setAuthChecked(true);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [syncFromStorage]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const onFtAuth = () => syncFromStorage();
+    window.addEventListener('ft-auth', onFtAuth);
+    return () => window.removeEventListener('ft-auth', onFtAuth);
+  }, [syncFromStorage]);
 
   // A section/item is visible when the tier role matches *or* an explicitly
   // listed administrative role is held by the user.

@@ -5,18 +5,21 @@ const path = require('path');
 const { Worker } = require('worker_threads');
 
 const upload = require('../middleware/upload');
-const { auth, requireRole } = require('../middleware/auth');
+const { auth, requireTierOrAdminRoles } = require('../middleware/auth');
+const { METADATA: AR_META } = require('../constants/adminRoles');
+
+const adminGate = requireTierOrAdminRoles(['admin', 'editor'], AR_META);
 const Vocabulary = require('../models/Vocabulary');
 const VocabularyTerm = require('../models/VocabularyTerm');
 const VocabularyConfig = require('../models/VocabularyConfig');
 const VocabularyReprocessJob = require('../models/VocabularyReprocessJob');
 const vocabularyService = require('../services/vocabularies/vocabularyService');
+const { logConfigChange, authorFromRequest } = require('../services/configAudit');
+const { snapshotVocabularies } = require('../services/configHistorySnapshots');
 
 const router = express.Router();
 
-// Vocabularies sit under the Knowledge Hub admin surface — superadmin only,
-// matching the access rules baked into the AdminShell sidebar.
-const adminGate = requireRole('superadmin');
+// Admin/editor tier, or METADATA_ADMIN / KHUB_ADMIN.
 
 const REPROCESS_WORKER_PATH = path.resolve(
   __dirname,
@@ -122,6 +125,7 @@ router.post('/', auth, adminGate, upload.single('file'), async (req, res, next) 
     return res.status(400).json({ error: 'No file uploaded (field name: file).' });
   }
   try {
+    const before = await snapshotVocabularies();
     const { name, displayName, usedInSearch } = req.body || {};
     const result = await vocabularyService.createVocabulary({
       name,
@@ -133,6 +137,13 @@ router.post('/', auth, adminGate, upload.single('file'), async (req, res, next) 
     unlinkSafe(req.file.path);
     const row = await Vocabulary.findById(result.vocab.id);
     const serialised = await withCreators(row);
+    const after = await snapshotVocabularies();
+    await logConfigChange({
+      category: 'Vocabularies',
+      ...authorFromRequest(req),
+      before,
+      after,
+    });
     res.status(201).json({ item: serialised, warnings: result.warnings });
   } catch (err) {
     unlinkSafe(req.file?.path);
@@ -146,6 +157,7 @@ router.post('/', auth, adminGate, upload.single('file'), async (req, res, next) 
 // requests pass straight through with `req.file` undefined.
 router.patch('/:id', auth, adminGate, upload.single('file'), async (req, res, next) => {
   try {
+    const before = await snapshotVocabularies();
     if (!mongoose.isValidObjectId(req.params.id)) {
       if (req.file) unlinkSafe(req.file.path);
       return res.status(404).json({ error: 'Vocabulary not found' });
@@ -163,6 +175,13 @@ router.patch('/:id', auth, adminGate, upload.single('file'), async (req, res, ne
     unlinkSafe(req.file?.path);
     const row = await Vocabulary.findById(result.vocab.id);
     const serialised = await withCreators(row);
+    const after = await snapshotVocabularies();
+    await logConfigChange({
+      category: 'Vocabularies',
+      ...authorFromRequest(req),
+      before,
+      after,
+    });
     res.json({ item: serialised, warnings: result.warnings });
   } catch (err) {
     unlinkSafe(req.file?.path);
@@ -174,10 +193,18 @@ router.patch('/:id', auth, adminGate, upload.single('file'), async (req, res, ne
 // DELETE /:id
 router.delete('/:id', auth, adminGate, async (req, res, next) => {
   try {
+    const before = await snapshotVocabularies();
     if (!mongoose.isValidObjectId(req.params.id)) {
       return res.status(404).json({ error: 'Vocabulary not found' });
     }
     await vocabularyService.deleteVocabulary(req.params.id);
+    const after = await snapshotVocabularies();
+    await logConfigChange({
+      category: 'Vocabularies',
+      ...authorFromRequest(req),
+      before,
+      after,
+    });
     res.status(204).end();
   } catch (err) {
     if (err.status) return res.status(err.status).json({ error: err.message });

@@ -10,6 +10,11 @@ const Topic = require('../../models/Topic');
 const Source = require('../../models/Source');
 const ValidationCache = require('../../models/ValidationCache');
 const config = require('../../config/env');
+const {
+  manifestValidationFlags,
+  BINARY_SOURCE_TYPES,
+  detectFormat,
+} = require('../../utils/helpers');
 const s3 = require('../storage/s3Service');
 const { ingestFile, ingestZipForTarget } = require('../ingestion/ingestionService');
 
@@ -587,8 +592,21 @@ async function runValidationInBackground(publicationId) {
     const missingAttachmentCount = summary.missingAttachmentCount || 0;
     const brokenLinkCount        = summary.brokenLinkCount        || 0;
     const unresolvedXrefCount    = summary.unresolvedXrefCount    || 0;
-    const hasParseableContent    = summary.hasParseableContent !== false;
-    const hasBinaryContent       = summary.hasBinaryContent === true;
+
+    const manifestFlags = manifestValidationFlags(pub.extracted?.manifest);
+    // Prefer explicit booleans from the worker; legacy ValidationCache docs may
+    // omit hasBinaryContent — then strict === true skipped UD publishes.
+    let hasParseableContent =
+      summary.hasParseableContent === true || summary.hasParseableContent === false
+        ? summary.hasParseableContent
+        : manifestFlags.hasParseableContent;
+    let hasBinaryContent =
+      summary.hasBinaryContent === true || summary.hasBinaryContent === false
+        ? summary.hasBinaryContent
+        : manifestFlags.hasBinaryContent;
+    if (!hasBinaryContent && manifestFlags.hasBinaryContent) {
+      hasBinaryContent = true;
+    }
     const totalIssues =
       missingTopicCount +
       missingAttachmentCount +
@@ -651,7 +669,6 @@ async function runValidationInBackground(publicationId) {
     //      render as download links.
     //
     //   3. Any source with validation issues → skip publish, log why.
-    const { BINARY_SOURCE_TYPES } = require('../../utils/helpers');
     const isBinarySource = sourceType && BINARY_SOURCE_TYPES.has(sourceType);
     const canPublish = totalIssues === 0
       && (hasParseableContent || (isBinarySource && hasBinaryContent))
@@ -700,6 +717,76 @@ async function runValidationInBackground(publicationId) {
       console.error('runValidationInBackground failure-bookkeeping error:', innerErr);
     }
   }
+}
+
+/**
+ * For binary-first sources (UnstructuredDocuments, MapAttachments, …), the zip
+ * pipeline skips PDFs/Office blobs when building Topic candidates — so topic
+ * count stays 0 even though validation passed. Materialise those files as
+ * Knowledge Hub unstructured documents using the extracted manifest S3 keys.
+ */
+function mimeForManifestFile(filename) {
+  const ext = path.extname(filename).toLowerCase().slice(1);
+  const map = {
+    pdf: 'application/pdf',
+    pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    ppt: 'application/vnd.ms-powerpoint',
+    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    xls: 'application/vnd.ms-excel',
+    csv: 'text/csv',
+    rtf: 'application/rtf',
+    odt: 'application/vnd.oasis.opendocument.text',
+    ods: 'application/vnd.oasis.opendocument.spreadsheet',
+    odp: 'application/vnd.oasis.opendocument.presentation',
+    epub: 'application/epub+zip',
+  };
+  return map[ext] || 'application/octet-stream';
+}
+
+async function ingestManifestAsUnstructuredDocuments(pubPlain) {
+  const UnstructuredDocument = require('../../models/UnstructuredDocument');
+
+  const manifest = pubPlain.extracted?.manifest || [];
+  let created = 0;
+  for (const entry of manifest) {
+    const relPath = entry.path || '';
+    const filename = path.basename(relPath);
+    if (!filename || !entry.key) continue;
+    if (detectFormat(filename) !== 'binary') continue;
+
+    const mime = (entry.contentType && String(entry.contentType).trim())
+      ? entry.contentType
+      : mimeForManifestFile(filename);
+    const titleBase = path.basename(filename, path.extname(filename));
+    const title = titleBase || filename;
+
+    await UnstructuredDocument.create({
+      title,
+      description: '',
+      mimeType: mime,
+      size: entry.size || 0,
+      filePath: entry.key,
+      contentText: '',
+      contentHtml: '',
+      metadata: {
+        tags: [],
+        product: '',
+        version: '',
+        language: 'en',
+        author: '',
+      },
+      uploaderId: pubPlain.uploadedBy || null,
+    });
+    created++;
+  }
+  return created;
+}
+
+async function resolvePublicationSourceType(pubId) {
+  const row = await Publication.findById(pubId).select('sourceId').lean();
+  if (!row?.sourceId) return null;
+  const src = await Source.findById(row.sourceId).select('type').lean();
+  return src?.type || null;
 }
 
 // Pull the raw zip back out of S3 to a tempfile and run the diff-aware
@@ -816,6 +903,29 @@ async function ingestValidatedPublication(pub) {
 
     const topicCount = Array.isArray(doc.topicIds) ? doc.topicIds.length : 0;
     if (topicCount === 0) {
+      const pubPlain = pub.toObject ? pub.toObject() : pub;
+      const sourceType = await resolvePublicationSourceType(pub._id);
+      const isBinarySource = sourceType && BINARY_SOURCE_TYPES.has(sourceType);
+
+      // Binary-first sources: promote manifest PDFs etc. to UnstructuredDocument
+      // rows (the topic pipeline intentionally skips binaries).
+      if (!targetDocumentId && isBinarySource) {
+        const n = await ingestManifestAsUnstructuredDocuments(pubPlain);
+        if (n > 0) {
+          try { await Topic.deleteMany({ documentId: doc._id }); } catch (_) { /* ignore */ }
+          try { await Document.deleteOne({ _id: doc._id }); } catch (_) { /* ignore */ }
+          await appendLog(pub._id, 'publish', {
+            level: 'info',
+            code: 'publish_complete',
+            message: `Published ${n} unstructured document${n === 1 ? '' : 's'} to the Knowledge Hub (${sourceType}).`,
+            context: { unstructuredCount: n, sourceType },
+          });
+          try { fs.unlinkSync(tmpPath); } catch (_) { /* ignore */ }
+          if (lockAcquired) await releasePublishLock(targetDocumentId, pub._id);
+          return;
+        }
+      }
+
       // Fresh-publish only: a brand-new Document with zero topics is a
       // dead link. Wipe it. Re-publish into an existing document with
       // zero NEW topics is fine (the existing topics may still be

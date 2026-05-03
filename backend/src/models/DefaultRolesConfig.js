@@ -23,7 +23,16 @@ const defaultRolesConfigSchema = new mongoose.Schema(
 defaultRolesConfigSchema.statics.getSingleton = async function () {
   const existing = await this.findById('default-roles');
   if (existing) return existing;
-  return this.create({ _id: 'default-roles', unauthenticated: [], authenticated: [] });
+  // First-run defaults: every default-eligible role is selected for both
+  // buckets so admins see the full set checked instead of an empty list.
+  const vocab = require('../services/users/rolesVocabulary');
+  const unauth = vocab.FEATURE_ROLES
+    .filter((r) => r.bucket === 'unauthenticated' && r.defaultEligible && !r.alias)
+    .map((r) => r.id);
+  const auth = vocab.FEATURE_ROLES
+    .filter((r) => r.defaultEligible && !r.alias)
+    .map((r) => r.id);
+  return this.create({ _id: 'default-roles', unauthenticated: unauth, authenticated: auth });
 };
 
 module.exports =

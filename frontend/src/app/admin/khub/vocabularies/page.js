@@ -246,7 +246,12 @@ export default function VocabulariesPage() {
     : 'Reprocessing started…';
 
   return (
-    <AdminShell active="khub-vocab" allowedRoles={['superadmin']} fullWidth>
+    <AdminShell
+      active="khub-vocab"
+      allowedRoles={['superadmin']}
+      allowedAdminRoles={['METADATA_ADMIN', 'KHUB_ADMIN']}
+      fullWidth
+    >
       <div style={S.page}>
         <header style={S.headerRow}>
           <div style={{ minWidth: 0, flex: 1 }}>

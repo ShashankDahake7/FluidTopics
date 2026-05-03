@@ -1,6 +1,11 @@
 const express = require('express');
 const SiteConfig = require('../models/SiteConfig');
-const { auth, requireRole } = require('../middleware/auth');
+const { auth, requireTierOrAdminRoles } = require('../middleware/auth');
+const { logConfigChange, authorFromRequest } = require('../services/configAudit');
+const { snapshotLanguages } = require('../services/configHistorySnapshots');
+const { TRANSLATIONS: AR_TR } = require('../constants/adminRoles');
+
+const translationsAdmin = requireTierOrAdminRoles(['admin'], AR_TR);
 
 const router = express.Router();
 
@@ -38,10 +43,11 @@ router.get('/default', async (_req, res, next) => {
 /**
  * PUT /api/languages/default — admin sets portal default (and optional locale allow-list).
  */
-router.put('/default', auth, requireRole('admin'), async (req, res, next) => {
+router.put('/default', auth, translationsAdmin, async (req, res, next) => {
   try {
     const { defaultLocale, enabledLocales } = req.body || {};
     const cfg = await SiteConfig.getSingleton();
+    const snapBefore = await snapshotLanguages();
     if (defaultLocale !== undefined && defaultLocale !== null) {
       cfg.defaultLocale = normalizeLocale(String(defaultLocale)) || 'en';
     }
@@ -49,6 +55,13 @@ router.put('/default', auth, requireRole('admin'), async (req, res, next) => {
       cfg.enabledLocales = [...new Set(enabledLocales.map((x) => normalizeLocale(String(x))))];
     }
     await cfg.save();
+    const snapAfter = await snapshotLanguages();
+    await logConfigChange({
+      category: 'Languages',
+      ...authorFromRequest(req),
+      before: snapBefore,
+      after: snapAfter,
+    });
     res.json({
       defaultLocale: cfg.defaultLocale,
       enabledLocales: cfg.enabledLocales || [],

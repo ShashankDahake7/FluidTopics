@@ -5,7 +5,11 @@ const {
   getContentGaps,
   exportAnalytics,
 } = require('../services/analytics/analyticsService');
-const { auth, requireRole, optionalAuth } = require('../middleware/auth');
+const { auth, requireTierOrAdminRoles, optionalAuth } = require('../middleware/auth');
+const { ANALYTICS: AR_ANALYTICS } = require('../constants/adminRoles');
+
+const analyticsEditor = requireTierOrAdminRoles(['admin', 'editor'], AR_ANALYTICS);
+const analyticsAdmin = requireTierOrAdminRoles(['admin'], AR_ANALYTICS);
 
 const User = require('../models/User');
 const Analytics = require('../models/Analytics');
@@ -45,7 +49,7 @@ router.post('/track', optionalAuth, async (req, res, next) => {
 });
 
 // GET /api/analytics/dashboard — Enhanced aggregate analytics data
-router.get('/dashboard', auth, requireRole('admin', 'editor'), async (req, res, next) => {
+router.get('/dashboard', auth, analyticsEditor, async (req, res, next) => {
   try {
     const days = parseInt(req.query.days) || 30;
     const stats = await getDashboardStats(days);
@@ -64,7 +68,7 @@ router.get('/dashboard', auth, requireRole('admin', 'editor'), async (req, res, 
 });
 
 // GET /api/analytics/content-gaps — Content gap analysis
-router.get('/content-gaps', auth, requireRole('admin', 'editor'), async (req, res, next) => {
+router.get('/content-gaps', auth, analyticsEditor, async (req, res, next) => {
   try {
     const days = parseInt(req.query.days) || 30;
     const gaps = await getContentGaps(days);
@@ -75,7 +79,7 @@ router.get('/content-gaps', auth, requireRole('admin', 'editor'), async (req, re
 });
 
 // GET /api/analytics/export — Export analytics data
-router.get('/export', auth, requireRole('admin'), async (req, res, next) => {
+router.get('/export', auth, analyticsAdmin, async (req, res, next) => {
   try {
     const { type, days } = req.query;
     const data = await exportAnalytics(type, parseInt(days) || 30);
@@ -92,7 +96,7 @@ router.get('/export', auth, requireRole('admin'), async (req, res, next) => {
 });
 
 // POST /api/analytics/v2/documents/views-top — Top documents by view count
-router.post('/v2/documents/views-top', auth, requireRole('admin', 'editor', 'superadmin'), async (req, res, next) => {
+router.post('/v2/documents/views-top', auth, analyticsEditor, async (req, res, next) => {
   try {
     const { startDate, endDate, paging, filters } = req.body;
     const page = paging?.page || 1;
@@ -204,7 +208,7 @@ router.post('/v2/documents/views-top', auth, requireRole('admin', 'editor', 'sup
 });
 
 // POST /api/analytics/v2/documents/:id/topics/views-heatmap
-router.post('/v2/documents/:id/topics/views-heatmap', auth, requireRole('admin', 'editor', 'superadmin'), async (req, res, next) => {
+router.post('/v2/documents/:id/topics/views-heatmap', auth, analyticsEditor, async (req, res, next) => {
   try {
     const { id } = req.params;
     const { startDate, endDate } = req.body;
@@ -277,7 +281,7 @@ router.post('/v2/documents/:id/topics/views-heatmap', auth, requireRole('admin',
 });
 
 // POST /api/analytics/v2/topics/views-top — Top topics by view count
-router.post('/v2/topics/views-top', auth, requireRole('admin', 'editor', 'superadmin'), async (req, res, next) => {
+router.post('/v2/topics/views-top', auth, analyticsEditor, async (req, res, next) => {
   try {
     const { startDate, endDate, paging, filters } = req.body;
     const page = paging?.page || 1;
@@ -375,7 +379,7 @@ router.post('/v2/topics/views-top', auth, requireRole('admin', 'editor', 'supera
 });
 
 // POST /api/analytics/v1/khub/time-report — Content inventory over time
-router.post('/v1/khub/time-report', auth, requireRole('admin', 'editor', 'superadmin'), async (req, res, next) => {
+router.post('/v1/khub/time-report', auth, analyticsEditor, async (req, res, next) => {
   try {
     const { startDate, endDate, groupByPeriod, filters } = req.body;
     
@@ -478,7 +482,7 @@ router.post('/v1/khub/time-report', auth, requireRole('admin', 'editor', 'supera
  * POST /api/analytics/v1/topics/ratings
  * Responds with information about the most rated topics.
  */
-router.post('/v1/topics/ratings', auth, requireRole('admin', 'editor', 'superadmin'), async (req, res) => {
+router.post('/v1/topics/ratings', auth, analyticsEditor, async (req, res) => {
   try {
     const { startDate, endDate, filters, paging, ratingType, sortOrder } = req.body;
     const page = paging?.page || 1;
@@ -631,7 +635,7 @@ router.post('/v1/topics/ratings', auth, requireRole('admin', 'editor', 'superadm
 router.post(
   '/v1/traffic/user-activity',
   auth,
-  requireRole('admin', 'editor'),
+  analyticsEditor,
   async (req, res) => {
     try {
       const { startDate, endDate, groupByPeriod = 'month' } = req.body;
@@ -754,7 +758,7 @@ router.post(
 router.post(
   '/v1/users/assets/time-report',
   auth,
-  requireRole('admin', 'editor'),
+  analyticsEditor,
   async (req, res) => {
     try {
       const { startDate, endDate, groupByPeriod = 'month', filters } = req.body;
@@ -901,7 +905,7 @@ function sourceCategory(fullType) {
 router.post(
   '/v2/traffic/sessions',
   auth,
-  requireRole('admin', 'editor'),
+  analyticsEditor,
   async (req, res) => {
     try {
       const { startDate, endDate, groupByPeriod = 'month' } = req.body;
@@ -959,7 +963,7 @@ router.post(
 router.post(
   '/v1/traffic/sources/evolution',
   auth,
-  requireRole('admin', 'editor'),
+  analyticsEditor,
   async (req, res) => {
     try {
       const { startDate, endDate, groupByPeriod = 'month', filters } = req.body;
@@ -1035,7 +1039,7 @@ router.post(
 router.post(
   '/v1/traffic/sources/destination',
   auth,
-  requireRole('admin', 'editor'),
+  analyticsEditor,
   async (req, res) => {
     try {
       const { startDate, endDate, filters } = req.body;
@@ -1092,7 +1096,7 @@ router.post(
 router.post(
   '/v1/traffic/sources/detail',
   auth,
-  requireRole('admin', 'editor'),
+  analyticsEditor,
   async (req, res) => {
     try {
       const { startDate, endDate, filters } = req.body;

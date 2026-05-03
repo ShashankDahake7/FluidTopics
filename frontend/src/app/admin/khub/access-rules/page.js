@@ -32,7 +32,6 @@ export default function AccessRulesPage() {
 
   const [search,        setSearch]        = useState('');
   const [filterMeta,    setFilterMeta]    = useState('');
-  const [filterValue,   setFilterValue]   = useState('');
   const [filterGroup,   setFilterGroup]   = useState('');
 
   const [topicDrawer,   setTopicDrawer]   = useState(false);
@@ -40,6 +39,7 @@ export default function AccessRulesPage() {
   const [editing,       setEditing]       = useState(null); // 'new' | rule object
   const [confirmApply,  setConfirmApply]  = useState(false);
   const [confirmActivate, setConfirmActivate] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(null);
   const [docPopover,    setDocPopover]    = useState(false);
   const [error,         setError]         = useState('');
   const [busy,          setBusy]          = useState(false);
@@ -64,7 +64,10 @@ export default function AccessRulesPage() {
     }
   }, []);
 
-  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => {
+    const id = window.setTimeout(() => refresh(), 0);
+    return () => window.clearTimeout(id);
+  }, [refresh]);
 
   const loadValuesFor = useCallback(async (key) => {
     if (!key || valueCache[key]) return;
@@ -74,24 +77,9 @@ export default function AccessRulesPage() {
     } catch { /* ignore */ }
   }, [valueCache]);
 
-  // ── Filter values options derived from cache (fallback: empty) ─────────
-  const filterValueOptions = useMemo(() => {
-    if (!filterMeta) {
-      const all = new Set();
-      Object.values(valueCache).forEach((vs) => vs?.forEach((v) => all.add(v)));
-      return Array.from(all).sort();
-    }
-    return valueCache[filterMeta] || [];
-  }, [filterMeta, valueCache]);
-
-  useEffect(() => {
-    if (filterMeta) loadValuesFor(filterMeta);
-  }, [filterMeta, loadValuesFor]);
-
   const visibleRules = useMemo(() => {
     const q = search.trim().toLowerCase();
     return rules
-      .filter((r) => r.status !== 'Deleted')
       .filter((r) => {
         if (q) {
           const haystack = [
@@ -102,12 +90,11 @@ export default function AccessRulesPage() {
           ].join(' ').toLowerCase();
           if (!haystack.includes(q)) return false;
         }
-        if (filterMeta  && !r.requirements?.some((x) => x.key === filterMeta))         return false;
-        if (filterValue && !r.requirements?.some((x) => x.values.includes(filterValue))) return false;
-        if (filterGroup && !(r.groups || []).some((g) => g.name === filterGroup))      return false;
+        if (filterMeta  && !r.requirements?.some((x) => x.key === filterMeta))    return false;
+        if (filterGroup && !(r.groups || []).some((g) => g.name === filterGroup)) return false;
         return true;
       });
-  }, [rules, search, filterMeta, filterValue, filterGroup]);
+  }, [rules, search, filterMeta, filterGroup]);
 
   const isLegacy = config?.mode === 'legacy';
   const dirty    = useMemo(() => rules.some((r) =>
@@ -266,8 +253,7 @@ export default function AccessRulesPage() {
               style={S.searchInput}
             />
           </div>
-          <Combo label="Filter by metadata" value={filterMeta}  options={metadataKeys} onChange={(v) => { setFilterMeta(v); setFilterValue(''); }} />
-          <Combo label="Filter by values"   value={filterValue} options={filterValueOptions} onChange={setFilterValue} />
+          <Combo label="Filter by metadata" value={filterMeta}  options={metadataKeys} onChange={setFilterMeta} />
           <Combo label="Filter by groups"   value={filterGroup} options={groups.map((g) => g.name)} onChange={setFilterGroup} />
         </div>
 
@@ -410,7 +396,7 @@ export default function AccessRulesPage() {
             groups={groups}
             allowTopicLevel={!!config?.topicLevelEnabled}
             onSave={onSaveRule}
-            onDelete={onDeleteRule}
+            onDelete={(id) => setConfirmDelete(editing === 'new' ? null : editing)}
             onDiscard={() => setEditing(null)}
             busy={busy}
           />
@@ -424,6 +410,20 @@ export default function AccessRulesPage() {
         confirmLabel="Apply and reprocess"
         onCancel={() => setConfirmApply(false)}
         onConfirm={onApply}
+        busy={busy}
+      />
+
+      <ConfirmModal
+        open={!!confirmDelete}
+        title="Delete this access rule?"
+        body={<>The rule will be marked as <strong>Deleted</strong> and removed permanently the next time you apply and reprocess.</>}
+        confirmLabel="Delete rule"
+        onCancel={() => setConfirmDelete(null)}
+        onConfirm={async () => {
+          const id = confirmDelete?.id;
+          setConfirmDelete(null);
+          if (id) await onDeleteRule(id);
+        }}
         busy={busy}
       />
 

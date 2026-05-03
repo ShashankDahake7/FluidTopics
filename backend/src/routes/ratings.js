@@ -5,15 +5,27 @@ const { auth, optionalAuth } = require('../middleware/auth');
 
 const router = express.Router();
 
+// Effective feature ids for signed-in users (union matches feedback / search helpers).
+function effectiveFeaturePermissionSet(user) {
+  if (!user) return new Set();
+  const out = new Set();
+  for (const arr of [
+    user.permissions,
+    user.permissionsManual,
+    user.permissionsAuto,
+    user.permissionsDefault,
+  ]) {
+    if (Array.isArray(arr)) arr.forEach((id) => out.add(id));
+  }
+  return out;
+}
+
 // Feature gate per the BRD: "Rating is only available to users who have the
-// RATING_USER role." Reads remain anonymous-friendly so non-rating viewers
-// still see the aggregate stars; only mutating endpoints are gated.
+// RATING_USER role." Tier roles do not imply this — same rule for everyone so
+// Manage Users "Roles" matches API behaviour.
 function requireRatingFeature(req, res, next) {
-  const perms = Array.isArray(req.user?.permissions) ? req.user.permissions : [];
-  if (perms.includes('RATING_USER')) return next();
-  // superadmin/admin tier always passes — they're inherently allowed to
-  // rate, e.g. when curating sample content.
-  if (req.user?.role === 'superadmin' || req.user?.role === 'admin') return next();
+  const perms = effectiveFeaturePermissionSet(req.user);
+  if (perms.has('RATING_USER')) return next();
   return res.status(403).json({ error: 'RATING_USER role required to rate content.' });
 }
 

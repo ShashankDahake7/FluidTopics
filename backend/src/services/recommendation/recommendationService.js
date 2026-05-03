@@ -21,7 +21,7 @@ const getRecommendations = async (topicId, limit = 5) => {
       { documentId: topic.documentId },
     ],
   })
-    .select('title slug metadata viewCount hierarchy.level')
+    .select('title slug metadata viewCount hierarchy documentId originId permalink')
     .limit(limit * 3)
     .lean();
 

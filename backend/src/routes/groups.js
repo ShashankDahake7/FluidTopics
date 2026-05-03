@@ -2,12 +2,13 @@ const express = require('express');
 const mongoose = require('mongoose');
 const Group = require('../models/Group');
 const User = require('../models/User');
-const { auth, requireRole } = require('../middleware/auth');
+const { auth, requireTierOrAdminRoles } = require('../middleware/auth');
+const { USERS: AR_USERS } = require('../constants/adminRoles');
 
 const router = express.Router();
 
-// All endpoints below require admin.
-router.use(auth, requireRole('admin'));
+// Same gate as /api/admin/users — superadmin or USERS_ADMIN only.
+router.use(auth, requireTierOrAdminRoles([], AR_USERS));
 
 // GET /api/groups — list all groups + member counts.
 router.get('/', async (req, res, next) => {
