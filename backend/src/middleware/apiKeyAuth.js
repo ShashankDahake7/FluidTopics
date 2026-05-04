@@ -10,6 +10,7 @@
  * IP restrictions are enforced when present.
  */
 const ApiKey = require('../models/ApiKey');
+const { clientIpFromReq } = require('../utils/clientIp');
 
 function ipMatches(clientIp, restrictions) {
   if (!restrictions || !restrictions.trim()) return true;
@@ -65,7 +66,7 @@ module.exports = async function apiKeyAuth(req, res, next) {
     if (!key) return next(); // Not an API key, let normal auth handle it
 
     // IP restriction check
-    const clientIp = req.ip || req.connection?.remoteAddress || '';
+    const clientIp = clientIpFromReq(req) || req.connection?.remoteAddress || '';
     if (!ipMatches(clientIp, key.ipRestrictions)) {
       return res.status(403).json({ error: 'Request from unauthorized IP address.' });
     }

@@ -3,6 +3,9 @@ const { search, suggest, semanticSearch } = require('../services/search/searchSe
 const { getSearchBoostParams } = require('../services/personalization/personalizationService');
 const { generateAnswer } = require('../services/ai/groqService');
 const { trackEvent } = require('../services/analytics/analyticsService');
+const { clientSessionIdFromReq } = require('../utils/clientSessionId');
+const { analyticsFromReq } = require('../utils/clientIp');
+const { isSuspiciousSearchQuery } = require('../utils/searchQuerySafety');
 const { optionalAuth } = require('../middleware/auth');
 const UnstructuredDocument = require('../models/UnstructuredDocument');
 const AccessRule = require('../models/AccessRule');
@@ -32,6 +35,16 @@ async function resolveSearchLanguage(req, explicit) {
   const User = require('../models/User');
   const u = await User.findById(req.user.id).select('preferences.language').lean();
   return u?.preferences?.language || null;
+}
+
+/** Stored on analytics events to distinguish "search in all languages" from implicit profile locale. */
+function normalizeSearchLanguageParam(language) {
+  if (language == null || language === '') return '';
+  const s = String(language).trim();
+  const lower = s.toLowerCase();
+  if (lower === 'all') return 'all';
+  if (s === '*' || lower === '*') return '*';
+  return s;
 }
 
 // GET /api/search — Full-text search with facets
@@ -120,19 +133,23 @@ router.get('/', optionalAuth, async (req, res, next) => {
       }
     }
 
-    // Track search event
-    trackEvent({
-      eventType: 'search',
-      userId: req.user?._id || null,
-      data: {
-        query: query || '',
-        resultCount: results.total,
-        responseTime,
-        filters,
-      },
-      userAgent: req.headers['user-agent'],
-      ip: req.ip,
-    }).catch((e) => console.warn('Analytics tracking error:', e.message));
+    // Track search event (suspicious / injection-like queries are not recorded — FT behavior)
+    if (!isSuspiciousSearchQuery(query || '')) {
+      trackEvent({
+        eventType: 'search',
+        userId: req.user?._id || null,
+        sessionId: clientSessionIdFromReq(req),
+        data: {
+          query: query || '',
+          resultCount: results.total,
+          responseTime,
+          filters,
+          searchLanguageParam: normalizeSearchLanguageParam(language),
+        },
+        userAgent: req.headers['user-agent'],
+        ...analyticsFromReq(req),
+      }).catch((e) => console.warn('Analytics tracking error:', e.message));
+    }
 
     res.json({
       ...results,

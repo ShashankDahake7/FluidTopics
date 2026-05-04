@@ -6,6 +6,7 @@ const {
   exportAnalytics,
 } = require('../services/analytics/analyticsService');
 const { auth, requireTierOrAdminRoles, optionalAuth } = require('../middleware/auth');
+const { analyticsFromReq } = require('../utils/clientIp');
 const { ANALYTICS: AR_ANALYTICS } = require('../constants/adminRoles');
 
 const analyticsEditor = requireTierOrAdminRoles(['admin', 'editor'], AR_ANALYTICS);
@@ -21,6 +22,8 @@ const Bookmark = require('../models/Bookmark');
 const PersonalBook = require('../models/PersonalBook');
 const SavedSearch = require('../models/SavedSearch');
 const Collection = require('../models/Collection');
+const { resolveSessionKeys } = require('../services/analytics/sessionConstants');
+const { clientSessionIdFromReq } = require('../utils/clientSessionId');
 
 const router = express.Router();
 
@@ -32,14 +35,17 @@ router.post('/track', optionalAuth, async (req, res, next) => {
     if (!eventType) {
       return res.status(400).json({ error: 'eventType is required' });
     }
+    if (eventType === 'event' && !(data && data.ftEvent)) {
+      return res.status(400).json({ error: 'data.ftEvent is required when eventType is "event"' });
+    }
 
     await trackEvent({
       eventType,
       userId: req.user?._id || null,
-      sessionId: sessionId || '',
+      sessionId: (sessionId && String(sessionId).trim()) || clientSessionIdFromReq(req),
       data: data || {},
       userAgent: req.headers['user-agent'],
-      ip: req.ip,
+      ...analyticsFromReq(req),
     });
 
     res.json({ message: 'Event tracked' });
@@ -95,113 +101,12 @@ router.get('/export', auth, analyticsAdmin, async (req, res, next) => {
   }
 });
 
-// POST /api/analytics/v2/documents/views-top — Top documents by view count
+// POST /api/analytics/v2/documents/views-top — Top documents by view count (Analytics, date range)
 router.post('/v2/documents/views-top', auth, analyticsEditor, async (req, res, next) => {
   try {
-    const { startDate, endDate, paging, filters } = req.body;
-    const page = paging?.page || 1;
-    const perPage = paging?.perPage || 10;
-    
-    const Document = require('../models/Document');
-    const UnstructuredDocument = require('../models/UnstructuredDocument');
-    const Analytics = require('../models/Analytics');
-    
-    let userDocCounts = null;
-    if (filters?.userId) {
-      const views = await Analytics.aggregate([
-        { $match: { eventType: 'view', userId: new (require('mongoose').Types.ObjectId)(filters.userId) } },
-        { $group: { _id: '$data.documentId', count: { $sum: 1 } } }
-      ]);
-      userDocCounts = {};
-      views.forEach(v => {
-        if (v._id) userDocCounts[v._id.toString()] = v.count;
-      });
-    }
-    
-    // We get all documents, sort by viewCount descending
-    const docs = await Document.find({}).sort({ viewCount: -1 }).select('_id title viewCount metadata createdAt originalFilename customFields');
-    const unstruct = await UnstructuredDocument.find({}).sort({ viewCount: -1 }).select('_id title viewCount metadata createdAt filename');
-    
-    let all = [
-      ...docs.map(d => {
-        let metaObj = {};
-        if (d.metadata && d.metadata.customFields) {
-          for (let [k, v] of d.metadata.customFields.entries()) {
-             metaObj[k] = v;
-          }
-        }
-        const docId = d._id.toString();
-        const displayCount = userDocCounts ? (userDocCounts[docId] || 0) : (d.viewCount || 0);
-        return {
-          id: docId,
-          title: d.title || d.originalFilename,
-          type: 'STRUCTURED_DOCUMENT',
-          displayCount,
-          link: `/dashboard/docs/${docId}`,
-          metadata: Object.entries(metaObj).map(([k, v]) => ({ key: k, label: k, values: [v] }))
-        };
-      }),
-      ...unstruct.map(u => {
-        const uId = u._id.toString();
-        const displayCount = userDocCounts ? (userDocCounts[uId] || 0) : (u.viewCount || 0);
-        return {
-          id: uId,
-          title: u.title || u.filename,
-          type: 'UNSTRUCTURED_DOCUMENT',
-          displayCount,
-          link: `/dashboard/unstructured/${uId}`,
-          metadata: []
-        };
-      })
-    ];
-    
-    if (userDocCounts) {
-       all = all.filter(d => d.displayCount > 0);
-    }
-    
-    // Apply type filter if specified
-    if (filters && filters.type && filters.type.length > 0) {
-      const allowedTypes = [];
-      if (filters.type.includes('books')) allowedTypes.push('STRUCTURED_DOCUMENT');
-      if (filters.type.includes('unstructuredDocuments')) allowedTypes.push('UNSTRUCTURED_DOCUMENT');
-      
-      if (allowedTypes.length > 0) {
-        all = all.filter(d => allowedTypes.includes(d.type));
-      }
-    }
-    
-    // Apply metadata filtering if specified
-    if (filters && filters.metadata && filters.metadata.length > 0) {
-      all = all.filter(doc => {
-        // Doc must match all provided metadata filters (AND logic between keys, OR logic within values)
-        return filters.metadata.every(filter => {
-          const docMeta = doc.metadata.find(m => m.key === filter.key);
-          if (!docMeta) return false;
-          // Check if any of the filter values match the doc's metadata values
-          return filter.values.some(val => docMeta.values.includes(val));
-        });
-      });
-    }
-
-    // Sort combined by displayCount desc
-    all.sort((a, b) => b.displayCount - a.displayCount);
-    
-    const totalCount = all.length;
-    const startIdx = (page - 1) * perPage;
-    const results = all.slice(startIdx, startIdx + perPage);
-    
-    res.json({
-      startDate: startDate || new Date().toISOString(),
-      endDate: endDate || new Date().toISOString(),
-      totalDisplayCount: all.reduce((sum, d) => sum + d.displayCount, 0),
-      paging: {
-        page,
-        perPage,
-        totalCount,
-        lastPage: startIdx + perPage >= totalCount
-      },
-      results
-    });
+    const { getDocumentViewsTop } = require('../services/analytics/documentViewsService');
+    const payload = await getDocumentViewsTop(req.body || {});
+    res.json(payload);
   } catch (error) {
     next(error);
   }
@@ -211,168 +116,112 @@ router.post('/v2/documents/views-top', auth, analyticsEditor, async (req, res, n
 router.post('/v2/documents/:id/topics/views-heatmap', auth, analyticsEditor, async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { startDate, endDate } = req.body;
-    
+    const { startDate, endDate, userId } = req.body || {};
+    const {
+      getTopicViewCountsForDocument,
+      countDocumentViewsInRange,
+      parseStart,
+      parseEnd,
+    } = require('../services/analytics/documentViewsService');
+
     const Document = require('../models/Document');
-    const doc = await Document.findById(id).populate('topicIds', '_id title viewCount');
+    const Topic = require('../models/Topic');
+    const doc = await Document.findById(id).select('title metadata tocTree').lean();
     if (!doc) return res.status(404).json({ error: 'Document not found' });
-    
-    const results = (doc.topicIds || []).map(t => ({
-      id: t._id.toString(),
-      title: t.title,
-      displayCount: t.viewCount || 0,
-      children: []
-    }));
-    
-    // Map TOC hierarchy if it exists
-    if (doc.tocTree && Array.isArray(doc.tocTree)) {
-      // Create a map to quickly look up topic view counts
-      const topicViews = {};
-      results.forEach(r => { topicViews[r.id] = r.displayCount; });
-      
-      const buildHierarchy = (nodes) => {
-        return nodes.map(n => {
-           const idStr = n.topicId?.toString() || n.id;
-           return {
-             id: idStr,
-             title: n.title,
-             displayCount: topicViews[idStr] || 0,
-             children: n.children ? buildHierarchy(n.children) : []
-           };
-        });
-      };
-      
-      const hierarchalResults = buildHierarchy(doc.tocTree);
-      
-      res.json({
-        startDate: startDate || new Date().toISOString(),
-        endDate: endDate || new Date().toISOString(),
-        documentInformation: {
-          id: doc._id.toString(),
-          title: doc.title,
-          type: 'STRUCTURED_DOCUMENT',
-          displayCount: doc.viewCount || 0,
-          link: `/dashboard/docs/${doc._id}`,
-          metadata: []
-        },
-        results: hierarchalResults
-      });
-      return;
+
+    const [topicCounts, docPeriodViews] = await Promise.all([
+      getTopicViewCountsForDocument(id, { startDate, endDate, userId }),
+      countDocumentViewsInRange(id, { startDate, endDate, userId }),
+    ]);
+
+    function metaEntries(meta) {
+      const metaObj = {};
+      const cf = meta?.customFields;
+      if (cf instanceof Map) {
+        for (const [k, v] of cf.entries()) metaObj[k] = v;
+      } else if (cf && typeof cf === 'object') {
+        Object.assign(metaObj, cf);
+      }
+      return Object.entries(metaObj).map(([key, v]) => ({
+        key,
+        label: key.includes(':') ? key.slice(key.lastIndexOf(':') + 1) : key,
+        values: [String(v ?? '')],
+      }));
     }
 
-    results.sort((a, b) => b.displayCount - a.displayCount);
-    
+    const documentInformation = {
+      id: doc._id.toString(),
+      title: doc.title,
+      type: 'STRUCTURED_DOCUMENT',
+      displayCount: docPeriodViews,
+      link: `/dashboard/docs/${doc._id}`,
+      metadata: metaEntries(doc.metadata || {}),
+    };
+
+    const buildHierarchy = (nodes) => {
+      if (!nodes?.length) return [];
+      return nodes.map((n) => {
+        const idStr = String(n.topicId || n.id || '');
+        return {
+          id: idStr,
+          title: n.title,
+          displayCount: idStr ? topicCounts[idStr] || 0 : 0,
+          children: n.children ? buildHierarchy(n.children) : [],
+        };
+      });
+    };
+
+    let results = [];
+    if (doc.tocTree && Array.isArray(doc.tocTree) && doc.tocTree.length) {
+      results = buildHierarchy(doc.tocTree);
+    } else {
+      const topics = await Topic.find({ documentId: id }).select('_id title').lean();
+      results = topics
+        .map((t) => ({
+          id: String(t._id),
+          title: t.title,
+          displayCount: topicCounts[String(t._id)] || 0,
+          children: [],
+        }))
+        .sort((a, b) => b.displayCount - a.displayCount);
+    }
+
+    const since = parseStart(startDate);
+    const until = parseEnd(endDate);
+
     res.json({
-      startDate: startDate || new Date().toISOString(),
-      endDate: endDate || new Date().toISOString(),
-      documentInformation: {
-        id: doc._id.toString(),
-        title: doc.title,
-        type: 'STRUCTURED_DOCUMENT',
-        displayCount: doc.viewCount || 0,
-        link: `/dashboard/docs/${doc._id}`,
-        metadata: []
-      },
-      results
+      startDate: since.toISOString(),
+      endDate: until.toISOString(),
+      documentInformation,
+      results,
     });
   } catch (error) {
     next(error);
   }
 });
 
-// POST /api/analytics/v2/topics/views-top — Top topics by view count
+// POST /api/analytics/v2/topics/views-top — Top topics by view count (Analytics, date range)
 router.post('/v2/topics/views-top', auth, analyticsEditor, async (req, res, next) => {
   try {
-    const { startDate, endDate, paging, filters } = req.body;
-    const page = paging?.page || 1;
-    const perPage = paging?.perPage || 10;
-    
-    const Topic = require('../models/Topic');
-    const Analytics = require('../models/Analytics');
+    const { getTopicViewsTop } = require('../services/analytics/topicViewsService');
+    const payload = await getTopicViewsTop(req.body || {});
+    res.json(payload);
+  } catch (error) {
+    next(error);
+  }
+});
 
-    let userTopicCounts = null;
-    if (filters?.userId) {
-      const views = await Analytics.aggregate([
-        { $match: { eventType: 'view', userId: new (require('mongoose').Types.ObjectId)(filters.userId) } },
-        { $group: { _id: '$data.topicId', count: { $sum: 1 } } }
-      ]);
-      userTopicCounts = {};
-      views.forEach(v => {
-        if (v._id) userTopicCounts[v._id.toString()] = v.count;
-      });
-    }
-    
-    let topicsQuery = Topic.find({}).populate('documentId', 'title metadata originalFilename');
-    const topics = await topicsQuery.lean();
-    
-    let results = topics.map(t => {
-      let metaObj = {};
-      const doc = t.documentId || {};
-      if (doc.metadata && doc.metadata.customFields) {
-         // Because we used .lean(), customFields is a plain object or map-like structure
-         if (doc.metadata.customFields instanceof Map) {
-           for (let [k, v] of doc.metadata.customFields.entries()) {
-             metaObj[k] = v;
-           }
-         } else {
-           metaObj = { ...doc.metadata.customFields };
-         }
-      }
-      const tId = t._id.toString();
-      const views = userTopicCounts ? (userTopicCounts[tId] || 0) : (t.viewCount || 0);
-      return {
-        id: tId,
-        topicTitle: t.title || 'Untitled Topic',
-        views,
-        documentTitle: doc.title || doc.originalFilename || 'Unknown Document',
-        documentType: 'BOOK_PLAIN',
-        documentId: doc._id?.toString(),
-        metadata: metaObj
-      };
-    });
-
-    if (userTopicCounts) {
-      results = results.filter(t => t.views > 0);
-    }
-
-    if (filters && filters.type && filters.type.length > 0) {
-      const allowedTypes = [];
-      if (filters.type.includes('books')) allowedTypes.push('BOOK_PLAIN');
-      if (filters.type.includes('unstructuredDocuments')) allowedTypes.push('UNSTRUCTURED_DOCUMENT');
-      
-      if (allowedTypes.length > 0) {
-        results = results.filter(t => allowedTypes.includes(t.documentType));
-      }
-    }
-
-    if (filters && filters.metadata && filters.metadata.length > 0) {
-      results = results.filter(t => {
-        return filters.metadata.every(filter => {
-           const val = t.metadata[filter.key];
-           if (!val) return false;
-           return filter.values.includes(val);
-        });
-      });
-    }
-
-    results.sort((a, b) => b.views - a.views);
-
-    const totalCount = results.length;
-    const startIdx = (page - 1) * perPage;
-    const paginatedResults = results.slice(startIdx, startIdx + perPage);
-      
-    res.json({
-      startDate: startDate || new Date().toISOString(),
-      endDate: endDate || new Date().toISOString(),
-      totalDisplayCount: results.reduce((sum, t) => sum + t.views, 0),
-      paging: {
-        page,
-        perPage,
-        totalCount,
-        lastPage: startIdx + perPage >= totalCount
-      },
-      results: paginatedResults
-    });
+// POST /api/analytics/v1/khub/document-engagement — scatter + filters (retention window)
+router.post('/v1/khub/document-engagement', auth, analyticsEditor, async (req, res, next) => {
+  try {
+    const { retentionDays } = req.body || {};
+    const days = Math.min(
+      3650,
+      Math.max(1, parseInt(retentionDays, 10) || 730),
+    );
+    const { getDocumentEngagement } = require('../services/analytics/documentEngagementService');
+    const payload = await getDocumentEngagement({ retentionDays: days });
+    res.json(payload);
   } catch (error) {
     next(error);
   }
@@ -489,13 +338,16 @@ router.post('/v1/topics/ratings', auth, analyticsEditor, async (req, res) => {
     const perPage = paging?.perPage || 10;
     const start = new Date(startDate);
     const end = new Date(endDate);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+      return res.status(400).json({ error: 'Invalid startDate or endDate' });
+    }
 
-    // Aggregate ratings grouped by topicId
+    // Aggregate ratings grouped by topicId (inclusive end; align with reader /feedback sync)
     const aggregation = [
       { 
         $match: { 
           topicId: { $ne: null },
-          createdAt: { $gte: start, $lt: end }
+          createdAt: { $gte: start, $lte: end }
         } 
       },
       {
@@ -626,6 +478,156 @@ router.post('/v1/topics/ratings', auth, analyticsEditor, async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+/**
+ * @route   POST /api/analytics/v1/traffic/events/time-series
+ * @desc    Traffic → Events chart (Fluid Topics-style keys; Analytics + ratings + assets)
+ * @access  Private (Admin/Analytics roles)
+ */
+router.post(
+  '/v1/traffic/events/time-series',
+  auth,
+  analyticsEditor,
+  async (req, res, next) => {
+    try {
+      const { startDate, endDate, groupByPeriod = 'month' } = req.body || {};
+      if (!startDate || !endDate) {
+        return res.status(400).json({ error: 'startDate and endDate are required' });
+      }
+      const { getEventsTimeSeries } = require('../services/analytics/eventsTimeSeriesService');
+      const payload = await getEventsTimeSeries({ startDate, endDate, groupByPeriod });
+      res.json(payload);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * @route   POST /api/analytics/v2/traffic/page-views
+ * @desc    Time series of page views (`page.display` + data.path) for Traffic → Page views
+ * @access  Private (Admin/Analytics roles)
+ */
+router.post(
+  '/v2/traffic/page-views',
+  auth,
+  analyticsEditor,
+  async (req, res, next) => {
+    try {
+      const { getPageViewsTimeSeries } = require('../services/analytics/pageViewsTimeSeriesService');
+      const payload = await getPageViewsTimeSeries(req.body || {});
+      res.json(payload);
+    } catch (err) {
+      if (err.status === 400) return res.status(400).json({ error: err.message });
+      next(err);
+    }
+  }
+);
+
+/**
+ * @route   POST /api/analytics/v2/traffic/countries
+ * @desc    Traffic share by country (ISO from IP at ingest; geoip-lite)
+ * @access  Private (Admin/Analytics roles)
+ */
+router.post(
+  '/v2/traffic/countries',
+  auth,
+  analyticsEditor,
+  async (req, res, next) => {
+    try {
+      const { getCountriesTraffic } = require('../services/analytics/countriesTrafficService');
+      const payload = await getCountriesTraffic(req.body || {});
+      res.json(payload);
+    } catch (err) {
+      if (err.status === 400) return res.status(400).json({ error: err.message });
+      next(err);
+    }
+  }
+);
+
+/**
+ * @route   POST /api/analytics/v2/traffic/browsers
+ * @desc    Traffic share by browser family (User-Agent), static assets excluded
+ * @access  Private (Admin/Analytics roles)
+ */
+router.post(
+  '/v2/traffic/browsers',
+  auth,
+  analyticsEditor,
+  async (req, res, next) => {
+    try {
+      const { getBrowsersTraffic } = require('../services/analytics/browsersTrafficService');
+      const payload = await getBrowsersTraffic(req.body || {});
+      res.json(payload);
+    } catch (err) {
+      if (err.status === 400) return res.status(400).json({ error: err.message });
+      next(err);
+    }
+  }
+);
+
+/**
+ * @route   POST /api/analytics/v2/traffic/device-types
+ * @desc    Sessions by device (viewport from page.display), evolution + distribution
+ * @access  Private (Admin/Analytics roles)
+ */
+router.post(
+  '/v2/traffic/device-types',
+  auth,
+  analyticsEditor,
+  async (req, res, next) => {
+    try {
+      const { getDeviceTypesAnalytics } = require('../services/analytics/deviceTypesAnalyticsService');
+      const payload = await getDeviceTypesAnalytics(req.body || {});
+      res.json(payload);
+    } catch (err) {
+      if (err.status === 400) return res.status(400).json({ error: err.message });
+      next(err);
+    }
+  }
+);
+
+/**
+ * @route   POST /api/analytics/v2/search/terms
+ * @desc    Search term popularity (portal search only), paginated
+ * @access  Private (Admin/Analytics roles)
+ */
+router.post(
+  '/v2/search/terms',
+  auth,
+  analyticsEditor,
+  async (req, res, next) => {
+    try {
+      const { getSearchTermsAnalytics } = require('../services/analytics/searchTermsAnalyticsService');
+      const payload = await getSearchTermsAnalytics(req.body || {});
+      res.json(payload);
+    } catch (err) {
+      if (err.status === 400) return res.status(400).json({ error: err.message });
+      next(err);
+    }
+  }
+);
+
+/**
+ * @route   POST /api/analytics/v2/search/no-results
+ * @desc    Zero-hit portal searches (terms + facets), paginated
+ * @access  Private (Admin/Analytics roles)
+ */
+router.post(
+  '/v2/search/no-results',
+  auth,
+  analyticsEditor,
+  async (req, res, next) => {
+    try {
+      const { getSearchNoResultsAnalytics } = require('../services/analytics/searchNoResultsAnalyticsService');
+      const payload = await getSearchNoResultsAnalytics(req.body || {});
+      res.json(payload);
+    } catch (err) {
+      if (err.status === 400) return res.status(400).json({ error: err.message });
+      next(err);
+    }
+  }
+);
 
 /**
  * @route   POST /api/analytics/v1/traffic/user-activity
@@ -898,6 +900,27 @@ function sourceCategory(fullType) {
 }
 
 /**
+ * @route   POST /api/analytics/v2/traffic/session-list
+ * @desc    Paginated session rows with search/view metrics (Analytics-derived)
+ * @access  Private (Admin/Analytics roles)
+ */
+router.post(
+  '/v2/traffic/session-list',
+  auth,
+  analyticsEditor,
+  async (req, res, next) => {
+    try {
+      const { getSessionList } = require('../services/analytics/sessionListService');
+      const payload = await getSessionList(req.body || {});
+      res.json(payload);
+    } catch (err) {
+      if (err.status === 400) return res.status(400).json({ error: err.message });
+      next(err);
+    }
+  }
+);
+
+/**
  * @route   POST /api/analytics/v2/traffic/sessions
  * @desc    Number of user sessions logged during a selected period
  * @access  Private (Admin/Analytics roles)
@@ -920,18 +943,22 @@ router.post(
       // Fetch all events in the range in one query
       const events = await Analytics.find({
         timestamp: { $gte: start, $lt: end }
-      }).select('sessionId timestamp').lean();
+      })
+        .select('sessionId timestamp userId ip')
+        .lean();
 
       const periodTimes = periods.map(p => ({
         s: new Date(p.periodStartDate).getTime(),
         e: new Date(p.periodEndDate).getTime()
       }));
 
-      // Count distinct sessionIds per period
+      const sessionKeyByEvent = resolveSessionKeys(events);
+
+      // Count distinct session keys per period (real sessionId or synthetic inactivity-based)
       const sessionSets = periods.map(() => new Set());
 
       for (const ev of events) {
-        const sid = ev.sessionId || ev._id.toString(); // fallback to _id if no sessionId
+        const sid = sessionKeyByEvent.get(String(ev._id)) || String(ev._id);
         const t = new Date(ev.timestamp).getTime();
         for (let i = 0; i < periodTimes.length; i++) {
           if (t >= periodTimes[i].s && t < periodTimes[i].e) {

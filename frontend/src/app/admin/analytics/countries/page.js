@@ -1,226 +1,51 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ComposableMap, Geographies, Geography } from 'react-simple-maps';
 import AnalyticsShell from '@/components/admin/AnalyticsShell';
+import api from '@/lib/api';
+import { isoToFlagEmoji } from '@/data/countryCentroids';
 
-/* ------------------------------ Country data ------------------------------ */
+/** Natural Earth–based TopoJSON (via world-atlas), loaded client-side. */
+const GEO_URL = 'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json';
 
-/* Each row in the Angular blueprint's bar chart, in descending share order.
- * `share` is the numeric percentage value used both to draw the bar width and
- * to size the world-map bubble. `display` mirrors the rounded label that the
- * blueprint shows beside each bar (anything below 0.01% becomes "<0.01%").
- * Latitude / longitude are approximate centroids used for the world-map
- * bubbles; rows without coordinates (e.g. "Unknown") simply don't get a
- * bubble plotted. */
-const COUNTRIES = [
-  { name: 'India',                flag: '🇮🇳', share: 72.39, lat: 21,    lng: 78 },
-  { name: 'Indonesia',            flag: '🇮🇩', share: 5.96,  lat: -2,    lng: 118 },
-  { name: 'USA',                  flag: '🇺🇸', share: 5.41,  lat: 39,    lng: -97 },
-  { name: 'Singapore',            flag: '🇸🇬', share: 5.40,  lat: 1.3,   lng: 103.8 },
-  { name: 'Philippines',          flag: '🇵🇭', share: 4.21,  lat: 12,    lng: 122 },
-  { name: 'France',               flag: '🇫🇷', share: 2.23,  lat: 46,    lng: 2 },
-  { name: 'United Arab Emirates', flag: '🇦🇪', share: 0.87,  lat: 24,    lng: 54 },
-  { name: 'Malaysia',             flag: '🇲🇾', share: 0.85,  lat: 4,     lng: 102 },
-  { name: 'Thailand',             flag: '🇹🇭', share: 0.69,  lat: 15,    lng: 100 },
-  { name: 'United Kingdom',       flag: '🇬🇧', share: 0.27,  lat: 54,    lng: -2 },
-  { name: 'Germany',              flag: '🇩🇪', share: 0.18,  lat: 51,    lng: 10 },
-  { name: 'Australia',            flag: '🇦🇺', share: 0.16,  lat: -25,   lng: 134 },
-  { name: 'Japan',                flag: '🇯🇵', share: 0.14,  lat: 36,    lng: 138 },
-  { name: 'Ireland',              flag: '🇮🇪', share: 0.13,  lat: 53,    lng: -8 },
-  { name: 'Sri Lanka',            flag: '🇱🇰', share: 0.13,  lat: 7,     lng: 81 },
-  { name: 'Hong Kong',            flag: '🇭🇰', share: 0.09,  lat: 22,    lng: 114 },
-  { name: 'Canada',               flag: '🇨🇦', share: 0.08,  lat: 60,    lng: -110 },
-  { name: 'China',                flag: '🇨🇳', share: 0.07,  lat: 35,    lng: 105 },
-  { name: 'Nigeria',              flag: '🇳🇬', share: 0.07,  lat: 9,     lng: 8 },
-  { name: 'Unknown',              flag: '',    share: 0.07 },
-  { name: 'Netherlands',          flag: '🇳🇱', share: 0.05,  lat: 52,    lng: 5 },
-  { name: 'Vietnam',              flag: '🇻🇳', share: 0.05,  lat: 16,    lng: 107 },
-  { name: 'Poland',               flag: '🇵🇱', share: 0.05,  lat: 52,    lng: 19 },
-  { name: 'Egypt',                flag: '🇪🇬', share: 0.03,  lat: 27,    lng: 30 },
-  { name: 'South Korea',          flag: '🇰🇷', share: 0.03,  lat: 37,    lng: 128 },
-  { name: 'Spain',                flag: '🇪🇸', share: 0.03,  lat: 40,    lng: -4 },
-  { name: 'Switzerland',          flag: '🇨🇭', share: 0.03,  lat: 47,    lng: 8 },
-  { name: 'Brazil',               flag: '🇧🇷', share: 0.03,  lat: -10,   lng: -55 },
-  { name: 'Romania',              flag: '🇷🇴', share: 0.03,  lat: 46,    lng: 25 },
-  { name: 'Mexico',               flag: '🇲🇽', share: 0.03,  lat: 23,    lng: -102 },
-  { name: 'Costa Rica',           flag: '🇨🇷', share: 0.03,  lat: 10,    lng: -84 },
-  { name: 'Israel',               flag: '🇮🇱', share: 0.02,  lat: 31,    lng: 35 },
-  { name: 'Italy',                flag: '🇮🇹', share: 0.02,  lat: 42,    lng: 12 },
-  { name: 'Czechia',              flag: '🇨🇿', share: 0.02,  lat: 50,    lng: 15 },
-  { name: 'Andorra',              flag: '🇦🇩', share: 0.02,  lat: 42.5,  lng: 1.5 },
-  { name: 'Saudi Arabia',         flag: '🇸🇦', share: 0.02,  lat: 24,    lng: 45 },
-  { name: 'South Africa',         flag: '🇿🇦', share: 0.01,  lat: -29,   lng: 25 },
-  { name: 'Belgium',              flag: '🇧🇪', share: 0.01,  lat: 50.5,  lng: 4 },
-  { name: 'Sweden',               flag: '🇸🇪', share: 0.01,  lat: 60,    lng: 18 },
-  { name: 'Kenya',                flag: '🇰🇪', share: 0.01,  lat: 1,     lng: 38 },
-  { name: 'Hungary',              flag: '🇭🇺', share: 0.01,  lat: 47,    lng: 19 },
-  { name: 'Finland',              flag: '🇫🇮', share: 0.01,  lat: 64,    lng: 26 },
-  { name: 'Bangladesh',           flag: '🇧🇩', share: 0.005, lat: 24,    lng: 90 },
-  { name: 'Bahrain',              flag: '🇧🇭', share: 0.005, lat: 26,    lng: 50.5 },
-  { name: 'Norway',               flag: '🇳🇴', share: 0.005, lat: 62,    lng: 10 },
-  { name: 'Palestine',            flag: '🇵🇸', share: 0.005, lat: 32,    lng: 35.2 },
-  { name: 'Portugal',             flag: '🇵🇹', share: 0.005, lat: 39,    lng: -8 },
-  { name: 'Turkey',               flag: '🇹🇷', share: 0.005, lat: 39,    lng: 35 },
-  { name: 'Serbia',               flag: '🇷🇸', share: 0.005, lat: 44,    lng: 21 },
-  { name: 'Colombia',             flag: '🇨🇴', share: 0.005, lat: 4,     lng: -74 },
-  { name: 'Guyana',               flag: '🇬🇾', share: 0.005, lat: 5,     lng: -58 },
-  { name: 'Bulgaria',             flag: '🇧🇬', share: 0.005, lat: 43,    lng: 25 },
-  { name: 'Jordan',               flag: '🇯🇴', share: 0.005, lat: 31,    lng: 36 },
-  { name: 'Malta',                flag: '🇲🇹', share: 0.005, lat: 36,    lng: 14 },
-  { name: 'Ukraine',              flag: '🇺🇦', share: 0.005, lat: 49,    lng: 32 },
-  { name: 'Belarus',              flag: '🇧🇾', share: 0.005, lat: 53,    lng: 28 },
-  { name: 'Austria',              flag: '🇦🇹', share: 0.005, lat: 47.5,  lng: 14 },
-  { name: 'Croatia',              flag: '🇭🇷', share: 0.005, lat: 45,    lng: 15.5 },
-  { name: 'Latvia',               flag: '🇱🇻', share: 0.005, lat: 57,    lng: 25 },
-  { name: 'Argentina',            flag: '🇦🇷', share: 0.005, lat: -38,   lng: -64 },
-  { name: 'Taiwan',               flag: '🇹🇼', share: 0.005, lat: 24,    lng: 121 },
-  { name: 'Morocco',              flag: '🇲🇦', share: 0.005, lat: 32,    lng: -6 },
-  { name: 'Iceland',              flag: '🇮🇸', share: 0.005, lat: 65,    lng: -19 },
-  { name: 'Greece',               flag: '🇬🇷', share: 0.005, lat: 39,    lng: 22 },
-  { name: 'Chile',                flag: '🇨🇱', share: 0.005, lat: -33,   lng: -71 },
-  { name: 'Slovakia',             flag: '🇸🇰', share: 0.005, lat: 48.5,  lng: 19.5 },
-  { name: 'Cyprus',               flag: '🇨🇾', share: 0.005, lat: 35,    lng: 33 },
-  { name: 'New Zealand',          flag: '🇳🇿', share: 0.005, lat: -42,   lng: 174 },
-  { name: 'Estonia',              flag: '🇪🇪', share: 0.005, lat: 59,    lng: 26 },
-  { name: 'Russia',               flag: '🇷🇺', share: 0.005, lat: 60,    lng: 100 },
-  { name: 'Pakistan',             flag: '🇵🇰', share: 0.005, lat: 30,    lng: 70 },
-  { name: 'Lithuania',            flag: '🇱🇹', share: 0.005, lat: 55,    lng: 24 },
-  { name: 'Iraq',                 flag: '🇮🇶', share: 0.005, lat: 33,    lng: 44 },
-  { name: 'Albania',              flag: '🇦🇱', share: 0.005, lat: 41,    lng: 20 },
-  { name: 'Venezuela',            flag: '🇻🇪', share: 0.005, lat: 8,     lng: -66 },
-  { name: 'Uzbekistan',           flag: '🇺🇿', share: 0.005, lat: 41,    lng: 64 },
-  { name: 'Qatar',                flag: '🇶🇦', share: 0.005, lat: 25,    lng: 51 },
-  { name: 'Denmark',              flag: '🇩🇰', share: 0.005, lat: 56,    lng: 10 },
-  { name: "Côte d'Ivoire",        flag: '🇨🇮', share: 0.005, lat: 7.5,   lng: -5 },
-  { name: 'Bolivia',              flag: '🇧🇴', share: 0.005, lat: -17,   lng: -65 },
-  { name: 'Syria',                flag: '🇸🇾', share: 0.005, lat: 35,    lng: 38 },
-  { name: 'Senegal',              flag: '🇸🇳', share: 0.005, lat: 14,    lng: -14 },
-  { name: 'Myanmar',              flag: '🇲🇲', share: 0.005, lat: 22,    lng: 96 },
-  { name: 'Lebanon',              flag: '🇱🇧', share: 0.005, lat: 33.8,  lng: 35.8 },
-  { name: 'Honduras',             flag: '🇭🇳', share: 0.005, lat: 15,    lng: -86.5 },
-  { name: 'Dominica',             flag: '🇩🇲', share: 0.005, lat: 15.5,  lng: -61 },
-  { name: 'Azerbaijan',           flag: '🇦🇿', share: 0.005, lat: 40,    lng: 47.5 },
-];
-
-const TOTAL_SHARE = COUNTRIES.reduce((sum, c) => sum + c.share, 0);
-const MAX_SHARE = COUNTRIES[0].share;
+const MAP_WIDTH = 980;
+const MAP_HEIGHT = 480;
 
 const formatShare = (v) => (v < 0.01 ? '<0.01%' : `${v.toFixed(2)}%`);
 
-/* ------------------------------ World map ------------------------------ */
+/** Same rule for CSV export as for the list (countries under 0.01% shown as &lt;0.01%). */
+const formatShareCsv = formatShare;
 
-/* Simplified equirectangular world map. Each continent is described as a
- * very low-poly polygon in (lng, lat) pairs which we project into the SVG
- * coordinate system at render time. The shapes don't try to be cartographic
- * — they're just enough to read as a world map under the bubble overlay. */
+function isoFromGeoProperties(props) {
+  if (!props) return '';
+  const raw = props.ISO_A2 ?? props.WB_A2 ?? '';
+  const s = String(raw).trim().toUpperCase();
+  if (s.length !== 2 || s === '-99') return '';
+  return s;
+}
 
-const MAP_WIDTH = 880;
-const MAP_HEIGHT = 440;
+function hexLerp(t, from, to) {
+  const pa = parseInt(from.slice(1), 16);
+  const pb = parseInt(to.slice(1), 16);
+  const ra = (pa >> 16) & 255;
+  const ga = (pa >> 8) & 255;
+  const ba = pa & 255;
+  const rb = (pb >> 16) & 255;
+  const gb = (pb >> 8) & 255;
+  const bb = pb & 255;
+  const r = Math.round(ra + (rb - ra) * t);
+  const g = Math.round(ga + (gb - ga) * t);
+  const b = Math.round(ba + (bb - ba) * t);
+  return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
+}
 
-const projX = (lng) => ((lng + 180) / 360) * MAP_WIDTH;
-const projY = (lat) => ((90 - lat) / 180) * MAP_HEIGHT;
-
-const polyToPath = (pts) => {
-  const [first, ...rest] = pts;
-  const move = `M ${projX(first[0]).toFixed(1)},${projY(first[1]).toFixed(1)}`;
-  const lines = rest.map(([lng, lat]) => `L ${projX(lng).toFixed(1)},${projY(lat).toFixed(1)}`).join(' ');
-  return `${move} ${lines} Z`;
-};
-
-const CONTINENTS = [
-  /* North America (mainland) */
-  [
-    [-168, 65], [-140, 70], [-95, 80], [-70, 78], [-55, 60], [-65, 45],
-    [-80, 30], [-95, 17], [-105, 22], [-115, 32], [-125, 40], [-130, 55],
-    [-160, 64],
-  ],
-  /* Greenland (separate blob) */
-  [
-    [-55, 80], [-30, 80], [-22, 70], [-40, 60], [-55, 70],
-  ],
-  /* Central America link */
-  [
-    [-95, 17], [-77, 8], [-82, 13], [-100, 22],
-  ],
-  /* South America */
-  [
-    [-80, 12], [-60, 12], [-48, 0], [-35, -5], [-40, -25], [-55, -35],
-    [-68, -55], [-75, -45], [-78, -25], [-80, -10],
-  ],
-  /* Europe */
-  [
-    [-10, 60], [12, 70], [30, 70], [40, 56], [40, 45], [25, 38],
-    [10, 36], [-5, 38], [-10, 44], [-12, 52],
-  ],
-  /* Africa */
-  [
-    [-17, 32], [10, 36], [25, 32], [35, 22], [50, 12], [42, 0],
-    [38, -10], [30, -25], [20, -35], [10, -22], [-5, -10], [-15, 5],
-    [-17, 20],
-  ],
-  /* Middle East / Arabia */
-  [
-    [35, 42], [55, 38], [60, 25], [50, 12], [42, 14], [35, 24],
-  ],
-  /* Asia (large polygon — Russia/China/India shape) */
-  [
-    [40, 70], [80, 78], [140, 70], [160, 60], [150, 45], [125, 35],
-    [115, 22], [108, 8], [95, 5], [85, 18], [78, 30], [60, 30],
-    [50, 38], [40, 50],
-  ],
-  /* Indian subcontinent (extra bump) */
-  [
-    [70, 30], [88, 28], [88, 8], [76, 8], [72, 18],
-  ],
-  /* SE Asia / Indonesia archipelago (rough blob) */
-  [
-    [95, 8], [110, 5], [125, 0], [140, -2], [140, -10], [120, -10],
-    [105, -8], [95, 0],
-  ],
-  /* Philippines (small blob) */
-  [
-    [118, 18], [125, 18], [127, 5], [120, 5],
-  ],
-  /* Japan (small blob) */
-  [
-    [130, 42], [142, 45], [145, 35], [136, 32], [131, 36],
-  ],
-  /* Australia */
-  [
-    [115, -12], [130, -12], [145, -15], [153, -28], [148, -38],
-    [120, -35], [112, -25],
-  ],
-  /* New Zealand */
-  [
-    [170, -36], [178, -38], [177, -46], [170, -45],
-  ],
-  /* Antarctica strip */
-  [
-    [-180, -65], [180, -65], [180, -85], [-180, -85],
-  ],
-];
-
-const isHighlighted = (share) => share >= 0.05;
-
-/* The blueprint's choropleth uses a soft pink/purple palette where the
- * darkest cells correspond to the country with the largest share. We mimic
- * the same "intensity by share" feel for our bubble overlay. */
-const bubbleColor = (share) => {
-  if (share >= 5)  return '#7d1860';
-  if (share >= 1)  return '#9d207b';
-  if (share >= 0.1)  return '#b53d8e';
-  if (share >= 0.01) return '#d18ab8';
-  return '#e8c4d8';
-};
-
-/* Bubble radius scales sub-linearly with share so India isn't comically
- * large compared to the long tail. */
-const bubbleRadius = (share) => {
-  const min = 3.5;
-  const max = 26;
-  const norm = Math.min(1, Math.sqrt(share) / Math.sqrt(MAX_SHARE));
-  return min + (max - min) * norm;
-};
+/** Choropleth fill: higher share → deeper purple (matches list bars). */
+function fillForShare(share, maxShare) {
+  if (share == null || share <= 0 || maxShare <= 0) return '#ebe4e8';
+  const t = Math.min(1, share / maxShare);
+  return hexLerp(t, '#f5eef3', '#7d1860');
+}
 
 /* ------------------------------ Icons ------------------------------ */
 
@@ -265,6 +90,14 @@ const IconExpand = () => (
   </svg>
 );
 
+const IconGlobe = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="1.6" aria-hidden="true">
+    <circle cx="12" cy="12" r="10" />
+    <path d="M2 12h20M12 2a15 15 0 0 0 0 20 15 15 0 0 0 0-20" />
+    <path d="M4 8c3 1 5 1 8 1s5 0 8-1M4 16c3-1 5-1 8-1s5 0 8 1" />
+  </svg>
+);
+
 const IconExternal = () => (
   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <path d="M14 3h7v7" />
@@ -273,22 +106,173 @@ const IconExternal = () => (
   </svg>
 );
 
+/** Default = previous calendar month (Fluid Topics “last month”). */
+function defaultDateRange() {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(now.getFullYear(), now.getMonth(), 0);
+  end.setHours(23, 59, 59, 999);
+  return { start, end };
+}
+
+function toInputDate(d) {
+  const x = new Date(d);
+  const y = x.getFullYear();
+  const m = String(x.getMonth() + 1).padStart(2, '0');
+  const day = String(x.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function parseInputDate(s) {
+  const d = new Date(`${s}T12:00:00`);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function downloadCountriesCsv(rows, total) {
+  if (!rows?.length) return;
+  const lines = [['Country', 'ISO', 'Events', 'Share %'].join(',')];
+  for (const r of rows) {
+    lines.push(
+      [
+        JSON.stringify(r.name),
+        JSON.stringify(r.code === 'ZZ' ? '' : r.code),
+        r.count,
+        JSON.stringify(formatShareCsv(r.share)),
+      ].join(',')
+    );
+  }
+  lines.push(['Total events', '', total, '100'].join(','));
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'countries-traffic.csv';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
 /* ------------------------------ Page ------------------------------ */
 
 export default function CountriesPage() {
+  const def = useMemo(() => defaultDateRange(), []);
+  const [rangeStart, setRangeStart] = useState(() => toInputDate(def.start));
+  const [rangeEnd, setRangeEnd] = useState(() => toInputDate(def.end));
+  const [rows, setRows] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState(null);
+  const [mapExpanded, setMapExpanded] = useState(false);
+  const [methodology, setMethodology] = useState(null);
+
+  const startIso = useMemo(() => {
+    const d = parseInputDate(rangeStart);
+    if (!d) return null;
+    d.setHours(0, 0, 0, 0);
+    return d.toISOString();
+  }, [rangeStart]);
+
+  const endIso = useMemo(() => {
+    const d = parseInputDate(rangeEnd);
+    if (!d) return null;
+    d.setHours(23, 59, 59, 999);
+    return d.toISOString();
+  }, [rangeEnd]);
+
+  const fetchData = useCallback(async () => {
+    if (!startIso || !endIso) return;
+    setLoading(true);
+    setErrorMsg(null);
+    try {
+      const json = await api.post('/analytics/v2/traffic/countries', {
+        startDate: startIso,
+        endDate: endIso,
+      });
+      if (json?.countries) {
+        setRows(json.countries);
+        setTotal(typeof json.total === 'number' ? json.total : 0);
+        setMethodology(json.methodology ?? null);
+      } else if (json?.error) {
+        setErrorMsg(json.error);
+        setRows([]);
+        setTotal(0);
+        setMethodology(null);
+      } else {
+        setErrorMsg('Unexpected response');
+        setRows([]);
+        setTotal(0);
+        setMethodology(null);
+      }
+    } catch (e) {
+      console.error(e);
+      setErrorMsg(e.message);
+      setRows([]);
+      setTotal(0);
+      setMethodology(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [startIso, endIso]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- load when range changes
+    void fetchData();
+  }, [fetchData]);
+
+  const maxShare = useMemo(() => {
+    if (!rows.length) return 0;
+    return Math.max(...rows.map((r) => r.share), 0.01);
+  }, [rows]);
+
+  /** Scale map coloring by top known country — Unknown is omitted from the map. */
+  const maxShareForMap = useMemo(() => {
+    const known = rows.filter((r) => r.code !== 'ZZ');
+    if (!known.length) return 0.01;
+    return Math.max(...known.map((r) => r.share), 0.01);
+  }, [rows]);
+
+  /** ISO alpha-2 → traffic share % (Unknown excluded — not shown on map). */
+  const shareByIso = useMemo(() => {
+    const m = Object.create(null);
+    for (const r of rows) {
+      if (r.code && r.code !== 'ZZ') {
+        m[r.code] = r.share;
+      }
+    }
+    return m;
+  }, [rows]);
+
   return (
     <AnalyticsShell
       active="countries"
       breadcrumb={{ prefix: 'Traffic', title: 'Countries' }}
-      feedbackSubject="Feedback about countries"
       toolbarExtras={
         <div style={PS.toolbarRight}>
-          <div style={PS.dateIndicator} title="Date range" aria-label="Date range">
+          <div style={PS.dateIndicator} title="Date range (local)" aria-label="Date range">
             <span style={PS.dateLabels}>
-              <span style={PS.dateLine}>From: 3/1/2026</span>
-              <span style={PS.dateLine}>To: 3/31/2026</span>
+              <label style={PS.dateLine}>
+                From:{' '}
+                <input
+                  type="date"
+                  value={rangeStart}
+                  onChange={(e) => setRangeStart(e.target.value)}
+                  style={PS.dateInput}
+                  aria-label="From date"
+                />
+              </label>
+              <label style={PS.dateLine}>
+                To:{' '}
+                <input
+                  type="date"
+                  value={rangeEnd}
+                  onChange={(e) => setRangeEnd(e.target.value)}
+                  style={PS.dateInput}
+                  aria-label="To date"
+                />
+              </label>
             </span>
-            <span style={PS.dateCalendar} aria-hidden="true"><IconCalendar /></span>
+            <span style={PS.dateCalendar} aria-hidden="true">
+              <IconCalendar />
+            </span>
           </div>
         </div>
       }
@@ -303,29 +287,40 @@ export default function CountriesPage() {
             <button
               type="button"
               style={PS.downloadBtn}
-              title="Download as XLSX"
-              aria-label="Download as XLSX"
+              title="Download as CSV"
+              aria-label="Download as CSV"
+              onClick={() => downloadCountriesCsv(rows, total)}
+              disabled={!rows.length}
             >
               <IconDownload />
             </button>
           </header>
 
           <section style={PS.body}>
-            <div style={PS.mapCard}>
-              <button
-                type="button"
-                style={PS.expandBtn}
-                title="Expand map"
-                aria-label="Expand map"
-              >
-                <IconExpand />
-              </button>
-              <WorldMap />
-            </div>
+            {loading ? (
+              <div style={PS.loading}>Loading country traffic…</div>
+            ) : errorMsg ? (
+              <div style={PS.errorBox}>{errorMsg}</div>
+            ) : (
+              <>
+                <div style={{ ...PS.mapCard, ...(mapExpanded ? PS.mapCardExpanded : {}) }}>
+                  <button
+                    type="button"
+                    style={PS.expandBtn}
+                    title={mapExpanded ? 'Exit full screen' : 'Expand map'}
+                    aria-label={mapExpanded ? 'Exit full screen' : 'Expand map'}
+                    onClick={() => setMapExpanded((v) => !v)}
+                  >
+                    <IconExpand />
+                  </button>
+                  <ChoroplethMap shareByIso={shareByIso} maxShare={maxShareForMap} />
+                </div>
 
-            <div style={PS.barsCard}>
-              <CountriesBars />
-            </div>
+                <div style={PS.barsCard}>
+                  <CountriesBars rows={rows} maxShare={maxShare} total={total} methodology={methodology} />
+                </div>
+              </>
+            )}
           </section>
         </main>
       </div>
@@ -344,7 +339,9 @@ function InfoPopover() {
     const onDoc = (e) => {
       if (ref.current && !ref.current.contains(e.target)) setOpen(false);
     };
-    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    const onKey = (e) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
     document.addEventListener('mousedown', onDoc);
     document.addEventListener('keydown', onKey);
     return () => {
@@ -362,16 +359,16 @@ function InfoPopover() {
           background: open ? '#eff6ff' : 'transparent',
         }}
         onClick={() => setOpen((v) => !v)}
-        aria-label="Open help: How is traffic measured?"
+        aria-label="Open help: Countries analytics"
         aria-expanded={open}
-        title="Open help: How is traffic measured?"
+        title="Countries analytics"
       >
         <IconInfo />
       </button>
       {open && (
-        <div role="dialog" aria-label="How is traffic measured?" style={IP.panel}>
+        <div role="dialog" aria-label="Countries analytics" style={IP.panel}>
           <div style={IP.panelHead}>
-            <h4 style={IP.panelTitle}>How is traffic measured?</h4>
+            <h4 style={IP.panelTitle}>Countries</h4>
             <button
               type="button"
               style={IP.closeBtn}
@@ -384,26 +381,45 @@ function InfoPopover() {
           </div>
           <div style={IP.panelBody}>
             <p style={IP.paragraph}>
-              Traffic is measured by the number of HTTP requests sent to the server by browsers or via the API.
+              Authorized users can view where traffic originates. The page has a world map and a list of countries with
+              the percentage of traffic each represents. Countries with no traffic in the range are not listed.
+            </p>
+            <p style={IP.paragraph}>
+              Traffic is based on the number of HTTP requests represented as analytics events—sent from browsers or via the
+              API. In the list and in the downloaded CSV, countries representing less than 0.01% are shown as &lt;0.01%.
+            </p>
+            <p style={IP.paragraph}>
+              Unknown is not shown on the map; as a result, percentages shown on the map may not add up to 100%. Unknown
+              traffic or an unusually large share from one country can come from users on an internal network, VPN, or
+              proxy.
+            </p>
+            <p style={IP.paragraph}>
+              Country attribution uses IP geolocation and may not always reflect the exact origin of requests. This data
+              is for informational use only, and should not be relied upon for security or forensic purposes.
+            </p>
+            <h5 style={IP.subTitle}>Modify date range</h5>
+            <p style={IP.paragraph}>
+              By default, data is shown for the previous calendar month. Use the From / To controls to change the range.
+            </p>
+            <h5 style={IP.subTitle}>Calculation method</h5>
+            <p style={IP.paragraph}>
+              From January 2024 onward (applied here to all ranges), the calculation excludes static resources—such as
+              scripts, stylesheets, fonts, images, and framework chunks. That can reduce event counts compared with counting
+              every raw HTTP request by up to about 30%, depending on traffic mix.
             </p>
             <p style={IP.linkLine}>
-              <span>See </span>
+              <span>See also </span>
               <a
                 href="https://doc.fluidtopics.com/r/Fluid-Topics-Glossary/Definitions/H/HTTP-request"
                 target="_blank"
                 rel="noopener noreferrer"
                 style={IP.link}
               >
-                <span>HTTP requests definition</span>
-                <span style={IP.linkIcon} aria-hidden="true"><IconExternal /></span>
+                <span>HTTP requests</span>
+                <span style={IP.linkIcon} aria-hidden="true">
+                  <IconExternal />
+                </span>
               </a>
-            </p>
-            <h5 style={IP.subTitle}>How is traffic categorized?</h5>
-            <p style={IP.paragraph}>
-              Country attribution relies on IP geolocation providers, and may not always reflect the exact origin of requests due to differences in provider data.
-            </p>
-            <p style={IP.paragraph}>
-              This data is for informational use only, and should not be relied upon for security or forensic purposes.
             </p>
           </div>
         </div>
@@ -412,83 +428,79 @@ function InfoPopover() {
   );
 }
 
-/* ------------------------------ World map ------------------------------ */
+/* ------------------------------ Choropleth map ------------------------------ */
 
-function WorldMap() {
-  const plotted = COUNTRIES.filter((c) => c.lat !== undefined && c.lng !== undefined);
-
+function ChoroplethMap({ shareByIso, maxShare }) {
   return (
     <div style={MAP.wrap}>
-      <svg
-        viewBox={`0 0 ${MAP_WIDTH} ${MAP_HEIGHT}`}
-        preserveAspectRatio="xMidYMid meet"
+      <ComposableMap
+        projection="geoMercator"
+        projectionConfig={{
+          scale: 148,
+          center: [0, 22],
+        }}
+        width={MAP_WIDTH}
+        height={MAP_HEIGHT}
         style={MAP.svg}
         role="img"
-        aria-label="World map showing traffic share per country"
+        aria-label="World map with countries shaded by traffic share"
       >
         <rect x={0} y={0} width={MAP_WIDTH} height={MAP_HEIGHT} fill="#f7f1f5" />
-
-        {CONTINENTS.map((poly, i) => (
-          <path
-            key={i}
-            d={polyToPath(poly)}
-            fill="#f0dbea"
-            stroke="#cfb3c5"
-            strokeWidth="0.6"
-          />
-        ))}
-
-        {plotted.map((c) => {
-          const r = bubbleRadius(c.share);
-          const cx = projX(c.lng);
-          const cy = projY(c.lat);
-          const highlight = isHighlighted(c.share);
-          return (
-            <g key={c.name}>
-              <circle
-                cx={cx}
-                cy={cy}
-                r={r}
-                fill={bubbleColor(c.share)}
-                fillOpacity={highlight ? 0.85 : 0.55}
-                stroke="#ffffff"
-                strokeWidth="1"
-              >
-                <title>{`${c.name} ${c.flag} — ${formatShare(c.share)}`}</title>
-              </circle>
-              {c.share >= 1 && (
-                <text
-                  x={cx}
-                  y={cy + 4}
-                  textAnchor="middle"
-                  fontSize="11"
-                  fontWeight="600"
-                  fill="#ffffff"
-                  fontFamily="Inter, sans-serif"
-                  pointerEvents="none"
+        <Geographies geography={GEO_URL}>
+          {({ geographies }) =>
+            geographies.map((geo) => {
+              const iso = isoFromGeoProperties(geo.properties);
+              const share = iso ? shareByIso[iso] : undefined;
+              const fill = fillForShare(share, maxShare);
+              const name =
+                geo.properties?.NAME ??
+                geo.properties?.NAME_EN ??
+                geo.properties?.name ??
+                iso ??
+                '—';
+              const label =
+                share != null && share > 0
+                  ? `${name} — ${formatShare(share)}`
+                  : `${name} — no traffic in range`;
+              return (
+                <Geography
+                  key={geo.rsmKey}
+                  geography={geo}
+                  fill={fill}
+                  stroke="#c9b8c2"
+                  strokeWidth={0.35}
+                  style={{
+                    default: { outline: 'none' },
+                    hover: {
+                      outline: 'none',
+                      fill: share != null && share > 0 ? hexLerp(0.92, fill, '#7d1860') : '#ddd5dc',
+                    },
+                    pressed: { outline: 'none' },
+                  }}
                 >
-                  {c.flag}
-                </text>
-              )}
-            </g>
-          );
-        })}
-      </svg>
+                  <title>{label}</title>
+                </Geography>
+              );
+            })
+          }
+        </Geographies>
+      </ComposableMap>
 
       <div style={MAP.legend}>
-        <span style={MAP.legendTitle}>Traffic share</span>
-        <div style={MAP.legendScale}>
-          <span style={{ ...MAP.legendDot, background: '#e8c4d8' }} aria-hidden="true" />
-          <span style={MAP.legendLabel}>&lt;0.01%</span>
-          <span style={{ ...MAP.legendDot, background: '#d18ab8' }} aria-hidden="true" />
-          <span style={MAP.legendLabel}>0.01%</span>
-          <span style={{ ...MAP.legendDot, background: '#b53d8e' }} aria-hidden="true" />
-          <span style={MAP.legendLabel}>0.1%</span>
-          <span style={{ ...MAP.legendDot, background: '#9d207b' }} aria-hidden="true" />
-          <span style={MAP.legendLabel}>1%</span>
-          <span style={{ ...MAP.legendDot, background: '#7d1860' }} aria-hidden="true" />
-          <span style={MAP.legendLabel}>5%+</span>
+        <span style={MAP.legendTitle}>
+          Known-country share (vs top country in range; Unknown is not shown on the map)
+        </span>
+        <div style={MAP.legendRow}>
+          <span style={MAP.legendEnd}>lower</span>
+          <div style={MAP.legendGradient} aria-hidden="true">
+            <span style={MAP.legendGradientBar} />
+          </div>
+          <span style={MAP.legendEnd}>higher</span>
         </div>
+        <p style={MAP.mapNote}>
+          Map shading reflects only countries with a known code. The percentages on the map do not include Unknown
+          traffic, so they may not add up to 100%.
+        </p>
       </div>
     </div>
   );
@@ -496,18 +508,25 @@ function WorldMap() {
 
 /* ------------------------------ Country bars ------------------------------ */
 
-function CountriesBars() {
+function CountriesBars({ rows, maxShare, total, methodology }) {
   return (
     <ul style={CB.list}>
-      {COUNTRIES.map((c) => {
-        const widthPct = MAX_SHARE === 0
-          ? 0
-          : Math.max(0.4, (c.share / MAX_SHARE) * 100);
+      {rows.map((c) => {
+        const widthPct = maxShare === 0 ? 0 : Math.max(0.4, (c.share / maxShare) * 100);
+        const flag = c.code && c.code !== 'ZZ' ? isoToFlagEmoji(c.code) : '';
         return (
-          <li key={c.name} style={CB.row}>
+          <li key={`${c.code}-${c.name}`} style={CB.row}>
             <div style={CB.label}>
               <span>{c.name}</span>
-              {c.flag && <span style={CB.flag} aria-hidden="true">{c.flag}</span>}
+              {flag ? (
+                <span style={CB.flag} aria-hidden="true">
+                  {flag}
+                </span>
+              ) : c.code === 'ZZ' ? (
+                <span style={CB.globe} aria-hidden="true" title="Unattributed location">
+                  <IconGlobe />
+                </span>
+              ) : null}
             </div>
             <div style={CB.barTrack}>
               <div
@@ -515,7 +534,7 @@ function CountriesBars() {
                   ...CB.barFill,
                   width: `${widthPct}%`,
                 }}
-                title={`${c.name} ${c.flag} — ${formatShare(c.share)}`}
+                title={`${c.name} — ${formatShare(c.share)} (${c.count.toLocaleString()} events)`}
               />
               <span style={CB.barValue}>{formatShare(c.share)}</span>
             </div>
@@ -523,9 +542,18 @@ function CountriesBars() {
         );
       })}
       <li style={CB.totalRow}>
-        <span>Total share displayed</span>
-        <span>{formatShare(TOTAL_SHARE)}</span>
+        <span title="Count of qualifying analytics events in the selected range (static resources excluded).">
+          Total events
+        </span>
+        <span>{total.toLocaleString('en-US')}</span>
       </li>
+      {methodology?.excludesStaticResources ? (
+        <li style={CB.methodNote}>
+          Traffic is based on HTTP requests recorded as analytics events (browser and API). Counts exclude static
+          resources (e.g. JS, CSS, fonts, images, Next.js chunks) — methodology aligned with Jan 2024+ and may be lower
+          than raw request totals.
+        </li>
+      ) : null}
     </ul>
   );
 }
@@ -557,8 +585,16 @@ const PS = {
     background: '#ffffff',
     color: '#475569',
   },
-  dateLabels: { display: 'inline-flex', flexDirection: 'column', lineHeight: 1.1 },
-  dateLine: { fontSize: '0.7rem', color: '#475569' },
+  dateLabels: { display: 'inline-flex', flexDirection: 'column', gap: '6px', lineHeight: 1.1 },
+  dateLine: { fontSize: '0.72rem', color: '#475569', display: 'flex', alignItems: 'center', gap: '6px' },
+  dateInput: {
+    border: '1px solid #cbd5e1',
+    borderRadius: '6px',
+    padding: '4px 8px',
+    fontSize: '0.75rem',
+    fontFamily: 'inherit',
+    color: '#0f172a',
+  },
   dateCalendar: { display: 'inline-flex', color: '#1d4ed8' },
 
   resultHead: {
@@ -592,18 +628,31 @@ const PS = {
 
   body: {
     display: 'flex',
-    flexDirection: 'column',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'stretch',
     gap: '18px',
     padding: '18px 22px 28px',
   },
+  loading: { padding: '48px', textAlign: 'center', color: '#64748b' },
+  errorBox: { padding: '24px', color: '#b91c1c', fontSize: '0.9rem' },
 
   mapCard: {
     position: 'relative',
+    flex: '2 1 420px',
+    minWidth: 0,
     background: '#ffffff',
     border: '1px solid #e5e7eb',
     borderRadius: '12px',
     padding: '18px',
     overflow: 'hidden',
+  },
+  mapCardExpanded: {
+    position: 'fixed',
+    inset: 0,
+    zIndex: 80,
+    borderRadius: 0,
+    overflow: 'auto',
   },
   expandBtn: {
     position: 'absolute',
@@ -623,10 +672,15 @@ const PS = {
     zIndex: 2,
   },
   barsCard: {
+    flex: '1 1 280px',
+    minWidth: 0,
+    maxWidth: '100%',
     background: '#ffffff',
     border: '1px solid #e5e7eb',
     borderRadius: '12px',
     padding: '18px 18px 14px',
+    maxHeight: 'min(72vh, 640px)',
+    overflowY: 'auto',
   },
 };
 
@@ -649,12 +703,15 @@ const IP = {
     top: 'calc(100% + 6px)',
     left: '50%',
     transform: 'translateX(-50%)',
-    width: '340px',
+    width: 'min(400px, 92vw)',
+    maxHeight: 'min(80vh, 520px)',
     background: '#ffffff',
     border: '1px solid #e5e7eb',
     borderRadius: '8px',
     boxShadow: '0 12px 28px rgba(15, 23, 42, 0.15)',
     zIndex: 60,
+    display: 'flex',
+    flexDirection: 'column',
   },
   panelHead: {
     display: 'flex',
@@ -687,6 +744,7 @@ const IP = {
     fontSize: '0.8rem',
     color: '#1e293b',
     lineHeight: 1.5,
+    overflowY: 'auto',
   },
   paragraph: { margin: 0 },
   linkLine: { margin: 0, fontSize: '0.8rem', color: '#475569' },
@@ -710,30 +768,44 @@ const MAP = {
   },
   svg: {
     width: '100%',
-    aspectRatio: '2 / 1',
+    height: 'auto',
+    maxWidth: '100%',
     display: 'block',
     background: '#f7f1f5',
     borderRadius: '8px',
   },
   legend: {
     display: 'flex',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: '10px',
+    flexDirection: 'column',
+    gap: '6px',
     fontSize: '0.75rem',
     color: '#475569',
     paddingTop: '4px',
   },
   legendTitle: { fontWeight: 600, color: '#0f172a' },
-  legendScale: { display: 'inline-flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' },
-  legendDot: {
-    width: '12px',
-    height: '12px',
-    borderRadius: '50%',
-    display: 'inline-block',
+  legendRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    width: '100%',
+    maxWidth: '420px',
+  },
+  legendEnd: { color: '#64748b', fontSize: '0.72rem', flexShrink: 0 },
+  legendGradient: { flex: 1, minWidth: 0, display: 'flex', alignItems: 'center' },
+  legendGradientBar: {
+    width: '100%',
+    height: '10px',
+    borderRadius: '4px',
+    background: 'linear-gradient(90deg, #f5eef3 0%, #7d1860 100%)',
     border: '1px solid rgba(15,23,42,0.08)',
   },
-  legendLabel: { color: '#475569', marginRight: '4px' },
+  mapNote: {
+    margin: '4px 0 0',
+    fontSize: '0.72rem',
+    color: '#64748b',
+    lineHeight: 1.45,
+    maxWidth: '520px',
+  },
 };
 
 const CB = {
@@ -762,6 +834,7 @@ const CB = {
     fontFamily: 'Inter, sans-serif',
   },
   flag: { fontSize: '1rem', lineHeight: 1 },
+  globe: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center' },
   barTrack: {
     position: 'relative',
     height: '20px',
@@ -789,5 +862,14 @@ const CB = {
     fontSize: '0.78rem',
     color: '#475569',
     fontWeight: 500,
+  },
+  methodNote: {
+    listStyle: 'none',
+    padding: '10px 4px 0',
+    margin: '8px 0 0',
+    borderTop: '1px solid #f1f5f9',
+    fontSize: '0.72rem',
+    color: '#64748b',
+    lineHeight: 1.45,
   },
 };

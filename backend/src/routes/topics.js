@@ -14,6 +14,8 @@ const {
 } = require('../services/accessRules/accessRulesService');
 const { optionalAuth, auth } = require('../middleware/auth');
 const { trackEvent } = require('../services/analytics/analyticsService');
+const { clientSessionIdFromReq } = require('../utils/clientSessionId');
+const { analyticsFromReq } = require('../utils/clientIp');
 
 const router = express.Router();
 
@@ -167,7 +169,7 @@ router.get('/by-slug/:slug', optionalAuth, async (req, res, next) => {
       userId: req.user?._id || null,
       data: { topicId: topic._id },
       userAgent: req.headers['user-agent'],
-      ip: req.ip,
+      ...analyticsFromReq(req),
     }).catch(() => {});
 
     res.json({ topic });
@@ -205,9 +207,10 @@ router.get('/:id', optionalAuth, async (req, res, next) => {
     trackEvent({
       eventType: 'view',
       userId: req.user?._id || null,
+      sessionId: clientSessionIdFromReq(req),
       data: { topicId: topic._id },
       userAgent: req.headers['user-agent'],
-      ip: req.ip,
+      ...analyticsFromReq(req),
     }).catch(() => {});
 
     res.json({ topic });

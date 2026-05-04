@@ -2,6 +2,8 @@ const express = require('express');
 const mongoose = require('mongoose');
 const Rating = require('../models/Rating');
 const { auth, optionalAuth } = require('../middleware/auth');
+const { trackFtEvent } = require('../services/analytics/analyticsService');
+const { analyticsFromReq } = require('../utils/clientIp');
 
 const router = express.Router();
 
@@ -103,7 +105,17 @@ function makeRatingHandlers(kind) {
     try {
       const id = req.params.id;
       if (!mongoose.isValidObjectId(id)) return res.status(400).json({ error: 'Invalid id' });
-      await Rating.deleteOne({ userId: req.user.id, [field]: id });
+      const del = await Rating.deleteOne({ userId: req.user.id, [field]: id });
+      if (del.deletedCount > 0) {
+        const ftEvent =
+          kind === 'topic' ? 'topic.unrate' : 'document.unrate';
+        trackFtEvent({
+          userId: req.user.id,
+          ftEvent,
+          userAgent: req.headers['user-agent'],
+          ...analyticsFromReq(req),
+        }).catch(() => {});
+      }
       const data = await aggregate({ [field]: id }, req.user.id);
       res.json(data);
     } catch (err) { next(err); }

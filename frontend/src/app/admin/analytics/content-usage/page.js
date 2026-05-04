@@ -188,7 +188,6 @@ export default function ContentUsagePage() {
     <AnalyticsShell
       active="content-usage"
       breadcrumb={{ prefix: 'Knowledge Hub', title: 'Content usage' }}
-      feedbackSubject="Feedback about content usage"
       toolbarExtras={toolbarExtras}
     >
       <div style={PS.layout}>

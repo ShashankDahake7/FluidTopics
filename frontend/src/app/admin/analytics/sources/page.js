@@ -338,7 +338,6 @@ export default function SourcesPage() {
     <AnalyticsShell
       active="sources"
       breadcrumb={{ prefix: 'Traffic', title: 'Sources' }}
-      feedbackSubject="Feedback about sources evolution"
       toolbarExtras={
         <button
           type="button"

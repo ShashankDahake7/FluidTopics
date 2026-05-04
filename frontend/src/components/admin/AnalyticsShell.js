@@ -57,19 +57,28 @@ const ICON_MENU = (
     <line x1="3" y1="18" x2="21" y2="18" />
   </svg>
 );
-const ICON_FEEDBACK = (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+const ICON_POSTHOG = (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M4 20V10M10 20V4M16 20v-6M22 20V14" />
   </svg>
 );
 
 export const ANALYTICS_SECTIONS = [
+  {
+    key: 'product-analytics',
+    title: 'Product analytics',
+    icon: ICON_POSTHOG,
+    items: [
+      { key: 'posthog', label: 'PostHog', href: '/admin/analytics/posthog' },
+    ],
+  },
   {
     key: 'khub',
     title: 'Knowledge Hub',
     icon: ICON_KHUB,
     items: [
       { key: 'content-inventory', label: 'Content inventory',  href: '/admin/analytics/content-inventory' },
+      { key: 'doc-engagement',    label: 'Document engagement', href: '/admin/analytics/doc-engagement' },
 
       { key: 'document-views',    label: 'Document views',     href: '/admin/analytics/document-views' },
       { key: 'topic-views',       label: 'Topic views',        href: '/admin/analytics/topic-views' },
@@ -118,7 +127,6 @@ export default function AnalyticsShell({
   active = 'home',
   breadcrumb = 'Home',
   breadcrumbTrailing = null,
-  feedbackSubject = 'Feedback',
   toolbarExtras = null,
   children,
 }) {
@@ -246,13 +254,6 @@ export default function AnalyticsShell({
             )}
           </span>
           <span style={{ flex: 1 }} />
-          <a
-            href={`mailto:feedbacks.analytics@fluidtopics.com?subject=${encodeURIComponent(feedbackSubject)}`}
-            style={S.feedbackBtn}
-          >
-            {ICON_FEEDBACK}
-            <span>Feedback</span>
-          </a>
           {toolbarExtras}
         </div>
         <div style={S.body}>{children}</div>
@@ -265,18 +266,23 @@ export default function AnalyticsShell({
 const S = {
   shell: {
     display: 'flex',
-    minHeight: 'calc(100vh - 60px)',
+    height: 'calc(100vh - 60px)',
+    maxHeight: 'calc(100vh - 60px)',
+    minHeight: 0,
     background: '#f8fafc',
     fontFamily: 'var(--font-sans)',
   },
   sidebar: {
     width: '270px',
     flexShrink: 0,
+    minHeight: 0,
+    height: '100%',
     background: '#ffffff',
     borderRight: '1px solid #e5e7eb',
     display: 'flex',
     flexDirection: 'column',
     padding: '14px 0 18px',
+    overflow: 'hidden',
   },
   brand: {
     display: 'flex',
@@ -292,7 +298,16 @@ const S = {
     color: '#0f172a',
   },
   brandText: { fontSize: '1.1rem', fontWeight: 700, color: '#0f172a' },
-  nav: { flex: 1, overflowY: 'auto', padding: '8px 0' },
+  nav: {
+    flex: 1,
+    minHeight: 0,
+    overflowY: 'auto',
+    overflowX: 'hidden',
+    WebkitOverflowScrolling: 'touch',
+    scrollbarGutter: 'stable',
+    scrollbarWidth: 'thin',
+    padding: '8px 0',
+  },
   groupBtn: {
     width: '100%',
     display: 'flex',
@@ -333,8 +348,10 @@ const S = {
   content: {
     flex: 1,
     minWidth: 0,
+    minHeight: 0,
     display: 'flex',
     flexDirection: 'column',
+    overflow: 'hidden',
   },
   toolbar: {
     display: 'flex',
@@ -377,23 +394,12 @@ const S = {
     alignItems: 'center',
     marginLeft: '6px',
   },
-  feedbackBtn: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: '6px',
-    padding: '6px 10px',
-    fontSize: '0.78rem',
-    fontWeight: 600,
-    color: '#9D207B',
-    background: 'transparent',
-    border: 'none',
-    cursor: 'pointer',
-    textDecoration: 'none',
-    borderRadius: '6px',
-  },
   body: {
     flex: 1,
     minWidth: 0,
+    minHeight: 0,
     overflow: 'auto',
+    display: 'flex',
+    flexDirection: 'column',
   },
 };

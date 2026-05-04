@@ -7,6 +7,10 @@ const Attachment = require('../models/Attachment');
 const config   = require('../config/env');
 const { inDocumentSearch } = require('../services/search/searchService');
 const { optionalAuth } = require('../middleware/auth');
+const { trackEvent } = require('../services/analytics/analyticsService');
+const { clientSessionIdFromReq } = require('../utils/clientSessionId');
+const { analyticsFromReq } = require('../utils/clientIp');
+const { isSuspiciousSearchQuery } = require('../utils/searchQuerySafety');
 const {
   filterDocumentsForUser,
   filterTopicsForUser,
@@ -238,6 +242,15 @@ router.get('/documents/:id', optionalAuth, async (req, res, next) => {
 
     // Increment document view count independently from topics
     Document.updateOne({ _id: req.params.id }, { $inc: { viewCount: 1 } }).catch(() => {});
+
+    trackEvent({
+      eventType: 'view',
+      userId: req.user?._id || null,
+      sessionId: clientSessionIdFromReq(req),
+      data: { documentId: doc._id },
+      userAgent: req.headers['user-agent'],
+      ...analyticsFromReq(req),
+    }).catch(() => {});
 
     const topicQuery = { documentId: req.params.id };
     const filters = getUserFilters(req);
@@ -598,6 +611,22 @@ router.get('/documents/:id/search', optionalAuth, async (req, res, next) => {
         };
       });
 
+      if (!isSuspiciousSearchQuery(q || '')) {
+        trackEvent({
+          eventType: 'search',
+          userId: req.user?._id || null,
+          sessionId: clientSessionIdFromReq(req),
+          data: {
+            query: q,
+            documentId: req.params.id,
+            resultCount: hits.length,
+            inDocument: true,
+          },
+          userAgent: req.headers['user-agent'],
+          ...analyticsFromReq(req),
+        }).catch((e) => console.warn('Analytics in-doc search:', e.message));
+      }
+
       return res.json({ total: hits.length, matches });
     }
 
@@ -647,6 +676,22 @@ router.get('/documents/:id/search', optionalAuth, async (req, res, next) => {
       const end = Math.min(text.length, start + 200);
       return (start > 0 ? '…' : '') + highlight(text.slice(start, end)) + (end < text.length ? '…' : '');
     };
+
+    if (!isSuspiciousSearchQuery(q || '')) {
+      trackEvent({
+        eventType: 'search',
+        userId: req.user?._id || null,
+        sessionId: clientSessionIdFromReq(req),
+        data: {
+          query: q,
+          documentId: req.params.id,
+          resultCount: topics.length,
+          inDocument: true,
+        },
+        userAgent: req.headers['user-agent'],
+        ...analyticsFromReq(req),
+      }).catch((e) => console.warn('Analytics in-doc search:', e.message));
+    }
 
     res.json({
       total: topics.length,
@@ -712,18 +757,24 @@ router.get('/topics/:id', optionalAuth, async (req, res, next) => {
     }
     if (!await requireTopicAccess(req, res, topic, doc)) return;
 
-    // Increment view count
-    Topic.updateOne({ _id: req.params.id }, { $inc: { viewCount: 1 } }).catch(() => {});
-    
-    // Track view event
-    const { trackEvent } = require('../services/analytics/analyticsService');
-    trackEvent({
-      eventType: 'view',
-      userId: req.user?._id || null,
-      data: { topicId: topic._id, documentId: topic.documentId },
-      userAgent: req.headers['user-agent'],
-      ip: req.ip,
-    }).catch(() => {});
+    // Optional ?skipTopicView=1: first topic shown when opening a document from
+    // the dashboard (default TOC entry) — document view is counted on
+    // GET /documents/:id; topic views accrue only when the reader navigates
+    // to other topics inside the document.
+    const skipTopicView = req.query.skipTopicView === '1' || req.query.skipTopicView === 'true';
+    if (!skipTopicView) {
+      Topic.updateOne({ _id: req.params.id }, { $inc: { viewCount: 1 } }).catch(() => {});
+
+      const { trackEvent } = require('../services/analytics/analyticsService');
+      trackEvent({
+        eventType: 'view',
+        userId: req.user?._id || null,
+        sessionId: clientSessionIdFromReq(req),
+        data: { topicId: topic._id, documentId: topic.documentId },
+        userAgent: req.headers['user-agent'],
+        ...analyticsFromReq(req),
+      }).catch(() => {});
+    }
 
     res.json({ topic });
   } catch (err) {

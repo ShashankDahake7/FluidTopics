@@ -24,6 +24,15 @@ export default function KhubFileViewerPage() {
   }, [id]);
 
   useEffect(() => {
+    if (!id || typeof window === 'undefined') return undefined;
+    const onBeforePrint = () => {
+      api.post('/analytics/track', { eventType: 'print', data: { unstructuredId: id } }).catch(() => {});
+    };
+    window.addEventListener('beforeprint', onBeforePrint);
+    return () => window.removeEventListener('beforeprint', onBeforePrint);
+  }, [id]);
+
+  useEffect(() => {
     if (!id || !meta) return;
     const token = getStoredToken();
     let cancelled = false;
@@ -92,6 +101,27 @@ export default function KhubFileViewerPage() {
         <Link href="/search" style={{ color: '#64748b', fontSize: '0.875rem' }}>← Search</Link>
         <Link href="/dashboard" style={{ color: '#64748b', fontSize: '0.875rem' }}>Knowledge Hub</Link>
         <h1 style={{ margin: 0, fontSize: '1.125rem', fontWeight: 600, color: '#0f172a', flex: 1 }}>{meta.title}</h1>
+        <button
+          type="button"
+          onClick={() => {
+            const url = typeof window !== 'undefined' ? window.location.href : '';
+            if (!url || !id) return;
+            navigator.clipboard.writeText(url).catch(() => {});
+            api.post('/analytics/track', { eventType: 'share', data: { unstructuredId: id } }).catch(() => {});
+          }}
+          style={{
+            padding: '8px 14px',
+            background: '#f1f5f9',
+            color: '#0f172a',
+            border: '1px solid #e2e8f0',
+            borderRadius: 6,
+            fontSize: '0.875rem',
+            cursor: 'pointer',
+            fontFamily: 'inherit',
+          }}
+        >
+          Copy link
+        </button>
         {blobUrl && (
           <a
             href={blobUrl}

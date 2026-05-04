@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import api, { getStoredToken, storeAuthSession } from '@/lib/api';
 import PortalSignInLanding from '@/components/portal/PortalSignInLanding';
@@ -33,7 +33,7 @@ function resolveNextRoute(query) {
   return to;
 }
 
-export default function LoginPage() {
+function LoginPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const queryString = searchParams.toString();
@@ -108,6 +108,22 @@ export default function LoginPage() {
   }
 
   return <RegisterForm router={router} />;
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="portal-shell-main portal-gate-loading-main">
+          <div className="portal-gate-loading">
+            <div className="portal-gate-spinner" />
+          </div>
+        </main>
+      }
+    >
+      <LoginPageInner />
+    </Suspense>
+  );
 }
 
 function RegisterForm({ router }) {

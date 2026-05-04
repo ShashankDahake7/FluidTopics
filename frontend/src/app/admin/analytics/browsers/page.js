@@ -1,45 +1,96 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AnalyticsShell from '@/components/admin/AnalyticsShell';
+import api from '@/lib/api';
 
-/* ------------------------------ Mock data ------------------------------ */
+/** Align with backend default and Traffic analytics retention policy. */
+const ANALYTICS_DATA_RETENTION_DAYS = 730;
 
-/* Traffic share per browser. Values are HTTP request counts for the period
- * (March 1 → March 31, 2026). Mirrors the dominant Chrome / Edge split shown
- * in the Angular blueprint, with a long-tail of micro-share clients. */
-const BROWSERS = [
-  { name: 'Chrome',                 value: 1_834_210, color: '#D395C2' },
-  { name: 'Edge',                   value: 1_138_504, color: '#EBCF47' },
-  { name: 'Firefox',                value:    38_120, color: '#A193EC' },
-  { name: 'Safari',                 value:    25_407, color: '#82C9BD' },
-  { name: 'Mobile Safari',          value:    11_865, color: '#F4719D' },
-  { name: 'Chrome Mobile',          value:     7_932, color: '#A3B823' },
-  { name: 'Samsung Internet',       value:     4_614, color: '#63BCE9' },
-  { name: 'Opera',                  value:     2_801, color: '#D9A68C' },
-  { name: 'Brave',                  value:     1_745, color: '#85E0B2' },
-  { name: 'Internet Explorer',      value:     1_038, color: '#BBBBC9' },
-  { name: 'Vivaldi',                value:       612, color: '#D395C2' },
-  { name: 'Yandex Browser',         value:       418, color: '#EBCF47' },
-  { name: 'DuckDuckGo',             value:       279, color: '#A193EC' },
-  { name: 'UC Browser',             value:       154, color: '#82C9BD' },
-  { name: 'Headless Chrome',        value:        96, color: '#F4719D' },
-  { name: 'Postman',                value:        78, color: '#A3B823' },
-  { name: 'curl',                   value:        51, color: '#63BCE9' },
-  { name: 'Slack',                  value:        37, color: '#D9A68C' },
-  { name: 'Microsoft Outlook',      value:        29, color: '#85E0B2' },
-  { name: 'Mobile Chrome iOS',      value:        18, color: '#BBBBC9' },
-  { name: 'Other / Unknown',        value:        15, color: '#D395C2' },
+const SLICE_COLORS = [
+  '#D395C2',
+  '#EBCF47',
+  '#A193EC',
+  '#82C9BD',
+  '#F4719D',
+  '#A3B823',
+  '#63BCE9',
+  '#D9A68C',
+  '#85E0B2',
+  '#BBBBC9',
 ];
 
-const TOTAL = BROWSERS.reduce((s, b) => s + b.value, 0);
+function defaultDateRangePreviousMonth() {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(now.getFullYear(), now.getMonth(), 0);
+  end.setHours(23, 59, 59, 999);
+  return { start, end };
+}
+
+function presetLastWeek() {
+  const end = new Date();
+  end.setHours(23, 59, 59, 999);
+  const start = new Date(end);
+  start.setDate(start.getDate() - 6);
+  start.setHours(0, 0, 0, 0);
+  return { start, end };
+}
+
+/** Rolling ~90 days ending today (Fluid Topics “last 3 months” style). */
+function presetLast3Months() {
+  const end = new Date();
+  end.setHours(23, 59, 59, 999);
+  const start = new Date(end);
+  start.setDate(start.getDate() - 89);
+  start.setHours(0, 0, 0, 0);
+  return { start, end };
+}
+
+function toInputDate(d) {
+  const x = new Date(d);
+  const y = x.getFullYear();
+  const m = String(x.getMonth() + 1).padStart(2, '0');
+  const day = String(x.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function parseInputDate(s) {
+  const d = new Date(`${s}T12:00:00`);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function earliestAllowedStart() {
+  const d = new Date();
+  d.setDate(d.getDate() - ANALYTICS_DATA_RETENTION_DAYS);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
 
 const fmtCount = (n) => n.toLocaleString('en-US');
-const fmtPct = (pct) => {
+const formatShare = (v) => (v < 0.01 ? '<0.01%' : `${v.toFixed(2)}%`);
+const fmtPctDisplay = (pct) => {
   if (pct >= 10) return `${pct.toFixed(0)}%`;
-  if (pct >= 1)  return `${pct.toFixed(1)}%`;
+  if (pct >= 1) return `${pct.toFixed(1)}%`;
+  if (pct < 0.01) return '<0.01%';
   return `${pct.toFixed(2)}%`;
 };
+
+function downloadBrowsersCsv(rows, total) {
+  if (!rows?.length) return;
+  const lines = [['Browser', 'Events', 'Share %'].join(',')];
+  for (const r of rows) {
+    lines.push([JSON.stringify(r.name), r.count, JSON.stringify(formatShare(r.share))].join(','));
+  }
+  lines.push(['Total events', total, '100'].join(','));
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'browsers-traffic.csv';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
 
 /* ------------------------------ Icons ------------------------------ */
 
@@ -86,18 +137,209 @@ const IconExternal = () => (
 /* ------------------------------ Page ------------------------------ */
 
 export default function BrowsersPage() {
+  const def = useMemo(() => defaultDateRangePreviousMonth(), []);
+  const [rangeStart, setRangeStart] = useState(() => toInputDate(def.start));
+  const [rangeEnd, setRangeEnd] = useState(() => toInputDate(def.end));
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [customStart, setCustomStart] = useState(() => toInputDate(def.start));
+  const [customEnd, setCustomEnd] = useState(() => toInputDate(def.end));
+  const [rows, setRows] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState(null);
+  const [methodology, setMethodology] = useState(null);
+
+  const pickerRef = useRef(null);
+
+  const startIso = useMemo(() => {
+    const d = parseInputDate(rangeStart);
+    if (!d) return null;
+    d.setHours(0, 0, 0, 0);
+    return d.toISOString();
+  }, [rangeStart]);
+
+  const endIso = useMemo(() => {
+    const d = parseInputDate(rangeEnd);
+    if (!d) return null;
+    d.setHours(23, 59, 59, 999);
+    return d.toISOString();
+  }, [rangeEnd]);
+
+  const chartData = useMemo(() => {
+    return rows.map((r, i) => ({
+      name: r.name,
+      value: r.count,
+      share: r.share,
+      color: SLICE_COLORS[i % SLICE_COLORS.length],
+    }));
+  }, [rows]);
+
+  const fetchData = useCallback(async () => {
+    if (!startIso || !endIso) return;
+    setLoading(true);
+    setErrorMsg(null);
+    try {
+      const json = await api.post('/analytics/v2/traffic/browsers', {
+        startDate: startIso,
+        endDate: endIso,
+      });
+      if (json?.browsers) {
+        setRows(json.browsers);
+        setTotal(typeof json.total === 'number' ? json.total : 0);
+        setMethodology(json.methodology ?? null);
+      } else if (json?.error) {
+        setErrorMsg(json.error);
+        setRows([]);
+        setTotal(0);
+        setMethodology(null);
+      } else {
+        setErrorMsg('Unexpected response');
+        setRows([]);
+        setTotal(0);
+        setMethodology(null);
+      }
+    } catch (e) {
+      console.error(e);
+      setErrorMsg(e.message);
+      setRows([]);
+      setTotal(0);
+      setMethodology(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [startIso, endIso]);
+
+  useEffect(() => {
+    void fetchData();
+  }, [fetchData]);
+
+  useEffect(() => {
+    if (!pickerOpen) return;
+    const onDoc = (e) => {
+      if (pickerRef.current && !pickerRef.current.contains(e.target)) setPickerOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [pickerOpen]);
+
+  const applyRange = (start, end) => {
+    setErrorMsg(null);
+    setRangeStart(toInputDate(start));
+    setRangeEnd(toInputDate(end));
+    setCustomStart(toInputDate(start));
+    setCustomEnd(toInputDate(end));
+    setPickerOpen(false);
+  };
+
+  const applyPreset = (key) => {
+    if (key === 'prevMonth') {
+      const { start, end } = defaultDateRangePreviousMonth();
+      applyRange(start, end);
+      return;
+    }
+    if (key === 'lastWeek') {
+      const { start, end } = presetLastWeek();
+      applyRange(start, end);
+      return;
+    }
+    if (key === 'last3mo') {
+      const { start, end } = presetLast3Months();
+      applyRange(start, end);
+    }
+  };
+
+  const applyCustom = () => {
+    const s = parseInputDate(customStart);
+    const e = parseInputDate(customEnd);
+    if (!s || !e || s > e) {
+      setErrorMsg('End date must be after start date.');
+      return;
+    }
+    if (s < earliestAllowedStart()) {
+      setErrorMsg(
+        `Start date must be within the analytics retention period (${ANALYTICS_DATA_RETENTION_DAYS} days).`
+      );
+      return;
+    }
+    setErrorMsg(null);
+    applyRange(s, e);
+  };
+
+  const displayFrom = rangeStart;
+  const displayTo = rangeEnd;
+
   return (
     <AnalyticsShell
       active="browsers"
       breadcrumb={{ prefix: 'Traffic', title: 'Browsers' }}
-      feedbackSubject="Feedback about browsers"
       toolbarExtras={
-        <div style={PS.dateIndicator} title="Date range" aria-label="Date range">
-          <span style={PS.dateLabels}>
-            <span style={PS.dateLine}>From: 3/1/2026</span>
-            <span style={PS.dateLine}>To: 3/31/2026</span>
-          </span>
-          <span style={PS.dateCalendar} aria-hidden="true"><IconCalendar /></span>
+        <div style={PS.toolbarWrap} ref={pickerRef}>
+          <button
+            type="button"
+            style={PS.dateIndicator}
+            title="Change date range"
+            aria-expanded={pickerOpen}
+            aria-haspopup="dialog"
+            onClick={() => setPickerOpen((v) => !v)}
+          >
+            <span style={PS.dateLabels}>
+              <span style={PS.dateLine}>
+                From: {displayFrom ? new Date(`${displayFrom}T12:00:00`).toLocaleDateString() : '—'}
+              </span>
+              <span style={PS.dateLine}>
+                To: {displayTo ? new Date(`${displayTo}T12:00:00`).toLocaleDateString() : '—'}
+              </span>
+            </span>
+            <span style={PS.dateCalendar} aria-hidden="true">
+              <IconCalendar />
+            </span>
+          </button>
+          {pickerOpen && (
+            <div role="dialog" aria-label="Date range" style={PS.pickerPanel}>
+              <p style={PS.pickerTitle}>Quick ranges</p>
+              <div style={PS.presetRow}>
+                <button type="button" style={PS.presetBtn} onClick={() => applyPreset('lastWeek')}>
+                  Last week
+                </button>
+                <button type="button" style={PS.presetBtn} onClick={() => applyPreset('last3mo')}>
+                  Last 3 months
+                </button>
+                <button type="button" style={PS.presetBtn} onClick={() => applyPreset('prevMonth')}>
+                  Previous month
+                </button>
+              </div>
+              <p style={PS.pickerTitle}>Custom range</p>
+              <div style={PS.customRow}>
+                <label style={PS.customLab}>
+                  From
+                  <input
+                    type="date"
+                    value={customStart}
+                    min={toInputDate(earliestAllowedStart())}
+                    onChange={(e) => setCustomStart(e.target.value)}
+                    style={PS.dateInput}
+                  />
+                </label>
+                <label style={PS.customLab}>
+                  To
+                  <input
+                    type="date"
+                    value={customEnd}
+                    min={customStart}
+                    onChange={(e) => setCustomEnd(e.target.value)}
+                    style={PS.dateInput}
+                  />
+                </label>
+                <button type="button" style={PS.applyBtn} onClick={applyCustom}>
+                  Apply
+                </button>
+              </div>
+              <p style={PS.retentionHint}>
+                Start date must be within the last {ANALYTICS_DATA_RETENTION_DAYS} days (retention). End must be after
+                start.
+              </p>
+            </div>
+          )}
         </div>
       }
     >
@@ -105,34 +347,40 @@ export default function BrowsersPage() {
         <header style={PS.resultHead}>
           <span style={PS.headTitle}>
             <span style={PS.tagline}>Traffic share per browser.</span>
-            <InfoPopover
-              heading="How is traffic measured?"
-              body="Traffic is measured by the number of HTTP requests sent to the server by browsers or via the API."
-              linkLabel="HTTP requests documentation"
-              linkHref="https://doc.fluidtopics.com/r/Fluid-Topics-Glossary/Definitions/H/HTTP-request"
-            />
+            <BrowsersInfoPopover />
           </span>
           <button
             type="button"
             style={PS.iconBtn}
-            title="Download as XLSX"
-            aria-label="Download as XLSX"
+            title="Download as CSV"
+            aria-label="Download as CSV"
+            onClick={() => downloadBrowsersCsv(rows, total)}
+            disabled={!rows.length}
           >
             <IconDownload />
           </button>
         </header>
 
         <section style={PS.body}>
-          <BrowsersDonut data={BROWSERS} total={TOTAL} />
+          {loading ? (
+            <div style={PS.loading}>Loading browser traffic…</div>
+          ) : errorMsg && !rows.length ? (
+            <div style={PS.errorBox}>{errorMsg}</div>
+          ) : (
+            <>
+              {errorMsg ? <div style={PS.warnBox}>{errorMsg}</div> : null}
+              <BrowsersDonut data={chartData} total={total} methodology={methodology} />
+            </>
+          )}
         </section>
       </main>
     </AnalyticsShell>
   );
 }
 
-/* ------------------------------ Info popover ------------------------------ */
+/* ------------------------------ Help popover ------------------------------ */
 
-function InfoPopover({ heading, body, linkLabel, linkHref }) {
+function BrowsersInfoPopover() {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
@@ -141,7 +389,9 @@ function InfoPopover({ heading, body, linkLabel, linkHref }) {
     const onDoc = (e) => {
       if (ref.current && !ref.current.contains(e.target)) setOpen(false);
     };
-    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    const onKey = (e) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
     document.addEventListener('mousedown', onDoc);
     document.addEventListener('keydown', onKey);
     return () => {
@@ -154,36 +404,57 @@ function InfoPopover({ heading, body, linkLabel, linkHref }) {
     <span style={IP.wrap} ref={ref}>
       <button
         type="button"
-        style={IP.trigger}
+        style={{ ...IP.trigger, background: open ? '#eff6ff' : 'transparent' }}
         onClick={() => setOpen((v) => !v)}
-        aria-haspopup="dialog"
         aria-expanded={open}
-        aria-label={`Open help: ${heading}`}
-        title={`Open help: ${heading}`}
+        aria-label="Browsers analytics help"
+        title="Browsers analytics"
       >
         <IconInfo />
       </button>
       {open && (
-        <div role="dialog" aria-label={heading} style={IP.popover}>
+        <div role="dialog" aria-label="Browsers analytics" style={IP.popover}>
           <header style={IP.head}>
-            <span style={IP.heading}>{heading}</span>
-            <button
-              type="button"
-              style={IP.close}
-              onClick={() => setOpen(false)}
-              aria-label="close info"
-            >
+            <span style={IP.heading}>Browsers</span>
+            <button type="button" style={IP.close} onClick={() => setOpen(false)} aria-label="close">
               <IconClose />
             </button>
           </header>
-          <p style={IP.body}>{body}</p>
-          <p style={IP.linkLine}>
-            <span>See </span>
-            <a href={linkHref} target="_blank" rel="noopener noreferrer" style={IP.link}>
-              <span>{linkLabel}</span>
-              <IconExternal />
-            </a>
-          </p>
+          <div style={IP.bodyScroll}>
+            <p style={IP.p}>
+              Selecting Browsers under Analytics shows traffic for the portal broken down by browser. A pie chart gives
+              an at-a-glance view of each browser; each slice is one browser family derived from the User-Agent.
+            </p>
+            <p style={IP.p}>
+              Traffic is based on the number of HTTP requests represented as analytics events—sent from browsers or via
+              the API.
+            </p>
+            <h4 style={IP.h4}>Modify date range</h4>
+            <p style={IP.p}>
+              By default, the previous calendar month is selected. Open the calendar control to choose the last week, the
+              last three months (rolling 90 days), the previous month, or a custom range. The pie chart updates when you
+              apply a new range. The start date must fall within the analytics retention period, and the end date must be
+              later than the start date.
+            </p>
+            <h4 style={IP.h4}>Calculation method</h4>
+            <p style={IP.p}>
+              From January 2024 onward (applied here to all ranges), the calculation excludes static resources. That can
+              reduce event counts by up to about 30% compared with counting every raw HTTP request, depending on traffic
+              mix.
+            </p>
+            <p style={IP.linkLine}>
+              <span>See </span>
+              <a
+                href="https://doc.fluidtopics.com/r/Fluid-Topics-Glossary/Definitions/H/HTTP-request"
+                target="_blank"
+                rel="noopener noreferrer"
+                style={IP.link}
+              >
+                <span>HTTP requests</span>
+                <IconExternal />
+              </a>
+            </p>
+          </div>
         </div>
       )}
     </span>
@@ -192,16 +463,16 @@ function InfoPopover({ heading, body, linkLabel, linkHref }) {
 
 /* ------------------------------ Donut chart ------------------------------ */
 
-function BrowsersDonut({ data, total }) {
+function BrowsersDonut({ data, total, methodology }) {
   const size = 360;
   const cx = size / 2;
   const cy = size / 2;
   const outerR = 156;
   const innerR = 92;
 
-  /* Pre-compute slice geometry. Angles run clockwise from the top (12 o'clock). */
   const slices = useMemo(() => {
-    let cursor = 0; /* radians, 0 = top */
+    if (!data.length || !total) return [];
+    let cursor = 0;
     return data.map((b) => {
       const frac = b.value / total;
       const start = cursor;
@@ -214,7 +485,6 @@ function BrowsersDonut({ data, total }) {
   }, [data, total]);
 
   const pointAt = (angle, r) => {
-    /* angle = 0 at top, going clockwise */
     const x = cx + Math.sin(angle) * r;
     const y = cy - Math.cos(angle) * r;
     return [x, y];
@@ -222,8 +492,8 @@ function BrowsersDonut({ data, total }) {
 
   const slicePath = (s) => {
     const [x1o, y1o] = pointAt(s.start, outerR);
-    const [x2o, y2o] = pointAt(s.end,   outerR);
-    const [x2i, y2i] = pointAt(s.end,   innerR);
+    const [x2o, y2o] = pointAt(s.end, outerR);
+    const [x2i, y2i] = pointAt(s.end, innerR);
     const [x1i, y1i] = pointAt(s.start, innerR);
     const largeArc = s.sweep > Math.PI ? 1 : 0;
     return [
@@ -235,11 +505,14 @@ function BrowsersDonut({ data, total }) {
     ].join(' ');
   };
 
-  /* Slices wide enough to fit a label inline. Anything narrower than ~12° gets
-   * just a hover tooltip. */
   const LABEL_MIN_SWEEP = (12 * Math.PI) / 180;
-
   const [hover, setHover] = useState(null);
+
+  if (!slices.length) {
+    return (
+      <div style={DC.empty}>No browser data in this range.</div>
+    );
+  }
 
   return (
     <div style={DC.wrap}>
@@ -249,7 +522,7 @@ function BrowsersDonut({ data, total }) {
           width={size}
           height={size}
           role="img"
-          aria-label="Browsers traffic share donut chart"
+          aria-label="Browsers traffic share pie chart"
         >
           {slices.map((s, i) => (
             <g key={s.name}>
@@ -263,7 +536,7 @@ function BrowsersDonut({ data, total }) {
                 style={{ cursor: 'pointer', transition: 'opacity 120ms ease' }}
                 opacity={hover === null || hover === i ? 1 : 0.55}
               >
-                <title>{`${s.name}: ${fmtCount(s.value)} (${fmtPct(s.frac * 100)})`}</title>
+                <title>{`${s.name}: ${fmtCount(s.value)} (${fmtPctDisplay(s.frac * 100)})`}</title>
               </path>
               {s.sweep >= LABEL_MIN_SWEEP && (
                 (() => {
@@ -289,21 +562,26 @@ function BrowsersDonut({ data, total }) {
             </g>
           ))}
 
-          {/* Centre summary */}
           <text x={cx} y={cy - 8} textAnchor="middle" fontSize="11" fill="#64748b" fontFamily="Inter, sans-serif">
-            Total HTTP requests
+            Total events
           </text>
           <text x={cx} y={cy + 14} textAnchor="middle" fontSize="22" fontWeight="700" fill="#0f172a" fontFamily="Inter, sans-serif">
             {fmtCount(total)}
           </text>
         </svg>
+        {methodology?.excludesStaticResources ? (
+          <p style={DC.chartFoot}>
+            Counts exclude static resources (scripts, styles, fonts, images, framework chunks). Methodology aligned with
+            Jan 2024+.
+          </p>
+        ) : null}
       </div>
 
       <div style={DC.legendCol} aria-label="Browser legend">
         <div style={DC.legendHead}>
           <span>Browser</span>
           <span style={{ display: 'flex', gap: '24px' }}>
-            <span style={{ width: '70px', textAlign: 'right' }}>Requests</span>
+            <span style={{ width: '70px', textAlign: 'right' }}>Events</span>
             <span style={{ width: '52px', textAlign: 'right' }}>Share</span>
           </span>
         </div>
@@ -325,7 +603,7 @@ function BrowsersDonut({ data, total }) {
               <span style={{ display: 'flex', gap: '24px' }}>
                 <span style={{ ...DC.legendValue, width: '70px' }}>{fmtCount(s.value)}</span>
                 <span style={{ ...DC.legendValue, width: '52px', color: '#475569' }}>
-                  {fmtPct(s.frac * 100)}
+                  {fmtPctDisplay(s.frac * 100)}
                 </span>
               </span>
             </li>
@@ -339,6 +617,7 @@ function BrowsersDonut({ data, total }) {
 /* ------------------------------ Styles ------------------------------ */
 
 const PS = {
+  toolbarWrap: { position: 'relative', display: 'inline-flex' },
   main: {
     flex: 1,
     minWidth: 0,
@@ -372,19 +651,93 @@ const PS = {
     display: 'inline-flex',
     alignItems: 'center',
     gap: '8px',
-    padding: '4px 10px',
+    padding: '5px 10px',
+    border: '1px solid #cbd5e1',
+    borderRadius: '999px',
+    background: '#ffffff',
+    color: '#475569',
+    cursor: 'pointer',
+    font: 'inherit',
+  },
+  dateLabels: { display: 'flex', flexDirection: 'column', lineHeight: 1.15, textAlign: 'left' },
+  dateLine: { fontSize: '0.72rem', color: '#475569', fontWeight: 500 },
+  dateCalendar: { display: 'inline-flex', color: '#1d4ed8' },
+
+  pickerPanel: {
+    position: 'absolute',
+    top: 'calc(100% + 8px)',
+    right: 0,
+    width: 'min(360px, 92vw)',
+    padding: '14px',
+    background: '#ffffff',
+    border: '1px solid #e5e7eb',
+    borderRadius: '10px',
+    boxShadow: '0 12px 28px rgba(15, 23, 42, 0.12)',
+    zIndex: 40,
+  },
+  pickerTitle: { margin: '0 0 8px', fontSize: '0.78rem', fontWeight: 600, color: '#0f172a' },
+  presetRow: { display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '14px' },
+  presetBtn: {
+    padding: '6px 10px',
+    fontSize: '0.75rem',
     border: '1px solid #cbd5e1',
     borderRadius: '8px',
-    background: '#ffffff',
+    background: '#f8fafc',
+    cursor: 'pointer',
+    color: '#0f172a',
   },
-  dateLabels: { display: 'flex', flexDirection: 'column', lineHeight: 1.15 },
-  dateLine: { fontSize: '0.7rem', color: '#475569', fontWeight: 500 },
-  dateCalendar: { display: 'inline-flex', color: '#1d4ed8' },
+  customRow: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'flex-end',
+    gap: '10px',
+    marginBottom: '8px',
+  },
+  customLab: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '4px',
+    fontSize: '0.72rem',
+    color: '#475569',
+  },
+  dateInput: {
+    border: '1px solid #cbd5e1',
+    borderRadius: '6px',
+    padding: '4px 8px',
+    fontSize: '0.75rem',
+    fontFamily: 'inherit',
+    color: '#0f172a',
+  },
+  applyBtn: {
+    padding: '6px 14px',
+    fontSize: '0.78rem',
+    fontWeight: 600,
+    border: 'none',
+    borderRadius: '8px',
+    background: '#1d4ed8',
+    color: '#ffffff',
+    cursor: 'pointer',
+  },
+  retentionHint: { margin: 0, fontSize: '0.7rem', color: '#64748b', lineHeight: 1.4 },
 
   body: {
     padding: '24px 22px 32px',
     display: 'flex',
     justifyContent: 'center',
+  },
+  loading: { padding: '48px', textAlign: 'center', color: '#64748b' },
+  errorBox: { padding: '24px', color: '#b91c1c', fontSize: '0.9rem', maxWidth: '560px', margin: '0 auto' },
+  warnBox: {
+    padding: '10px 14px',
+    marginBottom: '16px',
+    maxWidth: '900px',
+    marginLeft: 'auto',
+    marginRight: 'auto',
+    background: '#fffbeb',
+    border: '1px solid #fcd34d',
+    borderRadius: '8px',
+    fontSize: '0.82rem',
+    color: '#92400e',
   },
 };
 
@@ -397,7 +750,6 @@ const IP = {
     alignItems: 'center',
     justifyContent: 'center',
     border: 'none',
-    background: 'transparent',
     color: '#1d4ed8',
     borderRadius: '50%',
     cursor: 'pointer',
@@ -405,21 +757,26 @@ const IP = {
   popover: {
     position: 'absolute',
     top: 'calc(100% + 8px)',
-    left: '-12px',
-    width: '320px',
+    left: '50%',
+    transform: 'translateX(-50%)',
+    width: 'min(400px, 92vw)',
+    maxHeight: 'min(80vh, 480px)',
     background: '#ffffff',
     border: '1px solid #e5e7eb',
     borderRadius: '8px',
     boxShadow: '0 10px 25px rgba(15, 23, 42, 0.12)',
-    padding: '12px 14px 14px',
-    zIndex: 20,
+    zIndex: 50,
+    display: 'flex',
+    flexDirection: 'column',
   },
   head: {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: '8px',
-    marginBottom: '6px',
+    padding: '10px 12px',
+    borderBottom: '1px solid #f1f5f9',
+    flexShrink: 0,
   },
   heading: { fontSize: '0.88rem', fontWeight: 600, color: '#0f172a' },
   close: {
@@ -434,11 +791,22 @@ const IP = {
     borderRadius: '50%',
     cursor: 'pointer',
   },
-  body: { margin: 0, fontSize: '0.82rem', color: '#334155', lineHeight: 1.5 },
+  bodyScroll: {
+    padding: '10px 12px 14px',
+    overflowY: 'auto',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+    fontSize: '0.8rem',
+    color: '#1e293b',
+    lineHeight: 1.5,
+  },
+  p: { margin: 0 },
+  h4: { margin: '4px 0 0', fontSize: '0.82rem', fontWeight: 600, color: '#0f172a' },
   linkLine: {
-    margin: '8px 0 0',
-    fontSize: '0.82rem',
-    color: '#334155',
+    margin: 0,
+    fontSize: '0.8rem',
+    color: '#475569',
     display: 'flex',
     alignItems: 'center',
     gap: '4px',
@@ -450,12 +818,12 @@ const IP = {
     gap: '4px',
     color: '#1d4ed8',
     textDecoration: 'underline',
-    textDecorationThickness: '1px',
-    textUnderlineOffset: '2px',
+    fontWeight: 500,
   },
 };
 
 const DC = {
+  empty: { padding: '48px', textAlign: 'center', color: '#64748b', fontSize: '0.9rem' },
   wrap: {
     display: 'flex',
     gap: '32px',
@@ -465,7 +833,15 @@ const DC = {
     width: '100%',
     maxWidth: '1080px',
   },
-  chartCol: { flex: '0 0 auto' },
+  chartCol: { flex: '0 0 auto', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' },
+  chartFoot: {
+    margin: 0,
+    maxWidth: '380px',
+    fontSize: '0.72rem',
+    color: '#64748b',
+    lineHeight: 1.45,
+    textAlign: 'center',
+  },
   legendCol: {
     flex: '1 1 360px',
     minWidth: '320px',

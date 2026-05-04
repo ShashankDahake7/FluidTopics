@@ -64,6 +64,21 @@ router.get('/replaceable', auth, adminOrEditor, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// POST /api/publications/cleanup-orphan-unstructured
+// ?dryRun=1 — count orphans only, do not delete. Admin-only.
+router.post(
+  '/cleanup-orphan-unstructured',
+  auth,
+  adminOnlyContent,
+  async (req, res, next) => {
+    try {
+      const dryRun = req.query.dryRun === '1' || req.query.dryRun === 'true';
+      const out = await publicationService.cleanupOrphanUnstructuredDocuments({ dryRun });
+      res.json(out);
+    } catch (err) { next(err); }
+  }
+);
+
 // POST /api/publications/:id/extract — spawns the extract worker thread and
 // returns 202 immediately. The worker runs in the background, appending log
 // rows and finally flipping `status` to `extracted` (or `failed`). The drawer

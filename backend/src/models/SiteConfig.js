@@ -9,6 +9,8 @@ const siteConfigSchema = new mongoose.Schema(
     // Locales the portal explicitly supports — when empty, all locales found
     // in the content are considered available.
     enabledLocales: [{ type: String }],
+    /** When true, the search UI may offer "all languages"; analytics can filter by that scope. */
+    searchInAllLanguagesEnabled: { type: Boolean, default: true },
 
     // Legal terms (My Library / login acceptance) — admin Legal terms page.
     legalTermsEnabled: { type: Boolean, default: false },

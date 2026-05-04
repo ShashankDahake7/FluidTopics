@@ -2,6 +2,8 @@ const express = require('express');
 const mongoose = require('mongoose');
 const PersonalBook = require('../models/PersonalBook');
 const { auth, optionalAuth } = require('../middleware/auth');
+const { trackFtEvent } = require('../services/analytics/analyticsService');
+const { analyticsFromReq } = require('../utils/clientIp');
 
 const router = express.Router();
 
@@ -41,14 +43,24 @@ router.post('/', auth, async (req, res, next) => {
   try {
     const { title, description, coverColor, topicIds, visibility } = req.body || {};
     if (!title || !title.trim()) return res.status(400).json({ error: 'title required' });
+    const tidList = Array.isArray(topicIds) ? topicIds : [];
     const book = await PersonalBook.create({
       userId: req.user.id,
       title: title.trim(),
       description: (description || '').trim(),
       coverColor: coverColor || '#1d4ed8',
-      topicIds: Array.isArray(topicIds) ? topicIds : [],
+      topicIds: tidList,
       visibility: ['private', 'public'].includes(visibility) ? visibility : 'private',
     });
+    if (tidList.length > 0) {
+      trackFtEvent({
+        userId: req.user.id,
+        ftEvent: 'personal_topic.create',
+        data: { count: tidList.length },
+        userAgent: req.headers['user-agent'],
+        ...analyticsFromReq(req),
+      }).catch(() => {});
+    }
     res.status(201).json({ book });
   } catch (err) { next(err); }
 });
@@ -68,6 +80,14 @@ router.patch('/:id', auth, async (req, res, next) => {
       { new: true }
     );
     if (!book) return res.status(404).json({ error: 'Not found' });
+    if (Array.isArray(req.body.topicIds)) {
+      trackFtEvent({
+        userId: req.user.id,
+        ftEvent: 'personal_topic.update',
+        userAgent: req.headers['user-agent'],
+        ...analyticsFromReq(req),
+      }).catch(() => {});
+    }
     res.json({ book });
   } catch (err) { next(err); }
 });
@@ -82,6 +102,15 @@ router.post('/:id/topics', auth, async (req, res, next) => {
       { new: true }
     );
     if (!book) return res.status(404).json({ error: 'Not found' });
+    if (ids.length > 0) {
+      trackFtEvent({
+        userId: req.user.id,
+        ftEvent: 'personal_topic.create',
+        data: { count: ids.length },
+        userAgent: req.headers['user-agent'],
+        ...analyticsFromReq(req),
+      }).catch(() => {});
+    }
     res.json({ book });
   } catch (err) { next(err); }
 });
@@ -95,6 +124,12 @@ router.delete('/:id/topics/:topicId', auth, async (req, res, next) => {
       { new: true }
     );
     if (!book) return res.status(404).json({ error: 'Not found' });
+    trackFtEvent({
+      userId: req.user.id,
+      ftEvent: 'personal_topic.delete',
+      userAgent: req.headers['user-agent'],
+      ...analyticsFromReq(req),
+    }).catch(() => {});
     res.json({ book });
   } catch (err) { next(err); }
 });
@@ -104,6 +139,12 @@ router.delete('/:id', auth, async (req, res, next) => {
   try {
     const book = await PersonalBook.findOneAndDelete({ _id: req.params.id, userId: req.user.id });
     if (!book) return res.status(404).json({ error: 'Not found' });
+    trackFtEvent({
+      userId: req.user.id,
+      ftEvent: 'personal_book.delete',
+      userAgent: req.headers['user-agent'],
+      ...analyticsFromReq(req),
+    }).catch(() => {});
     res.json({ message: 'Book deleted' });
   } catch (err) { next(err); }
 });

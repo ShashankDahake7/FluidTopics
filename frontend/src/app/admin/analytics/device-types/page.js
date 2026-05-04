@@ -1,51 +1,126 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AnalyticsShell from '@/components/admin/AnalyticsShell';
+import api from '@/lib/api';
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Legend,
+  Line,
+  LineChart,
+  ReferenceArea,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 
-/* ------------------------------ Time axis ------------------------------ */
-
-const MONTHS = [
-  'September 2024', 'October 2024', 'November 2024', 'December 2024',
-  'January 2025',   'February 2025', 'March 2025',    'April 2025',
-  'May 2025',       'June 2025',     'July 2025',     'August 2025',
-  'September 2025', 'October 2025',  'November 2025', 'December 2025',
-  'January 2026',   'February 2026', 'March 2026',    'April 2026',
-];
-
-const MONTH_LABELS = [
-  'September 2024', 'December 2024', 'March 2025', 'June 2025',
-  'September 2025', 'December 2025', 'March 2026',
-];
-
-const Y_TICKS = [0, 2000, 4000, 6000, 8000, 10000, 12000];
+/** Align with backend default and Traffic analytics retention policy. */
+const ANALYTICS_DATA_RETENTION_DAYS = 730;
 
 const PERIOD_OPTIONS = [
-  { value: 'WEEKLY',  label: 'Weekly' },
+  { value: 'WEEKLY', label: 'Weekly' },
   { value: 'MONTHLY', label: 'Monthly' },
 ];
 
-/* ------------------------------ Device data ------------------------------ */
-
 const DEVICES = [
+  { key: 'mobile', label: 'Mobile', color: '#361FAD' },
+  { key: 'tablet', label: 'Tablet', color: '#CFB017' },
   { key: 'desktop', label: 'Desktop', color: '#9D207B' },
-  { key: 'tablet',  label: 'Tablet',  color: '#CFB017' },
-  { key: 'mobile',  label: 'Mobile',  color: '#361FAD' },
+  { key: 'unknown', label: 'Unknown', color: '#94a3b8' },
 ];
-
-/* Mock monthly sessions per device, calibrated to the visible curves and
- * tooltip values from the Angular blueprint (e.g. November 2024:
- * Desktop 7,590 / Tablet 5,521 / Mobile 167). */
-const SERIES = {
-  desktop: [6303, 6658, 7590, 8089, 10191, 9127, 8693, 8919, 8486, 7728, 9323, 8007, 7727, 7866, 7958, 6895, 7533, 7646, 8257, 6134],
-  tablet:  [5429, 5326, 5521, 5588, 6975, 6453, 5560, 6247, 6443, 5991, 7268, 6434, 6881, 6711, 6442, 5556, 5814, 5922, 6312, 4937],
-  mobile:  [151, 164, 167, 191, 153, 124, 165, 160, 171, 173, 218, 236, 151, 222, 178, 147, 146, 150, 158, 148],
-};
 
 const TABS = [
-  { value: 'EVOLUTION',    label: 'Evolution',    icon: 'line' },
-  { value: 'DISTRIBUTION', label: 'Distribution', icon: 'bar'  },
+  { value: 'EVOLUTION', label: 'Evolution', icon: 'line' },
+  { value: 'DISTRIBUTION', label: 'Distribution', icon: 'bar' },
 ];
+
+/* ------------------------------ Date range (match Browsers) ------------------------------ */
+
+function defaultDateRangePreviousMonth() {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(now.getFullYear(), now.getMonth(), 0);
+  end.setHours(23, 59, 59, 999);
+  return { start, end };
+}
+
+function presetLastWeek() {
+  const end = new Date();
+  end.setHours(23, 59, 59, 999);
+  const start = new Date(end);
+  start.setDate(start.getDate() - 6);
+  start.setHours(0, 0, 0, 0);
+  return { start, end };
+}
+
+function presetLast3Months() {
+  const end = new Date();
+  end.setHours(23, 59, 59, 999);
+  const start = new Date(end);
+  start.setDate(start.getDate() - 89);
+  start.setHours(0, 0, 0, 0);
+  return { start, end };
+}
+
+function toInputDate(d) {
+  const x = new Date(d);
+  const y = x.getFullYear();
+  const m = String(x.getMonth() + 1).padStart(2, '0');
+  const day = String(x.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function parseInputDate(s) {
+  const d = new Date(`${s}T12:00:00`);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function earliestAllowedStart() {
+  const d = new Date();
+  d.setDate(d.getDate() - ANALYTICS_DATA_RETENTION_DAYS);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+/* ------------------------------ XLSX export ------------------------------ */
+
+async function downloadDeviceTypesXlsx(evolution, distribution, totalSessions, granularityLabel) {
+  const XLSX = await import('xlsx');
+  const wb = XLSX.utils.book_new();
+
+  const evoRows = [
+    ['Period', 'Granularity', 'Mobile sessions', 'Tablet sessions', 'Desktop sessions', 'Unknown sessions', 'Total'],
+    ...evolution.map((r) => [
+      r.label,
+      r.granularity,
+      r.mobile,
+      r.tablet,
+      r.desktop,
+      r.unknown,
+      r.total,
+    ]),
+  ];
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(evoRows), 'Evolution');
+
+  const dist = distribution || {};
+  const distTotal = totalSessions || 1;
+  const distRows = [
+    ['Device', 'Sessions', 'Share %'],
+    ['Mobile', dist.mobile ?? 0, `${(((dist.mobile ?? 0) / distTotal) * 100).toFixed(2)}%`],
+    ['Tablet', dist.tablet ?? 0, `${(((dist.tablet ?? 0) / distTotal) * 100).toFixed(2)}%`],
+    ['Desktop', dist.desktop ?? 0, `${(((dist.desktop ?? 0) / distTotal) * 100).toFixed(2)}%`],
+    ['Unknown', dist.unknown ?? 0, `${(((dist.unknown ?? 0) / distTotal) * 100).toFixed(2)}%`],
+    ['Total', totalSessions ?? 0, '100%'],
+  ];
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(distRows), 'Distribution');
+
+  const safe = granularityLabel.replace(/\s+/g, '-').toLowerCase();
+  XLSX.writeFile(wb, `device-types-traffic-${safe}.xlsx`);
+}
 
 /* ------------------------------ Icons ------------------------------ */
 
@@ -117,13 +192,150 @@ const IconExternal = () => (
   </svg>
 );
 
+const IconCalendar = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <rect x="3" y="4" width="18" height="18" rx="2" />
+    <line x1="16" y1="2" x2="16" y2="6" />
+    <line x1="8" y1="2" x2="8" y2="6" />
+    <line x1="3" y1="10" x2="21" y2="10" />
+  </svg>
+);
+
 /* ------------------------------ Page ------------------------------ */
 
 export default function DeviceTypesPage() {
+  const def = useMemo(() => defaultDateRangePreviousMonth(), []);
+  const [rangeStart, setRangeStart] = useState(() => toInputDate(def.start));
+  const [rangeEnd, setRangeEnd] = useState(() => toInputDate(def.end));
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [customStart, setCustomStart] = useState(() => toInputDate(def.start));
+  const [customEnd, setCustomEnd] = useState(() => toInputDate(def.end));
+
   const [tab, setTab] = useState('EVOLUTION');
   const [period, setPeriod] = useState('MONTHLY');
   const [drawerOpen, setDrawerOpen] = useState(true);
   const [selected, setSelected] = useState(() => new Set(DEVICES.map((d) => d.key)));
+
+  const [evolution, setEvolution] = useState([]);
+  const [distribution, setDistribution] = useState(null);
+  const [totalSessions, setTotalSessions] = useState(0);
+  const [matchedPageDisplayEvents, setMatchedPageDisplayEvents] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState(null);
+  const [methodology, setMethodology] = useState(null);
+
+  const pickerRef = useRef(null);
+
+  const startIso = useMemo(() => {
+    const d = parseInputDate(rangeStart);
+    if (!d) return null;
+    d.setHours(0, 0, 0, 0);
+    return d.toISOString();
+  }, [rangeStart]);
+
+  const endIso = useMemo(() => {
+    const d = parseInputDate(rangeEnd);
+    if (!d) return null;
+    d.setHours(23, 59, 59, 999);
+    return d.toISOString();
+  }, [rangeEnd]);
+
+  const granularity = period === 'WEEKLY' ? 'week' : 'month';
+
+  const fetchData = useCallback(async () => {
+    if (!startIso || !endIso) return;
+    setLoading(true);
+    setErrorMsg(null);
+    try {
+      const json = await api.post('/analytics/v2/traffic/device-types', {
+        startDate: startIso,
+        endDate: endIso,
+        granularity,
+      });
+      if (json?.error) {
+        setErrorMsg(json.error);
+        setEvolution([]);
+        setDistribution(null);
+        setTotalSessions(0);
+        setMatchedPageDisplayEvents(0);
+        setMethodology(null);
+        return;
+      }
+      setEvolution(Array.isArray(json.evolution) ? json.evolution : []);
+      setDistribution(json.distribution ?? null);
+      setTotalSessions(typeof json.totalSessions === 'number' ? json.totalSessions : 0);
+      setMatchedPageDisplayEvents(
+        typeof json.matchedPageDisplayEvents === 'number' ? json.matchedPageDisplayEvents : 0,
+      );
+      setMethodology(json.methodology ?? null);
+    } catch (e) {
+      console.error(e);
+      setErrorMsg(e.message || 'Request failed');
+      setEvolution([]);
+      setDistribution(null);
+      setTotalSessions(0);
+      setMatchedPageDisplayEvents(0);
+      setMethodology(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [startIso, endIso, granularity]);
+
+  useEffect(() => {
+    void fetchData();
+  }, [fetchData]);
+
+  useEffect(() => {
+    if (!pickerOpen) return;
+    const onDoc = (e) => {
+      if (pickerRef.current && !pickerRef.current.contains(e.target)) setPickerOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [pickerOpen]);
+
+  const applyRange = (start, end) => {
+    setErrorMsg(null);
+    setRangeStart(toInputDate(start));
+    setRangeEnd(toInputDate(end));
+    setCustomStart(toInputDate(start));
+    setCustomEnd(toInputDate(end));
+    setPickerOpen(false);
+  };
+
+  const applyPreset = (key) => {
+    if (key === 'prevMonth') {
+      const { start, end } = defaultDateRangePreviousMonth();
+      applyRange(start, end);
+      return;
+    }
+    if (key === 'lastWeek') {
+      const { start, end } = presetLastWeek();
+      applyRange(start, end);
+      return;
+    }
+    if (key === 'last3mo') {
+      const { start, end } = presetLast3Months();
+      applyRange(start, end);
+    }
+  };
+
+  const applyCustom = () => {
+    const s = parseInputDate(customStart);
+    const e = parseInputDate(customEnd);
+    if (!s || !e || s > e) {
+      setErrorMsg('End date must be after start date.');
+      return;
+    }
+    if (s < earliestAllowedStart()) {
+      setErrorMsg(
+        `Start date must be within the analytics retention period (${ANALYTICS_DATA_RETENTION_DAYS} days).`
+      );
+      return;
+    }
+    setErrorMsg(null);
+    applyRange(s, e);
+  };
 
   const allOn = selected.size === DEVICES.length;
   const noneOn = selected.size === 0;
@@ -140,35 +352,146 @@ export default function DeviceTypesPage() {
     });
   };
 
-  const visibleDevices = useMemo(
-    () => DEVICES.filter((d) => selected.has(d.key)),
-    [selected],
-  );
+  const visibleDevices = useMemo(() => DEVICES.filter((d) => selected.has(d.key)), [selected]);
+
+  const lineData = useMemo(() => {
+    if (!evolution?.length) return [];
+    return evolution.map((row) => {
+      const o = { label: row.label, key: row.key, ongoing: row.ongoing };
+      for (const d of DEVICES) {
+        o[d.key] = row[d.key] ?? 0;
+      }
+      return o;
+    });
+  }, [evolution]);
+
+  const stackedDistData = useMemo(() => {
+    const keys = DEVICES.filter((d) => selected.has(d.key)).map((d) => d.key);
+    if (!evolution?.length || keys.length === 0) return [];
+    return evolution.map((row) => {
+      const out = { label: row.label, key: row.key, ongoing: row.ongoing };
+      let sum = keys.reduce((s, k) => s + (row[k] || 0), 0);
+      if (sum === 0) sum = 1;
+      for (const k of keys) {
+        out[k] = (100 * (row[k] || 0)) / sum;
+      }
+      return out;
+    });
+  }, [evolution, selected]);
+
+  const ongoingArea = useMemo(() => {
+    const on = evolution.filter((r) => r.ongoing);
+    if (!on.length) return null;
+    return { x1: on[0].label, x2: on[on.length - 1].label };
+  }, [evolution]);
+
+  const handleDownload = () => {
+    void downloadDeviceTypesXlsx(evolution, distribution, totalSessions, period === 'WEEKLY' ? 'weekly' : 'monthly');
+  };
+
+  const displayFrom = rangeStart;
+  const displayTo = rangeEnd;
 
   return (
     <AnalyticsShell
       active="device-types"
       breadcrumb={{ prefix: 'Traffic', title: 'Device types' }}
-      feedbackSubject="Feedback about device types evolution"
       toolbarExtras={
-        <button
-          type="button"
-          onClick={() => setDrawerOpen((v) => !v)}
-          title={drawerOpen ? 'Hide filters' : 'Show filters'}
-          aria-label={drawerOpen ? 'Hide filters' : 'Show filters'}
-          aria-pressed={drawerOpen}
-          style={{
-            ...PS.toolbarIconBtn,
-            background: drawerOpen ? '#eff6ff' : 'transparent',
-            color: drawerOpen ? '#1d4ed8' : '#475569',
-          }}
-        >
-          <IconFilters />
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div style={PS.toolbarWrap} ref={pickerRef}>
+            <button
+              type="button"
+              style={PS.dateIndicator}
+              title="Change date range"
+              aria-expanded={pickerOpen}
+              aria-haspopup="dialog"
+              onClick={() => setPickerOpen((v) => !v)}
+            >
+              <span style={PS.dateLabels}>
+                <span style={PS.dateLine}>
+                  From: {displayFrom ? new Date(`${displayFrom}T12:00:00`).toLocaleDateString() : '—'}
+                </span>
+                <span style={PS.dateLine}>
+                  To: {displayTo ? new Date(`${displayTo}T12:00:00`).toLocaleDateString() : '—'}
+                </span>
+              </span>
+              <span style={PS.dateCalendar} aria-hidden="true">
+                <IconCalendar />
+              </span>
+            </button>
+            {pickerOpen && (
+              <div role="dialog" aria-label="Date range" style={PS.pickerPanel}>
+                <p style={PS.pickerTitle}>Quick ranges</p>
+                <div style={PS.presetRow}>
+                  <button type="button" style={PS.presetBtn} onClick={() => applyPreset('lastWeek')}>
+                    Last week
+                  </button>
+                  <button type="button" style={PS.presetBtn} onClick={() => applyPreset('last3mo')}>
+                    Last 3 months
+                  </button>
+                  <button type="button" style={PS.presetBtn} onClick={() => applyPreset('prevMonth')}>
+                    Previous month
+                  </button>
+                </div>
+                <p style={PS.pickerTitle}>Custom range</p>
+                <div style={PS.customRow}>
+                  <label style={PS.customLab}>
+                    From
+                    <input
+                      type="date"
+                      value={customStart}
+                      min={toInputDate(earliestAllowedStart())}
+                      max={customEnd}
+                      onChange={(e) => setCustomStart(e.target.value)}
+                      style={PS.dateInput}
+                    />
+                  </label>
+                  <label style={PS.customLab}>
+                    To
+                    <input
+                      type="date"
+                      value={customEnd}
+                      min={customStart}
+                      onChange={(e) => setCustomEnd(e.target.value)}
+                      style={PS.dateInput}
+                    />
+                  </label>
+                </div>
+                <button type="button" style={PS.applyBtn} onClick={applyCustom}>
+                  Apply
+                </button>
+                <p style={PS.retentionHint}>
+                  Start date must be within the last {ANALYTICS_DATA_RETENTION_DAYS} days (retention). Default range is
+                  the previous calendar month.
+                </p>
+              </div>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => setDrawerOpen((v) => !v)}
+            title={drawerOpen ? 'Hide filters' : 'Show filters'}
+            aria-label={drawerOpen ? 'Hide filters' : 'Show filters'}
+            aria-pressed={drawerOpen}
+            style={{
+              ...PS.toolbarIconBtn,
+              background: drawerOpen ? '#eff6ff' : 'transparent',
+              color: drawerOpen ? '#1d4ed8' : '#475569',
+            }}
+          >
+            <IconFilters />
+          </button>
+        </div>
       }
     >
       <div style={PS.layout}>
         <main style={{ ...PS.main, marginRight: drawerOpen ? '330px' : 0 }}>
+          {errorMsg && (
+            <div style={PS.errorBanner} role="alert">
+              {errorMsg}
+            </div>
+          )}
+
           <nav role="tablist" aria-label="Device types view" style={PS.tabBar}>
             {TABS.map((t) => {
               const active = tab === t.value;
@@ -185,21 +508,40 @@ export default function DeviceTypesPage() {
                     borderBottomColor: active ? '#1d4ed8' : 'transparent',
                   }}
                 >
-                  <span style={PS.tabIcon}>
-                    {t.icon === 'line' ? <IconLineChart /> : <IconBarNormalized />}
-                  </span>
+                  <span style={PS.tabIcon}>{t.icon === 'line' ? <IconLineChart /> : <IconBarNormalized />}</span>
                   <span>{t.label}</span>
                 </button>
               );
             })}
           </nav>
 
+          {!loading && !errorMsg && totalSessions === 0 && (
+            <div style={PS.zeroSessionsBanner} role="status">
+              <strong style={{ display: 'block', marginBottom: '6px', color: '#0f172a', fontSize: '0.88rem' }}>
+                No sessions in this date range
+              </strong>
+              {matchedPageDisplayEvents === 0 ? (
+                <span style={{ color: '#475569', lineHeight: 1.5, fontSize: '0.85rem' }}>
+                  The database has <strong>no</strong> <code style={PS.code}>page.display</code> analytics rows between your
+                  start and end dates (after excluding static assets). Usual causes: the range still ends{' '}
+                  <strong>before</strong> days when you actually used the app (for example range ends in April but you only
+                  browsed in May), the browser never successfully called <code style={PS.code}>POST /api/analytics/track</code>{' '}
+                  (check Network → filter &quot;track&quot; → should be 200), or the API is writing to a different MongoDB than
+                  you expect. In development, failed track calls log a warning in the browser console.
+                </span>
+              ) : (
+                <span style={{ color: '#475569', lineHeight: 1.5, fontSize: '0.85rem' }}>
+                  Found {matchedPageDisplayEvents} raw <code style={PS.code}>page.display</code> hit(s) in range but no
+                  sessions rolled up—contact support if this persists.
+                </span>
+              )}
+            </div>
+          )}
+
           {tab === 'EVOLUTION' && (
             <>
               <header style={PS.resultHead}>
-                <span style={PS.headTagline}>
-                  Evolution of sessions per device type.
-                </span>
+                <span style={PS.headTagline}>Evolution of sessions per device type.</span>
                 <div style={PS.headControls}>
                   <div role="radiogroup" aria-label="Group by period" style={PS.switch}>
                     {PERIOD_OPTIONS.map((opt) => {
@@ -228,6 +570,8 @@ export default function DeviceTypesPage() {
                     style={{ ...PS.iconBtn, color: '#1d4ed8' }}
                     title="Download as XLSX"
                     aria-label="Download as XLSX"
+                    onClick={handleDownload}
+                    disabled={loading || !lineData.length}
                   >
                     <IconDownload />
                   </button>
@@ -236,8 +580,71 @@ export default function DeviceTypesPage() {
 
               <section style={PS.body}>
                 <div style={PS.chartCard}>
-                  <EvolutionChart devices={visibleDevices} empty={noneOn} />
+                  {loading ? (
+                    <p style={PS.muted}>Loading…</p>
+                  ) : (
+                    <div style={{ width: '100%', height: 380 }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={lineData} margin={{ top: 8, right: 16, left: 4, bottom: period === 'MONTHLY' ? 48 : 56 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#e0e6f1" />
+                          {ongoingArea && (
+                            <ReferenceArea
+                              x1={ongoingArea.x1}
+                              x2={ongoingArea.x2}
+                              strokeOpacity={0}
+                              fill="rgba(33,150,243,0.08)"
+                            />
+                          )}
+                          <XAxis
+                            dataKey="label"
+                            tick={{ fontSize: 11, fill: '#64748b' }}
+                            interval={0}
+                            angle={lineData.length > 10 ? -35 : 0}
+                            textAnchor={lineData.length > 10 ? 'end' : 'middle'}
+                            height={lineData.length > 10 ? 70 : 36}
+                            label={{ value: 'DATE', position: 'insideBottomRight', offset: -4, fill: '#6E7079', fontSize: 11 }}
+                          />
+                          <YAxis
+                            tick={{ fontSize: 11, fill: '#64748b' }}
+                            label={{
+                              value: 'SESSIONS',
+                              angle: -90,
+                              position: 'insideLeft',
+                              fill: '#6E7079',
+                              fontSize: 11,
+                              style: { textAnchor: 'middle' },
+                            }}
+                          />
+                          <Tooltip
+                            contentStyle={{ borderRadius: 8, border: '1px solid #e5e7eb' }}
+                            formatter={(value, name) => [Number(value).toLocaleString('en-US'), name]}
+                          />
+                          <Legend wrapperStyle={{ paddingTop: 8 }} />
+                          {!noneOn &&
+                            visibleDevices.map((d) => (
+                              <Line
+                                key={d.key}
+                                type="monotone"
+                                dataKey={d.key}
+                                name={d.label}
+                                stroke={d.color}
+                                strokeWidth={2}
+                                dot={{ r: 3, fill: '#fff', strokeWidth: 2 }}
+                                activeDot={{ r: 4 }}
+                              />
+                            ))}
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )}
+                  {ongoingArea && !loading && (
+                    <p style={PS.ongoingCaption}>Shaded region: ongoing period (incomplete).</p>
+                  )}
+                  {!loading && noneOn && <p style={PS.muted}>No device types selected.</p>}
+                  {!loading && !noneOn && lineData.length === 0 && <p style={PS.muted}>No sessions in this range.</p>}
                 </div>
+
+                <DeviceTypesFootnote methodology={methodology} />
               </section>
             </>
           )}
@@ -246,7 +653,8 @@ export default function DeviceTypesPage() {
             <>
               <header style={PS.resultHead}>
                 <span style={PS.headTagline}>
-                  Distribution of sessions per device type.
+                  Distribution of sessions per device type (percentage within each period; filtered categories
+                  renormalized to 100%).
                 </span>
                 <div style={PS.headControls}>
                   <div role="radiogroup" aria-label="Group by period" style={PS.switch}>
@@ -276,6 +684,8 @@ export default function DeviceTypesPage() {
                     style={{ ...PS.iconBtn, color: '#1d4ed8' }}
                     title="Download as XLSX"
                     aria-label="Download as XLSX"
+                    onClick={handleDownload}
+                    disabled={loading || !stackedDistData.length}
                   >
                     <IconDownload />
                   </button>
@@ -284,8 +694,75 @@ export default function DeviceTypesPage() {
 
               <section style={PS.body}>
                 <div style={PS.chartCard}>
-                  <DistributionChart devices={visibleDevices} empty={noneOn} />
+                  {loading ? (
+                    <p style={PS.muted}>Loading…</p>
+                  ) : (
+                    <div style={{ width: '100%', height: 380 }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={stackedDistData} margin={{ top: 8, right: 16, left: 4, bottom: stackedDistData.length > 10 ? 56 : 48 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#e0e6f1" />
+                          {ongoingArea && (
+                            <ReferenceArea
+                              x1={ongoingArea.x1}
+                              x2={ongoingArea.x2}
+                              strokeOpacity={0}
+                              fill="rgba(33,150,243,0.08)"
+                            />
+                          )}
+                          <XAxis
+                            dataKey="label"
+                            tick={{ fontSize: 11, fill: '#64748b' }}
+                            interval={0}
+                            angle={stackedDistData.length > 10 ? -35 : 0}
+                            textAnchor={stackedDistData.length > 10 ? 'end' : 'middle'}
+                            height={stackedDistData.length > 10 ? 70 : 36}
+                            label={{ value: 'DATE', position: 'insideBottomRight', offset: -4, fill: '#6E7079', fontSize: 11 }}
+                          />
+                          <YAxis
+                            domain={[0, 100]}
+                            tickFormatter={(v) => `${v}%`}
+                            tick={{ fontSize: 11, fill: '#64748b' }}
+                            label={{
+                              value: 'SHARE',
+                              angle: -90,
+                              position: 'insideLeft',
+                              fill: '#6E7079',
+                              fontSize: 11,
+                            }}
+                          />
+                          <Tooltip
+                            contentStyle={{ borderRadius: 8, border: '1px solid #e5e7eb' }}
+                            formatter={(value, name) => [`${Number(value).toFixed(1)}%`, name]}
+                          />
+                          <Legend wrapperStyle={{ paddingTop: 8 }} />
+                          {!noneOn &&
+                            visibleDevices.map((d) => (
+                              <Bar key={d.key} dataKey={d.key} name={d.label} stackId="a" fill={d.color} />
+                            ))}
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )}
+                  {!loading && totalSessions > 0 && distribution && (
+                    <p style={PS.summaryLine}>
+                      Overall ({displayFrom}–{displayTo}):{' '}
+                      {DEVICES.map((d) => (
+                        <span key={d.key} style={{ marginRight: '12px' }}>
+                          {d.label}{' '}
+                          <strong>
+                            {(((distribution[d.key] ?? 0) / totalSessions) * 100).toFixed(1)}%
+                          </strong>
+                        </span>
+                      ))}
+                    </p>
+                  )}
+                  {!loading && noneOn && <p style={PS.muted}>No device types selected.</p>}
+                  {!loading && !noneOn && stackedDistData.length === 0 && (
+                    <p style={PS.muted}>No sessions in this range.</p>
+                  )}
                 </div>
+
+                <DeviceTypesFootnote methodology={methodology} />
               </section>
             </>
           )}
@@ -308,9 +785,12 @@ export default function DeviceTypesPage() {
 
             <div style={PS.drawerBody}>
               <div style={PS.notice}>
-                <span style={PS.noticeIcon} aria-hidden="true"><IconInfoCircle /></span>
+                <span style={PS.noticeIcon} aria-hidden="true">
+                  <IconInfoCircle />
+                </span>
                 <span style={PS.noticeBody}>
-                  See{' '}
+                  Device type is derived from viewport width and height on each{' '}
+                  <code style={PS.code}>page.display</code> event (first viewport in the session). See{' '}
                   <a
                     href="https://doc.fluidtopics.com/access?ft:originId=device-categorization"
                     target="_blank"
@@ -325,11 +805,7 @@ export default function DeviceTypesPage() {
 
               <div style={PS.selectAllRow}>
                 <label style={{ ...PS.checkRow, fontWeight: 600 }}>
-                  <Checkbox
-                    checked={allOn}
-                    indeterminate={!allOn && !noneOn}
-                    onChange={toggleAll}
-                  />
+                  <Checkbox checked={allOn} indeterminate={!allOn && !noneOn} onChange={toggleAll} />
                   <span>Select all</span>
                 </label>
               </div>
@@ -338,10 +814,7 @@ export default function DeviceTypesPage() {
                 {DEVICES.map((d) => (
                   <li key={d.key}>
                     <label style={PS.checkRow}>
-                      <Checkbox
-                        checked={selected.has(d.key)}
-                        onChange={() => toggleOne(d.key)}
-                      />
+                      <Checkbox checked={selected.has(d.key)} onChange={() => toggleOne(d.key)} />
                       <span style={{ ...PS.colorDot, background: d.color }} aria-hidden="true" />
                       <span>{d.label}</span>
                     </label>
@@ -356,206 +829,23 @@ export default function DeviceTypesPage() {
   );
 }
 
-/* ------------------------------ Evolution chart ------------------------------ */
-
-function EvolutionChart({ devices, empty }) {
-  const width = 1200;
-  const height = 320;
-  const padL = 80;
-  const padR = 28;
-  const padT = 38;
-  const padB = 36;
-  const innerW = width - padL - padR;
-  const innerH = height - padT - padB;
-
-  const yMax = Y_TICKS[Y_TICKS.length - 1];
-  const xStep = innerW / (MONTHS.length - 1);
-  const xPos = (i) => padL + i * xStep;
-  const yPos = (v) => padT + innerH - (v / yMax) * innerH;
-
-  const labelTickIdx = useMemo(
-    () => MONTH_LABELS.map((label) => MONTHS.indexOf(label)).filter((i) => i >= 0),
-    [],
-  );
-
-  const ongoingX = xPos(MONTHS.length - 1);
-  const lastTickX = xPos(MONTHS.length - 2);
-
+function DeviceTypesFootnote({ methodology }) {
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" style={{ width: '100%', height }}>
-      <text x={padL} y={padT - 18} fontSize="11" fill="#6E7079" textAnchor="middle" fontFamily="Inter, sans-serif" fontWeight="600">
-        SESSIONS
-      </text>
-
-      {Y_TICKS.map((t) => (
-        <g key={t}>
-          <line x1={padL} y1={yPos(t)} x2={padL + innerW} y2={yPos(t)} stroke="#e0e6f1" />
-          <text x={padL - 8} y={yPos(t) + 3} fontSize="11" fill="#6e7079" textAnchor="end" fontFamily="Inter, sans-serif">
-            {t.toLocaleString('en-US')}
-          </text>
-        </g>
-      ))}
-
-      <line x1={padL} y1={padT + innerH} x2={padL + innerW} y2={padT + innerH} stroke="#6e7079" />
-      <text x={padL + innerW + 6} y={padT + innerH + 3} fontSize="11" fill="#6E7079" fontFamily="Inter, sans-serif">
-        DATE
-      </text>
-
-      {labelTickIdx.map((idx) => (
-        <g key={idx}>
-          <line x1={xPos(idx)} y1={padT + innerH} x2={xPos(idx)} y2={padT + innerH + 5} stroke="#6e7079" />
-          <text x={xPos(idx)} y={padT + innerH + 18} fontSize="11" fill="#6e7079" textAnchor="middle" fontFamily="Inter, sans-serif">
-            {MONTHS[idx]}
-          </text>
-        </g>
-      ))}
-
-      <rect
-        x={lastTickX}
-        y={padT - 10}
-        width={ongoingX - lastTickX}
-        height={innerH + 10}
-        fill="rgba(33,150,243,0.06)"
-      />
-      <text x={(lastTickX + ongoingX) / 2} y={padT - 14} fontSize="11" fill="#475569" textAnchor="middle" fontFamily="Inter, sans-serif">
-        Ongoing period
-      </text>
-
-      {!empty && devices.map(({ key, label, color }) => {
-        const values = SERIES[key];
-        const points = values.map((v, i) => `${xPos(i)},${yPos(v)}`).join(' ');
-        return (
-          <g key={key}>
-            <polyline points={points} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="bevel" />
-            {values.map((v, i) => (
-              <circle
-                key={i}
-                cx={xPos(i)}
-                cy={yPos(v)}
-                r="3.5"
-                fill="#ffffff"
-                stroke={color}
-                strokeWidth="1"
-                opacity={i === values.length - 1 ? 0.55 : 1}
-              >
-                <title>{`${label} — ${MONTHS[i]}: ${v.toLocaleString('en-US')}`}</title>
-              </circle>
-            ))}
-          </g>
-        );
-      })}
-
-      {empty && (
-        <text x={padL + innerW / 2} y={padT + innerH / 2} fontSize="13" fill="#94a3b8" textAnchor="middle" fontFamily="Inter, sans-serif">
-          No device types selected
-        </text>
-      )}
-    </svg>
+    <div style={PS.footnote}>
+      <p style={PS.footnoteP}>
+        <strong>Categorization</strong> (viewport): Mobile — portrait width ≤480px or landscape ≤768px; Tablet —
+        portrait 481–1024px or landscape 769–1280px; Desktop — portrait ≥1025px or landscape ≥1281px. Uses the first{' '}
+        <code style={PS.code}>page.display</code> in a session that includes viewport dimensions.
+      </p>
+      {methodology?.excludesStaticResources ? (
+        <p style={PS.footnoteP}>
+          Static resources (JS/CSS/fonts/images, <code style={PS.code}>/_next/</code>, etc.) are excluded from counts
+          where possible (methodology from {methodology.staticExclusionEffectiveFrom || '2024'}).
+        </p>
+      ) : null}
+    </div>
   );
 }
-
-/* ------------------------------ Distribution chart ------------------------------ */
-
-function DistributionChart({ devices, empty }) {
-  const width = 1200;
-  const height = 320;
-  const padL = 80;
-  const padR = 28;
-  const padT = 36;
-  const padB = 36;
-  const innerW = width - padL - padR;
-  const innerH = height - padT - padB;
-
-  const labelTickIdx = useMemo(
-    () => MONTH_LABELS.map((label) => MONTHS.indexOf(label)).filter((i) => i >= 0),
-    [],
-  );
-
-  /* For each month compute the share of selected device types so each bar
-   * stacks to 100%. */
-  const bars = useMemo(() => {
-    return MONTHS.map((_m, monthIdx) => {
-      const totals = devices.map((d) => SERIES[d.key][monthIdx]);
-      const sum = totals.reduce((s, v) => s + v, 0) || 1;
-      let cursor = 0;
-      const segs = devices.map((d, i) => {
-        const v = SERIES[d.key][monthIdx];
-        const frac = v / sum;
-        const seg = { device: d, value: v, frac, start: cursor };
-        cursor += frac;
-        seg.end = cursor;
-        return seg;
-      });
-      return { idx: monthIdx, segs, total: sum };
-    });
-  }, [devices]);
-
-  const PCT_TICKS = [0, 25, 50, 75, 100];
-  const yPos = (pct) => padT + innerH * (1 - pct / 100);
-
-  /* Bar layout: ~12px wide bars with gap. */
-  const barCount = MONTHS.length;
-  const barW = Math.min(28, (innerW / barCount) * 0.6);
-  const xCentre = (i) => padL + ((i + 0.5) / barCount) * innerW;
-
-  return (
-    <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" style={{ width: '100%', height }}>
-      <text x={padL} y={padT - 18} fontSize="11" fill="#6E7079" textAnchor="middle" fontFamily="Inter, sans-serif" fontWeight="600">
-        SHARE
-      </text>
-
-      {PCT_TICKS.map((t) => (
-        <g key={t}>
-          <line x1={padL} y1={yPos(t)} x2={padL + innerW} y2={yPos(t)} stroke="#e0e6f1" />
-          <text x={padL - 8} y={yPos(t) + 3} fontSize="11" fill="#6e7079" textAnchor="end" fontFamily="Inter, sans-serif">
-            {t}%
-          </text>
-        </g>
-      ))}
-
-      <line x1={padL} y1={padT + innerH} x2={padL + innerW} y2={padT + innerH} stroke="#6e7079" />
-      <text x={padL + innerW + 6} y={padT + innerH + 3} fontSize="11" fill="#6E7079" fontFamily="Inter, sans-serif">
-        DATE
-      </text>
-
-      {labelTickIdx.map((idx) => (
-        <g key={idx}>
-          <line x1={xCentre(idx)} y1={padT + innerH} x2={xCentre(idx)} y2={padT + innerH + 5} stroke="#6e7079" />
-          <text x={xCentre(idx)} y={padT + innerH + 18} fontSize="11" fill="#6e7079" textAnchor="middle" fontFamily="Inter, sans-serif">
-            {MONTHS[idx]}
-          </text>
-        </g>
-      ))}
-
-      {!empty && bars.map(({ idx, segs, total }) => (
-        <g key={idx}>
-          {segs.map((seg) => (
-            <rect
-              key={seg.device.key}
-              x={xCentre(idx) - barW / 2}
-              y={padT + innerH * seg.start}
-              width={barW}
-              height={Math.max(0.5, innerH * (seg.end - seg.start))}
-              fill={seg.device.color}
-            >
-              <title>
-                {`${seg.device.label} — ${MONTHS[idx]}: ${seg.value.toLocaleString('en-US')} (${(seg.frac * 100).toFixed(1)}%)`}
-              </title>
-            </rect>
-          ))}
-        </g>
-      ))}
-
-      {empty && (
-        <text x={padL + innerW / 2} y={padT + innerH / 2} fontSize="13" fill="#94a3b8" textAnchor="middle" fontFamily="Inter, sans-serif">
-          No device types selected
-        </text>
-      )}
-    </svg>
-  );
-}
-
-/* ------------------------------ Checkbox ------------------------------ */
 
 function Checkbox({ checked, indeterminate, onChange }) {
   const filled = checked || indeterminate;
@@ -565,7 +855,12 @@ function Checkbox({ checked, indeterminate, onChange }) {
       aria-checked={indeterminate ? 'mixed' : checked}
       tabIndex={0}
       onClick={onChange}
-      onKeyDown={(e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); onChange(); } }}
+      onKeyDown={(e) => {
+        if (e.key === ' ' || e.key === 'Enter') {
+          e.preventDefault();
+          onChange();
+        }
+      }}
       style={{
         ...CK.box,
         background: filled ? '#1d4ed8' : '#ffffff',
@@ -592,6 +887,24 @@ const PS = {
     flexDirection: 'column',
     background: '#ffffff',
     transition: 'margin-right 200ms ease',
+  },
+
+  errorBanner: {
+    margin: '0 16px',
+    padding: '10px 14px',
+    background: '#fef2f2',
+    border: '1px solid #fecaca',
+    borderRadius: '8px',
+    color: '#991b1b',
+    fontSize: '0.85rem',
+  },
+
+  zeroSessionsBanner: {
+    margin: '0 16px 12px',
+    padding: '12px 14px',
+    background: '#f8fafc',
+    border: '1px solid #e2e8f0',
+    borderRadius: '8px',
   },
 
   tabBar: {
@@ -623,8 +936,9 @@ const PS = {
     gap: '14px',
     padding: '14px 22px',
     borderBottom: '1px solid #e5e7eb',
+    flexWrap: 'wrap',
   },
-  headTagline: { fontSize: '0.85rem', color: '#475569', flex: 1 },
+  headTagline: { fontSize: '0.85rem', color: '#475569', flex: '1 1 200px' },
   headControls: { display: 'inline-flex', alignItems: 'center', gap: '12px' },
   switch: {
     display: 'inline-flex',
@@ -670,6 +984,20 @@ const PS = {
     borderRadius: '12px',
     padding: '16px 18px 18px',
   },
+  muted: { margin: 0, color: '#94a3b8', fontSize: '0.9rem' },
+  ongoingCaption: { margin: '10px 0 0', fontSize: '0.75rem', color: '#64748b' },
+  summaryLine: { margin: '12px 0 0', fontSize: '0.82rem', color: '#475569', lineHeight: 1.5 },
+  footnote: {
+    padding: '12px 14px',
+    background: '#f8fafc',
+    border: '1px solid #e2e8f0',
+    borderRadius: '8px',
+    fontSize: '0.78rem',
+    color: '#475569',
+    lineHeight: 1.55,
+  },
+  footnoteP: { margin: '0 0 8px 0' },
+  code: { fontSize: '0.85em', background: '#e2e8f0', padding: '1px 4px', borderRadius: '4px' },
 
   drawer: {
     position: 'absolute',
@@ -758,6 +1086,70 @@ const PS = {
     marginRight: '2px',
     flexShrink: 0,
   },
+
+  toolbarWrap: { position: 'relative' },
+  dateIndicator: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '10px',
+    padding: '6px 12px',
+    border: '1px solid #cbd5e1',
+    borderRadius: '8px',
+    background: '#ffffff',
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+    fontSize: '0.8rem',
+    color: '#0f172a',
+  },
+  dateLabels: { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '2px', textAlign: 'left' },
+  dateLine: { display: 'block', lineHeight: 1.35 },
+  dateCalendar: { color: '#64748b', display: 'inline-flex' },
+  pickerPanel: {
+    position: 'absolute',
+    top: 'calc(100% + 6px)',
+    right: 0,
+    zIndex: 20,
+    width: 'min(320px, 92vw)',
+    padding: '14px 16px',
+    background: '#ffffff',
+    border: '1px solid #e5e7eb',
+    borderRadius: '10px',
+    boxShadow: '0 10px 25px rgba(15, 23, 42, 0.12)',
+  },
+  pickerTitle: { margin: '0 0 8px', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', textTransform: 'uppercase' },
+  presetRow: { display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' },
+  presetBtn: {
+    padding: '6px 10px',
+    fontSize: '0.78rem',
+    border: '1px solid #cbd5e1',
+    borderRadius: '6px',
+    background: '#f8fafc',
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+  },
+  customRow: { display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '10px' },
+  customLab: { display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.78rem', color: '#64748b' },
+  dateInput: {
+    padding: '6px 8px',
+    border: '1px solid #cbd5e1',
+    borderRadius: '6px',
+    fontSize: '0.85rem',
+    fontFamily: 'inherit',
+  },
+  applyBtn: {
+    width: '100%',
+    padding: '8px 12px',
+    marginTop: '4px',
+    border: 'none',
+    borderRadius: '6px',
+    background: '#1d4ed8',
+    color: '#ffffff',
+    fontWeight: 600,
+    fontSize: '0.85rem',
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+  },
+  retentionHint: { margin: '10px 0 0', fontSize: '0.7rem', color: '#64748b', lineHeight: 1.4 },
 };
 
 const CK = {

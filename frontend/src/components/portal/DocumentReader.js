@@ -252,6 +252,15 @@ export default function DocumentReader({ documentId, initialTopicId = null, allD
   const contentRef = useRef(null);
   const pendingHashRef = useRef(null);
   const feedbackRef = useRef(null);
+  /**
+   * One landing-topic fetch per doc open may skip topic view (document view already counted).
+   * Switched topics never skip — uses remainingLandingSkips + landingTopicId match.
+   */
+  const topicViewSessionRef = useRef({
+    docId: null,
+    landingTopicId: null,
+    remainingLandingSkips: 0,
+  });
 
   const focusFeedback = useCallback(() => {
     const el = feedbackRef.current;
@@ -262,13 +271,24 @@ export default function DocumentReader({ documentId, initialTopicId = null, allD
 
   useEffect(() => {
     if (!id) return;
-    api.get(`/portal/documents/${id}`)
+    topicViewSessionRef.current = {
+      docId: null,
+      landingTopicId: null,
+      remainingLandingSkips: 0,
+    };
+    setSelectedId(null);
+    const ac = new AbortController();
+    let cancelled = false;
+    setLoadingDoc(true);
+    api
+      .get(`/portal/documents/${id}`, { signal: ac.signal })
       .catch((err) => {
+        if (err?.name === 'AbortError') return null;
         if (err?.status === 404) return null;
         throw err;
       })
       .then((data) => {
-        if (!data) return;
+        if (cancelled || !data) return;
         setDoc(data.document);
         const sorted = [...(data.topics || [])].sort(
           (a, b) => (a.hierarchy?.order ?? 0) - (b.hierarchy?.order ?? 0)
@@ -295,26 +315,67 @@ export default function DocumentReader({ documentId, initialTopicId = null, allD
         //   3) first topic
         const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
         const targetId = (initialTopicId && String(initialTopicId)) || params?.get('topic');
+        const explicit =
+          Boolean(targetId && sorted.some((x) => String(x._id) === String(targetId)));
+        const firstId = sorted.length > 0 ? String(sorted[0]._id) : null;
+        topicViewSessionRef.current = {
+          docId: String(id),
+          landingTopicId: explicit ? null : firstId,
+          remainingLandingSkips: explicit || !firstId ? 0 : 1,
+        };
         if (targetId && sorted.some((x) => String(x._id) === String(targetId))) {
           setSelectedId(String(targetId));
         } else if (sorted.length > 0) {
           setSelectedId(sorted[0]._id);
         }
       })
-      .catch(console.error)
-      .finally(() => setLoadingDoc(false));
+      .catch((err) => {
+        if (err?.name !== 'AbortError') console.error(err);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingDoc(false);
+      });
+    return () => {
+      cancelled = true;
+      ac.abort();
+    };
   }, [id, initialTopicId]);
 
   useEffect(() => {
-    if (!selectedId) return;
+    if (!selectedId || !id) return;
+    // Wait until document fetch has published session for this doc (avoids stale topic on doc switch).
+    if (topicViewSessionRef.current.docId !== String(id)) return;
+    const ac = new AbortController();
+    const sess = topicViewSessionRef.current;
+    const useSkip =
+      sess.remainingLandingSkips > 0 &&
+      sess.docId === String(id) &&
+      sess.landingTopicId &&
+      String(sess.landingTopicId) === String(selectedId);
+    const qs = useSkip ? '?skipTopicView=1' : '';
     setLoadingTopic(true);
-    api.get(`/portal/topics/${selectedId}`)
-      .then((data) => setTopicContent(data.topic))
-      .catch(console.error)
+    api
+      .get(`/portal/topics/${selectedId}${qs}`, { signal: ac.signal })
+      .then((data) => {
+        if (useSkip && topicViewSessionRef.current.docId === String(id)) {
+          topicViewSessionRef.current.remainingLandingSkips = Math.max(
+            0,
+            topicViewSessionRef.current.remainingLandingSkips - 1,
+          );
+        }
+        if (data?.topic) setTopicContent(data.topic);
+      })
+      .catch((err) => {
+        if (err?.name === 'AbortError') return;
+        console.error(err);
+      })
       .finally(() => setLoadingTopic(false));
 
     if (contentRef.current && !pendingHashRef.current) contentRef.current.scrollTop = 0;
-  }, [selectedId]);
+    return () => {
+      ac.abort();
+    };
+  }, [selectedId, id]);
 
   useEffect(() => {
     if (!topicContent || !pendingHashRef.current) return;
@@ -522,6 +583,15 @@ export default function DocumentReader({ documentId, initialTopicId = null, allD
   }, [tocQuery, id]);
 
   useEffect(() => {
+    if (!id || typeof window === 'undefined') return undefined;
+    const onBeforePrint = () => {
+      api.post('/analytics/track', { eventType: 'print', data: { documentId: id } }).catch(() => {});
+    };
+    window.addEventListener('beforeprint', onBeforePrint);
+    return () => window.removeEventListener('beforeprint', onBeforePrint);
+  }, [id]);
+
+  useEffect(() => {
     if (!contentRef.current || !topicContent) return;
     const root = contentRef.current;
 
@@ -702,7 +772,7 @@ export default function DocumentReader({ documentId, initialTopicId = null, allD
                         onClick={() => handleSelect(m._id)}
                         style={{
                           ...layout.searchCard,
-                          ...(selectedId === m._id ? { background: '#EBF2FF', borderLeftColor: '#1455C0' } : {}),
+                          ...(selectedId === m._id ? { background: '#EBF2FF', borderLeft: '3px solid #1455C0' } : {}),
                         }}
                       >
                         <div style={layout.searchCardTitle} dangerouslySetInnerHTML={{ __html: m.titleHtml || m.title }} />
@@ -906,6 +976,7 @@ export default function DocumentReader({ documentId, initialTopicId = null, allD
       </main>
       {shareOpen && (
         <ShareDialog
+          documentId={id}
           onClose={() => setShareOpen(false)}
           topicTitle={topicContent?.title}
           docTitle={doc?.title}
@@ -915,7 +986,7 @@ export default function DocumentReader({ documentId, initialTopicId = null, allD
   );
 }
 
-function ShareDialog({ onClose, topicTitle, docTitle }) {
+function ShareDialog({ onClose, topicTitle, docTitle, documentId }) {
   const { t } = useTranslation();
   const [url, setUrl] = useState('');
   const [copied, setCopied] = useState(false);
@@ -937,6 +1008,9 @@ function ShareDialog({ onClose, topicTitle, docTitle }) {
     }
     setCopied(true);
     setTimeout(() => setCopied(false), 1800);
+    if (documentId) {
+      api.post('/analytics/track', { eventType: 'share', data: { documentId } }).catch(() => {});
+    }
   };
 
   return (

@@ -109,6 +109,10 @@ export default function PublishingPage() {
   const [cleanOpen, setCleanOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
   const [popoverOpen, setPopoverOpen] = useState(false);
+  const [orphanModalOpen, setOrphanModalOpen] = useState(false);
+  const [orphanLoading, setOrphanLoading] = useState(false);
+  const [orphanPreview, setOrphanPreview] = useState(null);
+  const [orphanErr, setOrphanErr] = useState('');
 
   // Bumped on every action (extract/validate/delete) so the page re-fetches
   // without us having to thread an "onUpdated" callback through every drawer.
@@ -289,15 +293,45 @@ export default function PublishingPage() {
       <section style={{ marginTop: '24px' }}>
         <div style={S.historyHeader}>
           <h2 style={S.h2}>History</h2>
-          <button type="button" style={S.linkBtnBare} onClick={() => setCleanOpen(true)}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <polyline points="3 6 5 6 21 6" />
-              <path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6" />
-              <path d="M10 11v6M14 11v6" />
-              <path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2" />
-            </svg>
-            <span>Clean history</span>
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              style={S.linkBtnBare}
+              onClick={async () => {
+                setOrphanModalOpen(true);
+                setOrphanLoading(true);
+                setOrphanPreview(null);
+                setOrphanErr('');
+                try {
+                  const r = await api.post('/publications/cleanup-orphan-unstructured?dryRun=1');
+                  setOrphanPreview(r);
+                } catch (e) {
+                  setOrphanErr(e?.message || 'Could not scan orphan file records.');
+                } finally {
+                  setOrphanLoading(false);
+                }
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                <polyline points="7.5 4.21 12 6.81 16.5 4.21" />
+                <polyline points="7.5 19.79 7.5 14.6 3 12" />
+                <polyline points="21 12 16.5 14.6 16.5 19.79" />
+                <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+                <line x1="12" y1="22.08" x2="12" y2="12" />
+              </svg>
+              <span>Fix search / orphan files</span>
+            </button>
+            <button type="button" style={S.linkBtnBare} onClick={() => setCleanOpen(true)}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <polyline points="3 6 5 6 21 6" />
+                <path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6" />
+                <path d="M10 11v6M14 11v6" />
+                <path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2" />
+              </svg>
+              <span>Clean history</span>
+            </button>
+          </div>
         </div>
 
         <div style={S.filterRow}>
@@ -439,6 +473,63 @@ export default function PublishingPage() {
             setCleanOpen(false);
           }
         }}
+      />
+
+      <ConfirmModal
+        open={orphanModalOpen}
+        title="Stray file search entries"
+        body={
+          orphanLoading ? (
+            <span style={{ color: '#475569' }}>Scanning Knowledge Hub file records…</span>
+          ) : orphanErr ? (
+            <span style={{ color: '#991b1b' }}>{orphanErr}</span>
+          ) : (
+            <div style={{ fontSize: '0.9rem', color: '#334155', lineHeight: 1.55 }}>
+              <p style={{ margin: '0 0 12px' }}>
+                Deletes MongoDB rows for zip-extracted files that are no longer tied to any publication
+                (for example after a publication was removed). Direct uploads under <code style={{ fontSize: '0.82rem' }}>unstructured/</code> are never removed.
+              </p>
+              <p style={{ margin: 0, fontWeight: 600, color: '#0f172a' }}>
+                {(orphanPreview?.wouldDelete ?? 0) === 0
+                  ? 'No stray records found — search is already in sync.'
+                  : `Ready to remove ${orphanPreview.wouldDelete} stray record(s) (scanned ${orphanPreview.scanned}).`}
+              </p>
+            </div>
+          )
+        }
+        cancelLabel="Close"
+        confirmLabel={
+          orphanLoading || orphanErr || !orphanPreview || (orphanPreview?.wouldDelete ?? 0) === 0
+            ? null
+            : `Remove ${orphanPreview.wouldDelete} record(s)`
+        }
+        confirmDisabled={orphanLoading}
+        onCancel={() => {
+          setOrphanModalOpen(false);
+          setOrphanPreview(null);
+          setOrphanErr('');
+        }}
+        onConfirm={
+          orphanPreview?.wouldDelete > 0
+            ? async () => {
+                setOrphanLoading(true);
+                try {
+                  const r = await api.post('/publications/cleanup-orphan-unstructured');
+                  setOrphanModalOpen(false);
+                  setOrphanPreview(null);
+                  window.alert(
+                    r?.deleted != null
+                      ? `Removed ${r.deleted} stray file record(s). Portal search will no longer list them.`
+                      : 'Cleanup finished.',
+                  );
+                } catch (e) {
+                  setOrphanErr(e?.message || 'Cleanup failed.');
+                } finally {
+                  setOrphanLoading(false);
+                }
+              }
+            : undefined
+        }
       />
 
       <PublishContentModal
@@ -594,7 +685,16 @@ function StatusIcon({ kind }) {
 }
 
 // ── Confirm modal (centred) ─────────────────────────────────────────────────
-function ConfirmModal({ open, title, body, cancelLabel = 'Cancel', confirmLabel = 'Confirm', onCancel, onConfirm }) {
+function ConfirmModal({
+  open,
+  title,
+  body,
+  cancelLabel = 'Cancel',
+  confirmLabel = 'Confirm',
+  confirmDisabled = false,
+  onCancel,
+  onConfirm,
+}) {
   useEffect(() => {
     if (!open) return undefined;
     const onKey = (e) => { if (e.key === 'Escape') onCancel?.(); };
@@ -619,7 +719,21 @@ function ConfirmModal({ open, title, body, cancelLabel = 'Cancel', confirmLabel 
         <div style={S.modalBody}>{body}</div>
         <div style={S.modalFooter}>
           <button type="button" style={S.linkBtn} onClick={onCancel}>{cancelLabel}</button>
-          <button type="button" style={S.primaryBtn} onClick={onConfirm}>{confirmLabel}</button>
+          {confirmLabel ? (
+            <button
+              type="button"
+              style={{
+                ...S.primaryBtn,
+                ...(confirmDisabled ? { opacity: 0.55, cursor: 'not-allowed' } : {}),
+              }}
+              disabled={confirmDisabled || !onConfirm}
+              onClick={() => {
+                if (!confirmDisabled && onConfirm) onConfirm();
+              }}
+            >
+              {confirmLabel}
+            </button>
+          ) : null}
         </div>
       </div>
     </div>

@@ -1,6 +1,8 @@
 import "./globals.css";
 import PortalHeader from "@/components/portal/PortalHeader";
 import LegalTermsGate from "@/components/legal/LegalTermsGate";
+import PostHogPageView from "@/components/analytics/PostHogPageView";
+import FtPageViewTracker from "@/components/analytics/FtPageViewTracker";
 
 export const metadata = {
   title: "Fluid Topics — Content Delivery Platform",
@@ -16,6 +18,8 @@ export default function RootLayout({ children }) {
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
       </head>
       <body data-gramm="false" data-gramm_editor="false" suppressHydrationWarning>
+        <PostHogPageView />
+        <FtPageViewTracker />
         <PortalHeader />
         {children}
         <LegalTermsGate />

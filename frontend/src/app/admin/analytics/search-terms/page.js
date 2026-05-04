@@ -1,119 +1,70 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AnalyticsShell from '@/components/admin/AnalyticsShell';
+import api from '@/lib/api';
 
-/* ------------------------------ Static data ------------------------------ */
-
-const LOCALE_OPTIONS = [
-  { value: 'en-US', label: 'English (United States)' },
-  { value: 'en-GB', label: 'English (United Kingdom)' },
-  { value: 'fr-FR', label: 'French (France)' },
-  { value: 'de-DE', label: 'German (Germany)' },
-  { value: 'es-ES', label: 'Spanish (Spain)' },
-  { value: 'it-IT', label: 'Italian (Italy)' },
-  { value: 'ja-JP', label: 'Japanese (Japan)' },
-  { value: 'pt-BR', label: 'Portuguese (Brazil)' },
-  { value: 'zh-CN', label: 'Chinese (Simplified, China)' },
-];
-
-/* The first 50 rows mirror the Angular blueprint exactly. */
-const PRIMARY_ROWS = [
-  { queries: 108, term: 'bulk custom flow trigger import' },
-  { queries:  72, term: 'decision matrix' },
-  { queries:  44, term: 'ask darwin' },
-  { queries:  40, term: 'location master' },
-  { queries:  40, term: 'talent review' },
-  { queries:  39, term: 'planned overtime' },
-  { queries:  35, term: 'reports builder' },
-  { queries:  34, term: 'sapien design system and experience enhancements' },
-  { queries:  30, term: 'facial recognition' },
-  { queries:  30, term: 'flows' },
-  { queries:  30, term: 'workflow skip logic' },
-  { queries:  28, term: 'delegation' },
-  { queries:  28, term: 'payroll' },
-  { queries:  28, term: 'sapien' },
-  { queries:  28, term: 'talent profile' },
-  { queries:  27, term: 'pay group' },
-  { queries:  27, term: 'recruitment' },
-  { queries:  26, term: 'my access' },
-  { queries:  24, term: 'calibration' },
-  { queries:  23, term: 'advance - merge reports' },
-  { queries:  23, term: 'manager hub' },
-  { queries:  22, term: 'comp off import' },
-  { queries:  22, term: 'f&f tat' },
-  { queries:  22, term: 'permissions' },
-  { queries:  22, term: 'stack ranking' },
-  { queries:  21, term: 'darwinbox studio' },
-  { queries:  21, term: 'helpdesk' },
-  { queries:  21, term: 'separation' },
-  { queries:  20, term: 'bulk custom flow trigger' },
-  { queries:  20, term: 'performance' },
-  { queries:  20, term: 'product webinar: launching sapien 2.0' },
-  { queries:  20, term: 'sla settings' },
-  { queries:  19, term: 'analytics' },
-  { queries:  19, term: 'asset management' },
-  { queries:  19, term: 'dont allow referral option adding candidate' },
-  { queries:  19, term: 'forms' },
-  { queries:  19, term: 'import' },
-  { queries:  19, term: 'intercompany transfer' },
-  { queries:  19, term: 'journeys' },
-  { queries:  19, term: 'neo user' },
-  { queries:  19, term: 'onboarding' },
-  { queries:  19, term: 'profile view settings' },
-  { queries:  19, term: 'sftp' },
-  { queries:  19, term: 'user assignment' },
-  { queries:  19, term: 'workflow' },
-  { queries:  18, term: 'bulk upload of documents' },
-  { queries:  18, term: 'msf' },
-  { queries:  18, term: 'salary structure' },
-  { queries:  18, term: 'talent management' },
-  { queries:  17, term: 'appraisal stage changes' },
-];
-
-/* Lower-volume long-tail terms used to flesh out subsequent pages of mock
- * data so pagination has something to navigate. The Angular blueprint reports
- * Total queries: 17,933 across 9,284 distinct terms. */
-const TAIL_TERMS = [
-  'leave policy', 'attendance regularization', 'reimbursement claims', 'okr cascade', 'goal review',
-  'pms cycle', '360 feedback', 'shift roster', 'roster bulk upload', 'shift swap requests',
-  'comp off accrual', 'leave encashment', 'travel desk', 'travel approval flow', 'expense rules',
-  'gst entry', 'tds calculation', 'pf settings', 'esi settings', 'lop calculation',
-  'leave year reset', 'salary on hold', 'salary release', 'arrears processing', 'one time payment',
-  'recurring deduction', 'bonus payout', 'incentive structure', 'commission engine', 'variable pay',
-  'cost center mapping', 'cost code allocation', 'project costing', 'org structure import',
-  'reporting hierarchy', 'matrix manager', 'dotted line manager', 'role groups', 'access control',
-  'sso configuration', 'okta integration', 'azure ad sync', 'ldap sync', 'scim provisioning',
-  'webhook subscriptions', 'audit log download', 'data retention policy', 'gdpr export', 'right to be forgotten',
-  'document checklist', 'esign integration', 'docusign envelope', 'offer letter template', 'background verification',
-  'candidate scoring', 'interview scheduling', 'interview feedback', 'offer rollout', 'pre-onboarding tasks',
-  'asset issue request', 'asset return request', 'helpdesk sla', 'helpdesk routing', 'incident category',
-  'knowledge base article', 'announcement banner', 'pulse survey', 'engagement score', 'enps trend',
-  'town hall recording', 'recognition badges', 'kudos wall', 'reward redemption', 'wallet balance',
-  'payslip download', 'form 16', 'form 24q', 'income tax declaration', 'investment proofs',
-  'flexi benefit plan', 'meal coupons', 'lta computation', 'medical reimbursement', 'phone reimbursement',
-  'overtime register', 'shift differential', 'night allowance', 'wfh stipend', 'hybrid work policy',
-  'workday calendar', 'company holidays', 'optional holidays', 'holiday calendar import', 'attendance penalty',
-  'mass update employees', 'mass transfer', 'mass exit', 'mass salary revision', 'mass document upload',
-  'sap successfactors mapping', 'workday connector', 'oracle hcm bridge', 'ramco bridge', 'zoho people sync',
-  'microsoft teams app', 'slack app', 'whatsapp bot', 'email templates', 'sms templates',
-];
-
+const ANALYTICS_DATA_RETENTION_DAYS = 730;
 const PAGE_SIZE = 50;
-const TOTAL_QUERIES = 17_933;
-const TOTAL_TERMS = 9_284;
 
-function generateRows() {
-  const rows = [...PRIMARY_ROWS];
-  let counter = 17;
-  for (let i = 0; i < TAIL_TERMS.length; i++) {
-    rows.push({ queries: counter, term: TAIL_TERMS[i] });
-    if (i % 4 === 3 && counter > 4) counter -= 1;
-  }
-  return rows;
+/* ------------------------------ Date range ------------------------------ */
+
+function defaultDateRangePreviousMonth() {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(now.getFullYear(), now.getMonth(), 0);
+  end.setHours(23, 59, 59, 999);
+  return { start, end };
 }
 
-const ALL_ROWS = generateRows();
+function presetLastWeek() {
+  const end = new Date();
+  end.setHours(23, 59, 59, 999);
+  const start = new Date(end);
+  start.setDate(start.getDate() - 6);
+  start.setHours(0, 0, 0, 0);
+  return { start, end };
+}
+
+function presetLast3Months() {
+  const end = new Date();
+  end.setHours(23, 59, 59, 999);
+  const start = new Date(end);
+  start.setDate(start.getDate() - 89);
+  start.setHours(0, 0, 0, 0);
+  return { start, end };
+}
+
+function toInputDate(d) {
+  const x = new Date(d);
+  const y = x.getFullYear();
+  const m = String(x.getMonth() + 1).padStart(2, '0');
+  const day = String(x.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function parseInputDate(s) {
+  const d = new Date(`${s}T12:00:00`);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function earliestAllowedStart() {
+  const d = new Date();
+  d.setDate(d.getDate() - ANALYTICS_DATA_RETENTION_DAYS);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+async function downloadTermsXlsx(rows, totalQueries, rangeLabel) {
+  const XLSX = await import('xlsx');
+  const wb = XLSX.utils.book_new();
+  const aoa = [['Queries', 'Term'], ...rows.map((r) => [r.queries, r.term])];
+  aoa.push(['Total queries (range)', totalQueries]);
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Search terms');
+  const safe = rangeLabel.replace(/[^\w-]+/g, '_').slice(0, 80);
+  XLSX.writeFile(wb, `search-terms-${safe}.xlsx`);
+}
 
 /* ------------------------------ Icons ------------------------------ */
 
@@ -185,47 +136,285 @@ const IconLast = () => (
 /* ------------------------------ Page ------------------------------ */
 
 export default function SearchTermsPage() {
+  const def = useMemo(() => defaultDateRangePreviousMonth(), []);
+  const [rangeStart, setRangeStart] = useState(() => toInputDate(def.start));
+  const [rangeEnd, setRangeEnd] = useState(() => toInputDate(def.end));
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [customStart, setCustomStart] = useState(() => toInputDate(def.start));
+  const [customEnd, setCustomEnd] = useState(() => toInputDate(def.end));
+
   const [drawerOpen, setDrawerOpen] = useState(true);
-  const [locale, setLocale] = useState('en-US');
+  const [locale, setLocale] = useState('');
+  const [localeOptions, setLocaleOptions] = useState([{ value: '', label: 'All content locales' }]);
   const [page, setPage] = useState(0);
 
-  const totalPages = Math.max(1, Math.ceil(TOTAL_TERMS / PAGE_SIZE));
+  const [rows, setRows] = useState([]);
+  const [totalQueries, setTotalQueries] = useState(0);
+  const [totalDistinctTerms, setTotalDistinctTerms] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState(null);
+  const [exporting, setExporting] = useState(false);
 
-  /* For paged navigation we recycle the available mock rows. */
-  const visibleRows = useMemo(() => {
-    const startMock = (page * PAGE_SIZE) % ALL_ROWS.length;
-    if (startMock + PAGE_SIZE <= ALL_ROWS.length) {
-      return ALL_ROWS.slice(startMock, startMock + PAGE_SIZE);
+  const pickerRef = useRef(null);
+
+  const startIso = useMemo(() => {
+    const d = parseInputDate(rangeStart);
+    if (!d) return null;
+    d.setHours(0, 0, 0, 0);
+    return d.toISOString();
+  }, [rangeStart]);
+
+  const endIso = useMemo(() => {
+    const d = parseInputDate(rangeEnd);
+    if (!d) return null;
+    d.setHours(23, 59, 59, 999);
+    return d.toISOString();
+  }, [rangeEnd]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await api.get('/locales');
+        if (cancelled) return;
+        const list = Array.isArray(data?.locales) ? data.locales : [];
+        const opts = [
+          { value: '', label: 'All content locales' },
+          ...list.map((l) => ({
+            value: l.code,
+            label: l.name && l.code ? `${l.name} (${l.code})` : l.code || l.name,
+          })),
+        ];
+        setLocaleOptions(opts);
+      } catch {
+        if (!cancelled) {
+          setLocaleOptions([{ value: '', label: 'All content locales' }]);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const fetchData = useCallback(async () => {
+    if (!startIso || !endIso) return;
+    setLoading(true);
+    setErrorMsg(null);
+    try {
+      const body = {
+        startDate: startIso,
+        endDate: endIso,
+        page: page + 1,
+        pageSize: PAGE_SIZE,
+        ...(locale ? { locale } : {}),
+      };
+      const json = await api.post('/analytics/v2/search/terms', body);
+      if (json?.error) {
+        setErrorMsg(json.error);
+        setRows([]);
+        setTotalQueries(0);
+        setTotalDistinctTerms(0);
+        setTotalPages(1);
+        return;
+      }
+      setRows(
+        (json.terms || []).map((t) => ({
+          queries: t.queries,
+          term: t.term,
+        }))
+      );
+      setTotalQueries(typeof json.totalQueries === 'number' ? json.totalQueries : 0);
+      setTotalDistinctTerms(typeof json.totalDistinctTerms === 'number' ? json.totalDistinctTerms : 0);
+      setTotalPages(Math.max(1, typeof json.totalPages === 'number' ? json.totalPages : 1));
+    } catch (e) {
+      setErrorMsg(e.message || 'Request failed');
+      setRows([]);
+      setTotalQueries(0);
+      setTotalDistinctTerms(0);
+      setTotalPages(1);
+    } finally {
+      setLoading(false);
     }
-    return ALL_ROWS.slice(startMock).concat(
-      ALL_ROWS.slice(0, PAGE_SIZE - (ALL_ROWS.length - startMock)),
-    );
-  }, [page]);
+  }, [startIso, endIso, locale, page]);
 
-  const rangeStart = page * PAGE_SIZE + 1;
-  const rangeEnd = Math.min((page + 1) * PAGE_SIZE, TOTAL_TERMS);
+  useEffect(() => {
+    void fetchData();
+  }, [fetchData]);
+
+  useEffect(() => {
+    if (!pickerOpen) return;
+    const onDoc = (e) => {
+      if (pickerRef.current && !pickerRef.current.contains(e.target)) setPickerOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [pickerOpen]);
+
+  const applyRange = (start, end) => {
+    setErrorMsg(null);
+    setRangeStart(toInputDate(start));
+    setRangeEnd(toInputDate(end));
+    setCustomStart(toInputDate(start));
+    setCustomEnd(toInputDate(end));
+    setPickerOpen(false);
+    setPage(0);
+  };
+
+  const applyPreset = (key) => {
+    if (key === 'prevMonth') {
+      const { start, end } = defaultDateRangePreviousMonth();
+      applyRange(start, end);
+      return;
+    }
+    if (key === 'lastWeek') {
+      const { start, end } = presetLastWeek();
+      applyRange(start, end);
+      return;
+    }
+    if (key === 'last3mo') {
+      const { start, end } = presetLast3Months();
+      applyRange(start, end);
+    }
+  };
+
+  const applyCustom = () => {
+    const s = parseInputDate(customStart);
+    const e = parseInputDate(customEnd);
+    if (!s || !e || s > e) {
+      setErrorMsg('End date must be after start date.');
+      return;
+    }
+    if (s < earliestAllowedStart()) {
+      setErrorMsg(
+        `Start date must be within the analytics retention period (${ANALYTICS_DATA_RETENTION_DAYS} days).`
+      );
+      return;
+    }
+    applyRange(s, e);
+  };
+
+  const displayFrom = rangeStart;
+  const displayTo = rangeEnd;
+
+  const rangeStartIdx = totalDistinctTerms === 0 ? 0 : page * PAGE_SIZE + 1;
+  const rangeEndIdx = Math.min((page + 1) * PAGE_SIZE, totalDistinctTerms);
 
   const goFirst = () => setPage(0);
   const goPrev = () => setPage((p) => Math.max(0, p - 1));
   const goNext = () => setPage((p) => Math.min(totalPages - 1, p + 1));
-  const goLast = () => setPage(totalPages - 1);
+  const goLast = () => setPage(Math.max(0, totalPages - 1));
 
   const atStart = page === 0;
-  const atEnd = page === totalPages - 1;
+  const atEnd = page >= totalPages - 1 || totalPages <= 1;
+
+  const onLocaleChange = (val) => {
+    setLocale(val);
+    setPage(0);
+  };
+
+  const handleExport = async () => {
+    if (!startIso || !endIso) return;
+    setExporting(true);
+    setErrorMsg(null);
+    try {
+      const json = await api.post('/analytics/v2/search/terms', {
+        startDate: startIso,
+        endDate: endIso,
+        page: 1,
+        pageSize: 10000,
+        export: true,
+        ...(locale ? { locale } : {}),
+      });
+      if (json?.error) {
+        setErrorMsg(json.error);
+        return;
+      }
+      const terms = (json.terms || []).map((t) => ({ queries: t.queries, term: t.term }));
+      const total = typeof json.totalQueries === 'number' ? json.totalQueries : 0;
+      await downloadTermsXlsx(terms, total, `${displayFrom}_${displayTo}`);
+    } catch (e) {
+      setErrorMsg(e.message || 'Export failed');
+    } finally {
+      setExporting(false);
+    }
+  };
 
   return (
     <AnalyticsShell
       active="search-terms"
       breadcrumb={{ prefix: 'Search', title: 'Search terms' }}
-      feedbackSubject="Feedback about search terms"
       toolbarExtras={
         <div style={PS.toolbarRight}>
-          <div style={PS.dateIndicator} title="Date range" aria-label="Date range">
-            <span style={PS.dateLabels}>
-              <span style={PS.dateLine}>From: 3/1/2026</span>
-              <span style={PS.dateLine}>To: 3/31/2026</span>
-            </span>
-            <span style={PS.dateCalendar} aria-hidden="true"><IconCalendar /></span>
+          <div style={PS.toolbarWrap} ref={pickerRef}>
+            <button
+              type="button"
+              style={PS.dateIndicator}
+              title="Change date range"
+              aria-expanded={pickerOpen}
+              aria-haspopup="dialog"
+              onClick={() => setPickerOpen((v) => !v)}
+            >
+              <span style={PS.dateLabels}>
+                <span style={PS.dateLine}>
+                  From: {displayFrom ? new Date(`${displayFrom}T12:00:00`).toLocaleDateString() : '—'}
+                </span>
+                <span style={PS.dateLine}>
+                  To: {displayTo ? new Date(`${displayTo}T12:00:00`).toLocaleDateString() : '—'}
+                </span>
+              </span>
+              <span style={PS.dateCalendar} aria-hidden="true">
+                <IconCalendar />
+              </span>
+            </button>
+            {pickerOpen && (
+              <div role="dialog" aria-label="Date range" style={PS.pickerPanel}>
+                <p style={PS.pickerTitle}>Quick ranges</p>
+                <div style={PS.presetRow}>
+                  <button type="button" style={PS.presetBtn} onClick={() => applyPreset('lastWeek')}>
+                    Last week
+                  </button>
+                  <button type="button" style={PS.presetBtn} onClick={() => applyPreset('last3mo')}>
+                    Last 3 months
+                  </button>
+                  <button type="button" style={PS.presetBtn} onClick={() => applyPreset('prevMonth')}>
+                    Previous month
+                  </button>
+                </div>
+                <p style={PS.pickerTitle}>Custom range</p>
+                <div style={PS.customRow}>
+                  <label style={PS.customLab}>
+                    From
+                    <input
+                      type="date"
+                      value={customStart}
+                      min={toInputDate(earliestAllowedStart())}
+                      max={customEnd}
+                      onChange={(e) => setCustomStart(e.target.value)}
+                      style={PS.dateInput}
+                    />
+                  </label>
+                  <label style={PS.customLab}>
+                    To
+                    <input
+                      type="date"
+                      value={customEnd}
+                      min={customStart}
+                      onChange={(e) => setCustomEnd(e.target.value)}
+                      style={PS.dateInput}
+                    />
+                  </label>
+                </div>
+                <button type="button" style={PS.applyBtn} onClick={applyCustom}>
+                  Apply
+                </button>
+                <p style={PS.retentionHint}>
+                  Default range is the previous calendar month. Start date must fall within the last{' '}
+                  {ANALYTICS_DATA_RETENTION_DAYS} days.
+                </p>
+              </div>
+            )}
           </div>
           <button
             type="button"
@@ -246,15 +435,23 @@ export default function SearchTermsPage() {
     >
       <div style={PS.layout}>
         <main style={{ ...PS.main, marginRight: drawerOpen ? '330px' : 0 }}>
+          {errorMsg && (
+            <div style={PS.errorBanner} role="alert">
+              {errorMsg}
+            </div>
+          )}
           <header style={PS.resultHead}>
             <span style={PS.headTagline}>
-              Data is based on the number of search events sent to the server by the portal.
+              Data is based on the number of search events sent to the server by the portal. Queries flagged as
+              suspicious (potential injection) are not tracked and do not appear here.
             </span>
             <button
               type="button"
               style={PS.downloadBtn}
               title="Download as XLSX"
               aria-label="Download as XLSX"
+              onClick={() => void handleExport()}
+              disabled={exporting || loading}
             >
               <IconDownload />
             </button>
@@ -262,41 +459,50 @@ export default function SearchTermsPage() {
 
           <section style={PS.body}>
             <div style={PS.tableWrap}>
-              <table style={PS.table}>
-                <colgroup>
-                  <col style={{ width: '110px' }} />
-                  <col />
-                </colgroup>
-                <thead>
-                  <tr>
-                    <th style={PS.thQ}>Queries</th>
-                    <th style={PS.thT}>Terms</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {visibleRows.map((r, i) => (
-                    <tr key={`${page}-${i}`} style={i % 2 === 0 ? PS.trEven : PS.trOdd}>
-                      <td style={PS.tdQ}>{r.queries.toLocaleString('en-US')}</td>
-                      <td style={PS.tdT}>{r.term}</td>
+              {loading ? (
+                <p style={PS.loading}>Loading…</p>
+              ) : (
+                <table style={PS.table}>
+                  <colgroup>
+                    <col style={{ width: '110px' }} />
+                    <col />
+                  </colgroup>
+                  <thead>
+                    <tr>
+                      <th style={PS.thQ}>Queries</th>
+                      <th style={PS.thT}>Terms</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {rows.map((r, i) => (
+                      <tr key={`${r.term}-${i}`} style={i % 2 === 0 ? PS.trEven : PS.trOdd}>
+                        <td style={PS.tdQ}>{r.queries.toLocaleString('en-US')}</td>
+                        <td style={PS.tdT}>{r.term}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+              {!loading && rows.length === 0 && !errorMsg && (
+                <p style={PS.empty}>No search terms in this range.</p>
+              )}
             </div>
 
             <footer style={PS.pager}>
               <span style={PS.totalLabel}>
-                Total queries: <strong>{TOTAL_QUERIES.toLocaleString('en-US')}</strong>
+                Total queries: <strong>{totalQueries.toLocaleString('en-US')}</strong>
               </span>
               <div style={PS.pagerActions}>
                 <span style={PS.rangeLabel}>
-                  {rangeStart.toLocaleString('en-US')} – {rangeEnd.toLocaleString('en-US')} of {TOTAL_TERMS.toLocaleString('en-US')}
+                  {totalDistinctTerms === 0
+                    ? '0 – 0 of 0'
+                    : `${rangeStartIdx.toLocaleString('en-US')} – ${rangeEndIdx.toLocaleString('en-US')} of ${totalDistinctTerms.toLocaleString('en-US')}`}
                 </span>
                 <button
                   type="button"
                   style={atStart ? PS.pagerBtnDisabled : PS.pagerBtn}
                   onClick={goFirst}
-                  disabled={atStart}
+                  disabled={atStart || loading}
                   aria-label="First page"
                   title="First page"
                 >
@@ -306,7 +512,7 @@ export default function SearchTermsPage() {
                   type="button"
                   style={atStart ? PS.pagerBtnDisabled : PS.pagerBtn}
                   onClick={goPrev}
-                  disabled={atStart}
+                  disabled={atStart || loading}
                   aria-label="Previous page"
                   title="Previous page"
                 >
@@ -316,7 +522,7 @@ export default function SearchTermsPage() {
                   type="button"
                   style={atEnd ? PS.pagerBtnDisabled : PS.pagerBtn}
                   onClick={goNext}
-                  disabled={atEnd}
+                  disabled={atEnd || loading}
                   aria-label="Next page"
                   title="Next page"
                 >
@@ -326,7 +532,7 @@ export default function SearchTermsPage() {
                   type="button"
                   style={atEnd ? PS.pagerBtnDisabled : PS.pagerBtn}
                   onClick={goLast}
-                  disabled={atEnd}
+                  disabled={atEnd || loading}
                   aria-label="Last page"
                   title="Last page"
                 >
@@ -353,12 +559,7 @@ export default function SearchTermsPage() {
             </header>
 
             <div style={PS.drawerBody}>
-              <FieldSelect
-                label="Content Locale"
-                value={locale}
-                options={LOCALE_OPTIONS}
-                onChange={setLocale}
-              />
+              <FieldSelect label="Content Locale" value={locale} options={localeOptions} onChange={onLocaleChange} />
             </div>
           </aside>
         )}
@@ -377,8 +578,12 @@ function FieldSelect({ label, value, options, onChange }) {
 
   useEffect(() => {
     if (!open) return;
-    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
-    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    const onDoc = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
     document.addEventListener('mousedown', onDoc);
     document.addEventListener('keydown', onKey);
     return () => {
@@ -398,19 +603,24 @@ function FieldSelect({ label, value, options, onChange }) {
         aria-expanded={open}
       >
         <span style={FS.value}>{current.label}</span>
-        <span style={FS.chevron} aria-hidden="true"><IconChevronDown /></span>
+        <span style={FS.chevron} aria-hidden="true">
+          <IconChevronDown />
+        </span>
       </button>
       {open && (
         <ul role="listbox" style={FS.list}>
           {options.map((opt) => {
             const active = opt.value === value;
             return (
-              <li key={opt.value}>
+              <li key={opt.value || '__all__'}>
                 <button
                   type="button"
                   role="option"
                   aria-selected={active}
-                  onClick={() => { onChange(opt.value); setOpen(false); }}
+                  onClick={() => {
+                    onChange(opt.value);
+                    setOpen(false);
+                  }}
                   style={{
                     ...FS.option,
                     background: active ? '#eff6ff' : 'transparent',
@@ -446,7 +656,18 @@ const PS = {
     transition: 'margin-right 200ms ease',
   },
 
+  errorBanner: {
+    margin: '0 16px',
+    padding: '10px 14px',
+    background: '#fef2f2',
+    border: '1px solid #fecaca',
+    borderRadius: '8px',
+    color: '#991b1b',
+    fontSize: '0.85rem',
+  },
+
   toolbarRight: { display: 'inline-flex', alignItems: 'center', gap: '10px' },
+  toolbarWrap: { position: 'relative' },
   toolbarIconBtn: {
     width: '34px',
     height: '34px',
@@ -466,10 +687,59 @@ const PS = {
     borderRadius: '999px',
     background: '#ffffff',
     color: '#475569',
+    cursor: 'pointer',
+    fontFamily: 'inherit',
   },
   dateLabels: { display: 'inline-flex', flexDirection: 'column', lineHeight: 1.1 },
   dateLine: { fontSize: '0.7rem', color: '#475569' },
   dateCalendar: { display: 'inline-flex', color: '#1d4ed8' },
+
+  pickerPanel: {
+    position: 'absolute',
+    top: 'calc(100% + 6px)',
+    right: 0,
+    zIndex: 20,
+    width: 'min(320px, 92vw)',
+    padding: '14px 16px',
+    background: '#ffffff',
+    border: '1px solid #e5e7eb',
+    borderRadius: '10px',
+    boxShadow: '0 10px 25px rgba(15, 23, 42, 0.12)',
+  },
+  pickerTitle: { margin: '0 0 8px', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', textTransform: 'uppercase' },
+  presetRow: { display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' },
+  presetBtn: {
+    padding: '6px 10px',
+    fontSize: '0.78rem',
+    border: '1px solid #cbd5e1',
+    borderRadius: '6px',
+    background: '#f8fafc',
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+  },
+  customRow: { display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '10px' },
+  customLab: { display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.78rem', color: '#64748b' },
+  dateInput: {
+    padding: '6px 8px',
+    border: '1px solid #cbd5e1',
+    borderRadius: '6px',
+    fontSize: '0.85rem',
+    fontFamily: 'inherit',
+  },
+  applyBtn: {
+    width: '100%',
+    padding: '8px 12px',
+    marginTop: '4px',
+    border: 'none',
+    borderRadius: '6px',
+    background: '#1d4ed8',
+    color: '#ffffff',
+    fontWeight: 600,
+    fontSize: '0.85rem',
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+  },
+  retentionHint: { margin: '10px 0 0', fontSize: '0.7rem', color: '#64748b', lineHeight: 1.4 },
 
   resultHead: {
     display: 'flex',
@@ -499,11 +769,14 @@ const PS = {
     flex: 1,
     padding: '18px 22px 0',
   },
+  loading: { padding: '24px', color: '#64748b', margin: 0 },
+  empty: { padding: '24px', color: '#94a3b8', margin: 0 },
   tableWrap: {
     border: '1px solid #e5e7eb',
     borderRadius: '8px',
     background: '#ffffff',
     overflow: 'hidden',
+    minHeight: '120px',
   },
   table: {
     width: '100%',

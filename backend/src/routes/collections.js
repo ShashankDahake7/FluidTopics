@@ -1,6 +1,8 @@
 const express = require('express');
 const Collection = require('../models/Collection');
 const { auth } = require('../middleware/auth');
+const { trackFtEvent } = require('../services/analytics/analyticsService');
+const { analyticsFromReq } = require('../utils/clientIp');
 
 const router = express.Router();
 router.use(auth);
@@ -175,6 +177,12 @@ router.delete('/:id', async (req, res, next) => {
   try {
     const c = await Collection.findOneAndDelete({ _id: req.params.id, userId: req.user.id });
     if (!c) return res.status(404).json({ error: 'Not found' });
+    trackFtEvent({
+      userId: req.user.id,
+      ftEvent: 'collection.delete',
+      userAgent: req.headers['user-agent'],
+      ...analyticsFromReq(req),
+    }).catch(() => {});
     res.json({ message: 'Collection deleted' });
   } catch (err) {
     next(err);

@@ -88,7 +88,6 @@ export default function DocumentRatingsPage() {
     <AnalyticsShell
       active="document-ratings"
       breadcrumb={breadcrumb}
-      feedbackSubject="Feedback about document rating"
       toolbarExtras={toolbarExtras}
     >
       <div style={PS.layout}>

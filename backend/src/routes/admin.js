@@ -8,6 +8,7 @@ const Document = require('../models/Document');
 const Topic    = require('../models/Topic');
 const User     = require('../models/User');
 const config = require('../config/env');
+const { clientIpFromReq } = require('../utils/clientIp');
 const SiteConfig = require('../models/SiteConfig');
 const { logConfigChange, authorFromRequest } = require('../services/configAudit');
 const { snapshotLegalTerms } = require('../services/configHistorySnapshots');
@@ -85,7 +86,7 @@ router.post('/users/:id/impersonate', auth, requireRole('superadmin'), async (re
       actorId:   req.user._id,
       refreshTokenHash: crypto.createHash('sha256').update(refresh).digest('hex'),
       userAgent: (req.headers['user-agent'] || '').slice(0, 250),
-      ip:        req.ip || '',
+      ip:        clientIpFromReq(req) || '',
       expiresAt: new Date(Date.now() + 60 * 60 * 1000), // 1h
     });
     const token = jwt.sign(

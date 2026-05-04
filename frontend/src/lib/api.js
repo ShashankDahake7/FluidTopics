@@ -1,5 +1,13 @@
 // Use relative URL so requests go through the Next.js rewrite proxy (/api → localhost:4000/api).
 // This keeps all API calls same-origin and avoids CORS preflight issues.
+import { getAnalyticsSessionId } from './analyticsSession';
+import {
+  ensureClientGeoHint,
+  getClientGeoHint,
+  getStoredClientIpSync,
+  getStoredCountryCodeSync,
+} from './clientIpHint';
+
 export const API_BASE = process.env.NEXT_PUBLIC_API_URL || '/api';
 
 /** Prefer session token (Remember me off) then persistent token. */
@@ -60,6 +68,9 @@ function shouldRetryWithRefresh(path, status) {
 }
 
 async function fetchWithOptionalRefresh(path, init = {}) {
+  if (typeof window !== 'undefined') {
+    await ensureClientGeoHint();
+  }
   const headers = { ...getHeaders(), ...init.headers };
   const merged = { ...init, headers };
   if (init.body instanceof FormData) delete merged.headers['Content-Type'];
@@ -136,6 +147,14 @@ const getHeaders = () => {
   const headers = { 'Content-Type': 'application/json' };
   const token = getStoredToken();
   if (token) headers['Authorization'] = `Bearer ${token}`;
+  const sid = getAnalyticsSessionId();
+  if (sid) headers['X-Analytics-Session'] = sid;
+  if (typeof window !== 'undefined') {
+    const ip = getStoredClientIpSync();
+    if (ip) headers['X-Analytics-Client-Ip'] = ip;
+    const cc = getStoredCountryCodeSync();
+    if (cc) headers['X-Analytics-Country'] = cc;
+  }
   return headers;
 };
 
@@ -170,16 +189,35 @@ function defaultMessageForStatus(status, statusText) {
 }
 
 const api = {
-  async get(path) {
-    const res = await fetchWithOptionalRefresh(path, { method: 'GET' });
+  /** @param {string} path @param {{ signal?: AbortSignal }} [options] */
+  async get(path, options = {}) {
+    const { signal } = options;
+    const res = await fetchWithOptionalRefresh(path, { method: 'GET', signal });
     if (!res.ok) await failResponse('GET', path, res);
     return res.json();
   },
   async post(path, data) {
+    let payload = data;
+    if (
+      path === '/analytics/track' &&
+      typeof window !== 'undefined' &&
+      data &&
+      typeof data === 'object' &&
+      !Object.prototype.hasOwnProperty.call(data, 'clientIpHint')
+    ) {
+      const { ip, countryCode } = await getClientGeoHint();
+      if (ip || countryCode) {
+        payload = {
+          ...data,
+          ...(ip ? { clientIpHint: ip } : {}),
+          ...(countryCode ? { clientCountryHint: countryCode } : {}),
+        };
+      }
+    }
     const res = await fetchWithOptionalRefresh(path, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: data === undefined ? undefined : JSON.stringify(data),
+      body: payload === undefined ? undefined : JSON.stringify(payload),
     });
     if (!res.ok) await failResponse('POST', path, res);
     if (res.status === 204) return null;

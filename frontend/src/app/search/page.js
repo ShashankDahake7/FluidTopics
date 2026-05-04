@@ -117,6 +117,13 @@ function SearchContent() {
     setList(list.includes(value) ? list.filter((v) => v !== value) : [...list, value]);
   };
 
+  const trackSearchPageSelect = useCallback(() => {
+    api.post('/analytics/track', {
+      eventType: 'event',
+      data: { ftEvent: 'search_page.select' },
+    }).catch(() => {});
+  }, []);
+
   const copyLink = async () => {
     try {
       await navigator.clipboard.writeText(window.location.href);
@@ -332,6 +339,7 @@ function SearchContent() {
                       key={tpl.slug}
                       href={tpl.href}
                       style={s.templateCard}
+                      onClick={trackSearchPageSelect}
                     >
                       <div style={s.templateCardRow}>
                         <span style={s.templateBadge}>Page</span>
@@ -363,6 +371,7 @@ function SearchContent() {
                       key={hit.id}
                       href={`/dashboard/file/${hit.unstructuredId}`}
                       style={s.resultCard}
+                      onClick={trackSearchPageSelect}
                     >
                       <span style={s.fileBadge}>File</span>
                       <h3
@@ -408,6 +417,7 @@ function SearchContent() {
                   key={hit.topicId || hit.id}
                   href={hrefForTopic(topicLike, parentDoc)}
                   style={s.resultCard}
+                  onClick={trackSearchPageSelect}
                 >
                   <h3
                     style={s.resultTitle}

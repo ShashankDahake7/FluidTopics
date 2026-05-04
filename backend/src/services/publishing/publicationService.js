@@ -16,6 +16,7 @@ const {
   detectFormat,
 } = require('../../utils/helpers');
 const s3 = require('../storage/s3Service');
+const { deleteUnstructuredByIds } = require('../unstructuredCleanup');
 const { ingestFile, ingestZipForTarget } = require('../ingestion/ingestionService');
 
 // Resolve the worker scripts once at module load — Worker constructor wants an
@@ -1354,9 +1355,83 @@ async function deletePublication(id) {
     }
   }
 
+  // Binary-first publications materialise PDFs etc. as UnstructuredDocument
+  // rows (see ingestManifestAsUnstructuredDocuments). Those rows are not
+  // linked on Publication.documentId, so without this step they stay in
+  // MongoDB and still appear in /search and the Knowledge Hub file list.
+  const manifestKeys = (pub.extracted?.manifest || [])
+    .map((e) => e.key)
+    .filter(Boolean);
+  if (manifestKeys.length) {
+    try {
+      const UnstructuredDocument = require('../../models/UnstructuredDocument');
+      const uRows = await UnstructuredDocument.find({ filePath: { $in: manifestKeys } })
+        .select('_id')
+        .lean();
+      const uids = uRows.map((r) => r._id);
+      if (uids.length) await deleteUnstructuredByIds(uids);
+    } catch (err) {
+      console.warn('deletePublication unstructured cleanup warning:', err.message);
+    }
+  }
+
   await PublicationLog.deleteMany({ publicationId: pub._id });
   await Publication.deleteOne({ _id: pub._id });
   return true;
+}
+
+/**
+ * Remove UnstructuredDocument rows that pointed at zip-extracted blobs but
+ * whose publication is gone. Keys can be CAS (`extracted/...`) or legacy
+ * (`publications/<pubId>/extracted/...`). Manual Khub uploads use
+ * `unstructured/...` — those are always skipped.
+ */
+async function cleanupOrphanUnstructuredDocuments({ dryRun = false } = {}) {
+  const UnstructuredDocument = require('../../models/UnstructuredDocument');
+
+  const pubs = await Publication.find({}, { 'extracted.manifest.key': 1 }).lean();
+  const referencedKeys = new Set();
+  for (const p of pubs) {
+    for (const e of p.extracted?.manifest || []) {
+      if (e.key) referencedKeys.add(e.key);
+    }
+  }
+
+  const all = await UnstructuredDocument.find({
+    filePath: { $exists: true, $nin: [null, ''] },
+  })
+    .select('_id filePath')
+    .lean();
+
+  const orphanIds = [];
+  for (const doc of all) {
+    const fp = String(doc.filePath || '').trim();
+    if (!fp) continue;
+    if (fp.startsWith('unstructured/')) continue; // direct Khub upload — never "orphan"
+    if (referencedKeys.has(fp)) continue;
+    orphanIds.push(doc._id);
+  }
+
+  if (!orphanIds.length) {
+    return { deleted: 0, dryRun, scanned: all.length, wouldDelete: 0 };
+  }
+
+  if (dryRun) {
+    return {
+      deleted: 0,
+      dryRun: true,
+      scanned: all.length,
+      wouldDelete: orphanIds.length,
+    };
+  }
+
+  const deletedCount = await deleteUnstructuredByIds(orphanIds);
+  return {
+    deleted: deletedCount,
+    dryRun: false,
+    scanned: all.length,
+    wouldDelete: orphanIds.length,
+  };
 }
 
 // ── Internals ──────────────────────────────────────────────────────────────
@@ -1471,4 +1546,5 @@ module.exports = {
   presignFile,
   deletePublication,
   cleanHistory,
+  cleanupOrphanUnstructuredDocuments,
 };

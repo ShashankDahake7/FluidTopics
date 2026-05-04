@@ -36,6 +36,7 @@ router.get('/default', async (_req, res, next) => {
     res.json({
       defaultLocale: cfg.defaultLocale || 'en',
       enabledLocales: Array.isArray(cfg.enabledLocales) ? cfg.enabledLocales : [],
+      searchInAllLanguagesEnabled: cfg.searchInAllLanguagesEnabled !== false,
     });
   } catch (err) { next(err); }
 });
@@ -45,7 +46,7 @@ router.get('/default', async (_req, res, next) => {
  */
 router.put('/default', auth, translationsAdmin, async (req, res, next) => {
   try {
-    const { defaultLocale, enabledLocales } = req.body || {};
+    const { defaultLocale, enabledLocales, searchInAllLanguagesEnabled } = req.body || {};
     const cfg = await SiteConfig.getSingleton();
     const snapBefore = await snapshotLanguages();
     if (defaultLocale !== undefined && defaultLocale !== null) {
@@ -53,6 +54,9 @@ router.put('/default', auth, translationsAdmin, async (req, res, next) => {
     }
     if (Array.isArray(enabledLocales)) {
       cfg.enabledLocales = [...new Set(enabledLocales.map((x) => normalizeLocale(String(x))))];
+    }
+    if (typeof searchInAllLanguagesEnabled === 'boolean') {
+      cfg.searchInAllLanguagesEnabled = searchInAllLanguagesEnabled;
     }
     await cfg.save();
     const snapAfter = await snapshotLanguages();
@@ -65,6 +69,7 @@ router.put('/default', auth, translationsAdmin, async (req, res, next) => {
     res.json({
       defaultLocale: cfg.defaultLocale,
       enabledLocales: cfg.enabledLocales || [],
+      searchInAllLanguagesEnabled: cfg.searchInAllLanguagesEnabled !== false,
     });
   } catch (err) { next(err); }
 });

@@ -210,6 +210,7 @@ async function snapshotLanguages() {
   return {
     defaultLocale: cfg.defaultLocale || 'en',
     enabledLocales: Array.isArray(cfg.enabledLocales) ? cfg.enabledLocales : [],
+    searchInAllLanguagesEnabled: cfg.searchInAllLanguagesEnabled !== false,
   };
 }
 

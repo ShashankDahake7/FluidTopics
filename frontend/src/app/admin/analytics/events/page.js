@@ -1,126 +1,411 @@
 'use client';
-import { useMemo, useState } from 'react';
+
+import React, { useMemo, useState, useEffect, useCallback, useRef } from 'react';
 import AnalyticsShell from '@/components/admin/AnalyticsShell';
+import api from '@/lib/api';
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Brush,
+  ResponsiveContainer,
+  ReferenceArea,
+} from 'recharts';
 
-/* ------------------------------ Constants ------------------------------ */
+/* ------------------------------ Event catalogue (colours match FT blueprint) ------------------------------ */
 
-const MONTHS = [
-  'September 2024', 'October 2024', 'November 2024', 'December 2024',
-  'January 2025',   'February 2025', 'March 2025',    'April 2025',
-  'May 2025',       'June 2025',     'July 2025',     'August 2025',
-  'September 2025', 'October 2025',  'November 2025', 'December 2025',
-  'January 2026',   'February 2026', 'March 2026',    'April 2026',
-];
-
-const MONTH_LABELS = [
-  'September 2024', 'December 2024', 'March 2025', 'June 2025',
-  'September 2025', 'December 2025', 'March 2026',
-];
-
-/*
- * Event categories — colour & key match the Angular blueprint exactly.
- * Mock value series are calibrated to mirror the blueprint chart shape:
- *   — Views are the dominant series (10k–100k range)
- *   — Searches are mid-range (1k–25k)
- *   — Interactions/Assets stay near zero with occasional small spikes
- * See the rendered tooltip in the blueprint:
- *   "In November 2024: 226,002 — topic.start_display: 83,493, page.display: 78,651, …"
- */
-const CATEGORIES = [
+const EVENT_CATEGORIES = [
   {
     key: 'views',
     label: 'Views',
     events: [
-      {
-        key: 'document.start_display',
-        label: 'document.start_display',
-        color: '#8cb860',
-        values: [35100, 26500, 29671, 31500, 39100, 35800, 32650, 31870, 33430, 29490, 38200, 31100, 31650, 31040, 31350, 26750, 26980, 28430, 29970, 21720],
-      },
-      {
-        key: 'topic.start_display',
-        label: 'topic.start_display',
-        color: '#bd50ae',
-        values: [96900, 82600, 83493, 87900, 103000, 91500, 79850, 86650, 81300, 75800, 99400, 83000, 77900, 84600, 83400, 74550, 73180, 76000, 76450, 56000],
-      },
-      {
-        key: 'page.display',
-        label: 'page.display',
-        color: '#49c06a',
-        values: [85100, 70400, 78651, 86100, 99350, 89640, 89110, 90650, 91020, 78110, 99180, 72800, 72330, 71060, 71290, 63320, 63880, 67540, 74470, 51500],
-      },
+      { key: 'document.start_display', label: 'document.start_display', color: '#8cb860' },
+      { key: 'topic.start_display', label: 'topic.start_display', color: '#bd50ae' },
+      { key: 'page.display', label: 'page.display', color: '#49c06a' },
     ],
   },
   {
     key: 'searches',
     label: 'Searches',
     events: [
-      {
-        key: 'khub.search',
-        label: 'khub.search',
-        color: '#acb839',
-        values: [30700, 20570, 21563, 25240, 28130, 24500, 25940, 22560, 22950, 19660, 26530, 21040, 24910, 20620, 19980, 20130, 18380, 18340, 18380, 15080],
-      },
-      {
-        key: 'search_page.select',
-        label: 'search_page.select',
-        color: '#6972d7',
-        values: [14180, 9640, 10996, 13200, 14930, 13160, 14430, 11990, 12520, 11140, 15240, 11760, 14230, 11320, 11000, 11300, 10370, 10280, 10470, 8430],
-      },
-      {
-        key: 'document.search',
-        label: 'document.search',
-        color: '#85ad40',
-        values: [630, 1230, 1476, 6320, 2530, 1730, 5130, 1690, 1190, 1430, 2620, 1100, 820, 1200, 1330, 4180, 1740, 1240, 1310, 850],
-      },
+      { key: 'khub.search', label: 'khub.search', color: '#acb839' },
+      { key: 'search_page.select', label: 'search_page.select', color: '#6972d7' },
+      { key: 'document.search', label: 'document.search', color: '#85ad40' },
     ],
   },
   {
     key: 'interactions',
     label: 'Interactions',
     events: [
-      { key: 'link.share',        label: 'link.share',        color: '#bc81d5', values: Array(20).fill(0) },
-      { key: 'feedback.send',     label: 'feedback.send',     color: '#446b1d', values: [12, 23, 30, 21, 28, 41, 41, 56, 21, 23, 14, 14, 17, 13, 21, 21, 14, 25, 14, 13] },
-      { key: 'document.rate',     label: 'document.rate',     color: '#d4568b', values: Array(20).fill(0) },
-      { key: 'topic.rate',        label: 'topic.rate',        color: '#46b57c', values: [9, 31, 25, 26, 23, 31, 21, 14, 27, 50, 20, 24, 8, 50, 16, 9, 22, 31, 14, 16] },
-      { key: 'document.unrate',   label: 'document.unrate',   color: '#892c6a', values: Array(20).fill(0) },
-      { key: 'topic.unrate',      label: 'topic.unrate',      color: '#43c8ac', values: Array(20).fill(0) },
-      { key: 'document.print',    label: 'document.print',    color: '#d54962', values: Array(20).fill(0) },
-      { key: 'document.download', label: 'document.download', color: '#6bad66', values: [3, 4, 6, 10, 5, 4, 2, 37, 9, 18, 9, 4, 5, 10, 10, 31, 44, 10, 47, 13] },
+      { key: 'link.share', label: 'link.share', color: '#bc81d5' },
+      { key: 'feedback.send', label: 'feedback.send', color: '#446b1d' },
+      { key: 'document.rate', label: 'document.rate', color: '#d4568b' },
+      { key: 'topic.rate', label: 'topic.rate', color: '#46b57c' },
+      { key: 'document.unrate', label: 'document.unrate', color: '#892c6a' },
+      { key: 'topic.unrate', label: 'topic.unrate', color: '#43c8ac' },
+      { key: 'document.print', label: 'document.print', color: '#d54962' },
+      { key: 'document.download', label: 'document.download', color: '#6bad66' },
     ],
   },
   {
     key: 'assets',
     label: 'Assets',
     events: [
-      { key: 'bookmark.delete',     label: 'bookmark.delete',     color: '#d1972c', values: [10, 1, 11, 8, 6, 14, 2, 7, 13, 3, 5, 2, 7, 4, 4, 3, 7, 4, 2, 4] },
-      { key: 'bookmark.create',     label: 'bookmark.create',     color: '#d97db9', values: [82, 85, 57, 67, 71, 41, 26, 47, 45, 26, 47, 25, 32, 35, 25, 28, 41, 19, 36, 32] },
-      { key: 'collection.create',   label: 'collection.create',   color: '#628ed6', values: [5, 0, 2, 3, 0, 0, 0, 1, 5, 0, 1, 1, 2, 0, 0, 0, 2, 1, 1, 3] },
-      { key: 'collection.delete',   label: 'collection.delete',   color: '#c07b31', values: [3, 0, 1, 2, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1] },
-      { key: 'collection.update',   label: 'collection.update',   color: '#8f2748', values: [0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] },
-      { key: 'personal_book.create', label: 'personal_book.create', color: '#beaa52', values: [4, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1] },
-      { key: 'personal_book.delete', label: 'personal_book.delete', color: '#8f2931', values: Array(20).fill(0) },
-      { key: 'personal_book.update', label: 'personal_book.update', color: '#997835', values: Array(20).fill(0) },
-      { key: 'personal_topic.create', label: 'personal_topic.create', color: '#d04d4a', values: Array(20).fill(0) },
-      { key: 'personal_topic.delete', label: 'personal_topic.delete', color: '#832e15', values: Array(20).fill(0) },
-      { key: 'personal_topic.update', label: 'personal_topic.update', color: '#d66c77', values: Array(20).fill(0) },
-      { key: 'saved_search.create', label: 'saved_search.create', color: '#c85932', values: [4, 4, 11, 4, 5, 7, 4, 4, 5, 4, 24, 6, 13, 6, 1, 4, 2, 4, 4, 8] },
-      { key: 'saved_search.delete', label: 'saved_search.delete', color: '#db845e', values: [0, 2, 4, 2, 1, 2, 2, 3, 3, 1, 9, 1, 6, 1, 0, 2, 2, 0, 3, 3] },
-      { key: 'saved_search.update', label: 'saved_search.update', color: '#543586', values: [0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] },
+      { key: 'bookmark.delete', label: 'bookmark.delete', color: '#d1972c' },
+      { key: 'bookmark.create', label: 'bookmark.create', color: '#d97db9' },
+      { key: 'collection.create', label: 'collection.create', color: '#628ed6' },
+      { key: 'collection.delete', label: 'collection.delete', color: '#c07b31' },
+      { key: 'collection.update', label: 'collection.update', color: '#8f2748' },
+      { key: 'personal_book.create', label: 'personal_book.create', color: '#beaa52' },
+      { key: 'personal_book.delete', label: 'personal_book.delete', color: '#8f2931' },
+      { key: 'personal_book.update', label: 'personal_book.update', color: '#997835' },
+      { key: 'personal_topic.create', label: 'personal_topic.create', color: '#d04d4a' },
+      { key: 'personal_topic.delete', label: 'personal_topic.delete', color: '#832e15' },
+      { key: 'personal_topic.update', label: 'personal_topic.update', color: '#d66c77' },
+      { key: 'saved_search.create', label: 'saved_search.create', color: '#c85932' },
+      { key: 'saved_search.delete', label: 'saved_search.delete', color: '#db845e' },
+      { key: 'saved_search.update', label: 'saved_search.update', color: '#543586' },
     ],
   },
 ];
 
-const ALL_EVENTS = CATEGORIES.flatMap((c) => c.events);
+const ALL_EVENTS = EVENT_CATEGORIES.flatMap((c) => c.events);
+const COLOR_BY_KEY = Object.fromEntries(ALL_EVENTS.map((e) => [e.key, e.color]));
 
 const PERIOD_OPTIONS = [
-  { value: 'DAILY',   label: 'Daily' },
-  { value: 'WEEKLY',  label: 'Weekly' },
-  { value: 'MONTHLY', label: 'Monthly' },
+  { value: 'day', label: 'Daily' },
+  { value: 'week', label: 'Weekly' },
+  { value: 'month', label: 'Monthly' },
 ];
 
-const Y_TICKS_LINEAR = [0, 20000, 40000, 60000, 80000, 100000, 120000];
-const Y_TICKS_LOG = [1, 10, 100, 1000, 10000, 100000];
+/* ------------------------------ Helpers ------------------------------ */
+
+function rangeForGroup(groupBy) {
+  const end = new Date();
+  end.setHours(23, 59, 59, 999);
+  const start = new Date(end);
+  if (groupBy === 'day') {
+    start.setDate(start.getDate() - 90);
+  } else if (groupBy === 'week') {
+    start.setDate(start.getDate() - 52 * 7);
+  } else {
+    start.setMonth(start.getMonth() - 18);
+  }
+  start.setHours(0, 0, 0, 0);
+  return { start, end };
+}
+
+function formatAxisLabel(iso, groupBy) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  if (groupBy === 'month') {
+    return d.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' });
+  }
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+function periodIsOngoing(p) {
+  const now = Date.now();
+  const s = new Date(p.periodStartDate).getTime();
+  const e = new Date(p.periodEndDate).getTime();
+  return now >= s && now < e;
+}
+
+function ongoingBandExtents(chartData) {
+  const ongoing = chartData.filter((d) => d.ongoing);
+  if (!ongoing.length) return null;
+  return { x1: ongoing[0].name, x2: ongoing[ongoing.length - 1].name };
+}
+
+/** Min gap between Y-brush handles (as fraction of axis span). */
+const Y_BRUSH_MIN_GAP = 0.02;
+
+/**
+ * Vertical range control styled like Recharts <Brush> (track + two travellers + tint).
+ * `lowNorm` / `highNorm` are 0–1 from bottom → top of track, mapped to the Y domain in the page.
+ */
+function VerticalYBrush({ lowNorm, highNorm, onChange, disabled, 'aria-label': ariaLabel = 'Y-axis range' }) {
+  const trackRef = useRef(null);
+
+  const clampPair = useCallback((lo, hi) => {
+    let low = Math.max(0, Math.min(1, lo));
+    let high = Math.max(0, Math.min(1, hi));
+    if (high - low < Y_BRUSH_MIN_GAP) {
+      const mid = (low + high) / 2;
+      low = Math.max(0, mid - Y_BRUSH_MIN_GAP / 2);
+      high = Math.min(1, low + Y_BRUSH_MIN_GAP);
+      if (high - low < Y_BRUSH_MIN_GAP) {
+        low = high - Y_BRUSH_MIN_GAP;
+      }
+    }
+    return { low, high };
+  }, []);
+
+  const clientToNorm = useCallback((clientY) => {
+    const el = trackRef.current;
+    if (!el) return 0;
+    const rect = el.getBoundingClientRect();
+    if (rect.height <= 0) return 0;
+    return Math.max(0, Math.min(1, (rect.bottom - clientY) / rect.height));
+  }, []);
+
+  const startDrag = useCallback(
+    (which) => (e) => {
+      if (disabled) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.button !== 0) return;
+      const move = (ev) => {
+        const n = clientToNorm(ev.clientY);
+        if (which === 'low') {
+          const nl = Math.min(n, highNorm - Y_BRUSH_MIN_GAP);
+          onChange(clampPair(nl, highNorm));
+        } else {
+          const nh = Math.max(n, lowNorm + Y_BRUSH_MIN_GAP);
+          onChange(clampPair(lowNorm, nh));
+        }
+      };
+      const up = () => {
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+      };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+    },
+    [disabled, clientToNorm, clampPair, onChange, lowNorm, highNorm],
+  );
+
+  const onTrackPointerDown = useCallback(
+    (e) => {
+      if (disabled || e.button !== 0) return;
+      const n = clientToNorm(e.clientY);
+      const dLow = Math.abs(n - lowNorm);
+      const dHigh = Math.abs(n - highNorm);
+      if (dLow <= dHigh) startDrag('low')(e);
+      else startDrag('high')(e);
+    },
+    [disabled, clientToNorm, lowNorm, highNorm, startDrag],
+  );
+
+  const travellerStyle = {
+    position: 'absolute',
+    left: '50%',
+    width: '10px',
+    height: '16px',
+    borderRadius: '2px',
+    background: '#cbd5e1',
+    border: '1px solid #94a3b8',
+    cursor: 'ns-resize',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '2px',
+    padding: '2px 0',
+    boxSizing: 'border-box',
+    touchAction: 'none',
+    transform: 'translate(-50%, 50%)',
+    zIndex: 2,
+    appearance: 'none',
+    WebkitAppearance: 'none',
+    margin: 0,
+  };
+
+  const lowPct = lowNorm * 100;
+  const highPct = highNorm * 100;
+  const bandBottom = lowPct;
+  const bandHeight = Math.max(highPct - lowPct, 0);
+
+  return (
+    <div
+      role="group"
+      aria-label={ariaLabel}
+      title="Drag handles to set the visible Y range (like the date brush below)"
+      style={{
+        width: 22,
+        flexShrink: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        alignSelf: 'stretch',
+        minHeight: 0,
+        userSelect: 'none',
+      }}
+    >
+      <div
+        ref={trackRef}
+        onPointerDown={onTrackPointerDown}
+        style={{
+          position: 'relative',
+          flex: 1,
+          width: 20,
+          minHeight: 64,
+          borderRadius: '4px',
+          background: '#f8fafc',
+          border: '1px solid #cbd5e1',
+          opacity: disabled ? 0.45 : 1,
+          pointerEvents: disabled ? 'none' : 'auto',
+        }}
+      >
+        <div
+          style={{
+            position: 'absolute',
+            left: 2,
+            right: 2,
+            bottom: `${bandBottom}%`,
+            height: `${bandHeight}%`,
+            borderRadius: 3,
+            background: 'rgba(147, 197, 253, 0.35)',
+            pointerEvents: 'none',
+          }}
+        />
+        <button
+          type="button"
+          tabIndex={disabled ? -1 : 0}
+          aria-label="Lower Y bound"
+          onPointerDown={startDrag('low')}
+          style={{
+            ...travellerStyle,
+            bottom: `${lowPct}%`,
+            top: 'auto',
+          }}
+        >
+          <span style={{ width: 5, height: 1, background: '#fff', borderRadius: 1 }} />
+          <span style={{ width: 5, height: 1, background: '#fff', borderRadius: 1 }} />
+        </button>
+        <button
+          type="button"
+          tabIndex={disabled ? -1 : 0}
+          aria-label="Upper Y bound"
+          onPointerDown={startDrag('high')}
+          style={{
+            ...travellerStyle,
+            bottom: `${highPct}%`,
+            top: 'auto',
+          }}
+        >
+          <span style={{ width: 5, height: 1, background: '#fff', borderRadius: 1 }} />
+          <span style={{ width: 5, height: 1, background: '#fff', borderRadius: 1 }} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Max plotted value in the window (linear scale), for Y-axis domain. */
+function maxYInWindow(rows, keys, stacked) {
+  if (!rows.length || !keys.length) return 0;
+  let m = 0;
+  for (const row of rows) {
+    if (stacked) {
+      for (const k of keys) {
+        m = Math.max(m, Number(row[`${k}__stack`]) || 0);
+      }
+    } else {
+      for (const k of keys) {
+        m = Math.max(m, Number(row[k]) || 0);
+      }
+    }
+  }
+  return m;
+}
+
+/** Tooltip lists at most this many event types (by count, descending). */
+const TOOLTIP_MAX_EVENTS = 20;
+
+function EventsTooltipBody({ active, payload, label, visibleKeys }) {
+  if (!active || !payload?.length) return null;
+  const row = payload[0]?.payload;
+  if (!row || typeof row !== 'object') return null;
+
+  const entries = visibleKeys
+    .map((k) => ({
+      key: k,
+      count: Number(row[k]) || 0,
+      color: COLOR_BY_KEY[k] || '#94a3b8',
+    }))
+    .sort((a, b) => b.count - a.count);
+
+  const total = entries.reduce((s, e) => s + e.count, 0);
+  const top = entries.slice(0, TOOLTIP_MAX_EVENTS);
+  const hidden = Math.max(0, entries.length - TOOLTIP_MAX_EVENTS);
+
+  return (
+    <div
+      style={{
+        background: 'rgba(31, 41, 55, 0.72)',
+        WebkitBackdropFilter: 'blur(10px)',
+        backdropFilter: 'blur(10px)',
+        color: '#f8fafc',
+        padding: '10px 12px',
+        borderRadius: '8px',
+        border: '1px solid rgba(255, 255, 255, 0.12)',
+        boxShadow: '0 8px 24px rgba(15, 23, 42, 0.12)',
+        fontSize: '12px',
+        lineHeight: 1.35,
+        maxWidth: 'min(380px, 92vw)',
+        pointerEvents: 'none',
+      }}
+    >
+      <div
+        style={{
+          fontWeight: 600,
+          marginBottom: '8px',
+          paddingBottom: '6px',
+          borderBottom: '1px solid #374151',
+        }}
+      >
+        In {label}: {total.toLocaleString('en-US')}
+      </div>
+      <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+        {top.map((e) => (
+          <li
+            key={e.key}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '12px',
+              padding: '3px 0',
+            }}
+          >
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', minWidth: 0, flex: 1 }}>
+              <span
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: 999,
+                  background: e.color,
+                  flexShrink: 0,
+                }}
+              />
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.key}</span>
+            </span>
+            <span style={{ fontVariantNumeric: 'tabular-nums', flexShrink: 0, color: '#e5e7eb' }}>
+              {e.count.toLocaleString('en-US')}
+            </span>
+          </li>
+        ))}
+      </ul>
+      {hidden > 0 ? (
+        <div
+          style={{
+            marginTop: '8px',
+            paddingTop: '6px',
+            borderTop: '1px solid #374151',
+            fontSize: '11px',
+            color: '#9ca3af',
+          }}
+        >
+          +{hidden} more event type{hidden === 1 ? '' : 's'} not shown
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 /* ------------------------------ Icons ------------------------------ */
 
@@ -194,25 +479,227 @@ const IconExternal = () => (
   </svg>
 );
 
+function Checkbox({ checked, indeterminate, onChange }) {
+  const filled = checked || indeterminate;
+  return (
+    <span
+      role="checkbox"
+      aria-checked={indeterminate ? 'mixed' : checked}
+      tabIndex={0}
+      onClick={onChange}
+      onKeyDown={(e) => {
+        if (e.key === ' ' || e.key === 'Enter') {
+          e.preventDefault();
+          onChange();
+        }
+      }}
+      style={{
+        ...CK.box,
+        background: filled ? '#1d4ed8' : '#ffffff',
+        borderColor: filled ? '#1d4ed8' : '#94a3b8',
+      }}
+    >
+      {indeterminate ? <span style={CK.dash} /> : checked ? <IconCheck /> : null}
+    </span>
+  );
+}
+
+/* ------------------------------ CSV ------------------------------ */
+
+function downloadEventsCsv(chartData, keys) {
+  if (!chartData.length || !keys.length) return;
+  const header = ['Period', ...keys];
+  const lines = [header.join(',')];
+  for (const row of chartData) {
+    const cells = [JSON.stringify(row.name)];
+    for (const k of keys) {
+      const v = row[k];
+      cells.push(v === undefined || v === null ? '' : String(v));
+    }
+    lines.push(cells.join(','));
+  }
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'events.csv';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
 /* ------------------------------ Page ------------------------------ */
 
 export default function EventsPage() {
-  const [period, setPeriod] = useState('MONTHLY');
+  const [groupBy, setGroupBy] = useState('month');
+  const [raw, setRaw] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState(null);
+
   const [stacked, setStacked] = useState(false);
   const [logScale, setLogScale] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(true);
-  const [selected, setSelected] = useState(() => new Set(ALL_EVENTS.map((e) => e.key)));
+
+  const [appliedSelected, setAppliedSelected] = useState(() => new Set(ALL_EVENTS.map((e) => e.key)));
+  const [pendingSelected, setPendingSelected] = useState(() => new Set(ALL_EVENTS.map((e) => e.key)));
+
+  /** Mirrors brush window for Y-axis math (Recharts Brush drives zoom via internal state). */
+  const [brushIdx, setBrushIdx] = useState({ start: 0, end: 0 });
+  /** 0–1 along vertical brush track (bottom→top), maps to [low×cap, high×cap] on the Y axis. */
+  const [yBrushNorm, setYBrushNorm] = useState({ low: 0, high: 1 });
+
+  const { startDateIso, endDateIso } = useMemo(() => {
+    const { start, end } = rangeForGroup(groupBy);
+    return { startDateIso: start.toISOString(), endDateIso: end.toISOString() };
+  }, [groupBy]);
+
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    setErrorMsg(null);
+    try {
+      const json = await api.post('/analytics/v1/traffic/events/time-series', {
+        startDate: startDateIso,
+        endDate: endDateIso,
+        groupByPeriod: groupBy,
+      });
+      if (json?.series && json?.periods) {
+        setRaw(json);
+      } else if (json?.error) {
+        setErrorMsg(json.error);
+        setRaw(null);
+      } else {
+        setErrorMsg('Unexpected response from server');
+        setRaw(null);
+      }
+    } catch (e) {
+      console.error(e);
+      setErrorMsg(e.message);
+      setRaw(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [groupBy, startDateIso, endDateIso]);
+
+  useEffect(() => {
+    // Remote chart load on range/granularity change (same pattern as user-traffic).
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void fetchData();
+  }, [fetchData]);
+
+  const baseChartData = useMemo(() => {
+    if (!raw?.periods?.length || !raw.series) return [];
+    return raw.periods.map((p, i) => {
+      const row = {
+        name: formatAxisLabel(p.periodStartDate, groupBy),
+        periodStart: p.periodStartDate,
+        periodEnd: p.periodEndDate,
+        ongoing: periodIsOngoing(p),
+      };
+      for (const e of ALL_EVENTS) {
+        const arr = raw.series[e.key];
+        row[e.key] = Array.isArray(arr) && arr[i] != null ? arr[i] : 0;
+      }
+      return row;
+    });
+  }, [raw, groupBy]);
+
+  const visibleKeys = useMemo(
+    () => ALL_EVENTS.map((e) => e.key).filter((k) => appliedSelected.has(k)),
+    [appliedSelected],
+  );
+
+  const chartData = useMemo(() => {
+    if (!baseChartData.length) return [];
+    if (!stacked) return baseChartData;
+    return baseChartData.map((row) => {
+      const next = { ...row };
+      let run = 0;
+      for (const k of visibleKeys) {
+        run += row[k] || 0;
+        next[`${k}__stack`] = run;
+      }
+      return next;
+    });
+  }, [baseChartData, stacked, visibleKeys]);
+
+  const displayData = useMemo(() => {
+    if (!logScale) return chartData;
+    return chartData.map((row) => {
+      const next = { ...row };
+      const keysToPlot = stacked ? visibleKeys.map((k) => `${k}__stack`) : visibleKeys;
+      for (const rawKey of stacked ? visibleKeys : visibleKeys) {
+        const v = stacked ? row[`${rawKey}__stack`] : row[rawKey];
+        const num = v || 0;
+        next[`${rawKey}__lg`] = Math.log10(Math.max(num, 1));
+      }
+      return next;
+    });
+  }, [chartData, logScale, stacked, visibleKeys]);
+
+  useEffect(() => {
+    if (!displayData.length) return;
+    setBrushIdx({ start: 0, end: displayData.length - 1 });
+    setYBrushNorm({ low: 0, high: 1 });
+  }, [groupBy, raw, displayData.length]);
+
+  const ongoingBand = useMemo(() => ongoingBandExtents(displayData.length ? displayData : chartData), [displayData, chartData]);
+
+  const noneSelected = visibleKeys.length === 0;
+
+  const handleBrushChange = useCallback((range) => {
+    if (!range || typeof range.startIndex !== 'number' || typeof range.endIndex !== 'number') return;
+    setBrushIdx({
+      start: range.startIndex,
+      end: Math.min(range.endIndex, displayData.length ? displayData.length - 1 : 0),
+    });
+  }, [displayData.length]);
+
+  const windowedForY = useMemo(() => {
+    if (!displayData.length) return [];
+    const end = Math.min(brushIdx.end, displayData.length - 1);
+    const start = Math.max(0, Math.min(brushIdx.start, end));
+    return displayData.slice(start, end + 1);
+  }, [displayData, brushIdx.start, brushIdx.end]);
+
+  const dataMaxY = useMemo(() => {
+    if (!windowedForY.length || logScale) return null;
+    return maxYInWindow(windowedForY, visibleKeys, stacked);
+  }, [windowedForY, visibleKeys, stacked, logScale]);
+
+  const naturalYCap = useMemo(() => {
+    if (dataMaxY == null) return 1;
+    return Math.max(1, Math.ceil(dataMaxY * 1.08));
+  }, [dataMaxY]);
+
+  const yDomainMinLin = useMemo(() => yBrushNorm.low * naturalYCap, [yBrushNorm.low, naturalYCap]);
+  const yDomainMaxLin = useMemo(() => yBrushNorm.high * naturalYCap, [yBrushNorm.high, naturalYCap]);
+
+  const yDomainLinear = useMemo(() => {
+    if (logScale) return null;
+    const lo = yDomainMinLin;
+    const hi = yDomainMaxLin;
+    const eps = Math.max(1e-6, (naturalYCap || 1) * 1e-9);
+    return [lo, Math.max(hi, lo + eps)];
+  }, [logScale, yDomainMinLin, yDomainMaxLin, naturalYCap]);
+
+  const handleYBrushChange = useCallback((next) => {
+    setYBrushNorm(next);
+  }, []);
 
   const allCount = ALL_EVENTS.length;
-  const allSelected = selected.size === allCount;
-  const noneSelected = selected.size === 0;
 
-  const toggleAll = () => {
-    setSelected(allSelected ? new Set() : new Set(ALL_EVENTS.map((e) => e.key)));
+  const tooltipContent = useCallback(
+    (props) => <EventsTooltipBody {...props} visibleKeys={visibleKeys} />,
+    [visibleKeys],
+  );
+
+  const toggleAllPending = () => {
+    setPendingSelected((prev) => {
+      if (prev.size === allCount) return new Set();
+      return new Set(ALL_EVENTS.map((e) => e.key));
+    });
   };
 
-  const toggleOne = (key) => {
-    setSelected((prev) => {
+  const toggleOnePending = (key) => {
+    setPendingSelected((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
       else next.add(key);
@@ -220,10 +707,10 @@ export default function EventsPage() {
     });
   };
 
-  const toggleCategory = (cat) => {
+  const toggleCategoryPending = (cat) => {
     const keys = cat.events.map((e) => e.key);
-    const everyOn = keys.every((k) => selected.has(k));
-    setSelected((prev) => {
+    const everyOn = keys.every((k) => pendingSelected.has(k));
+    setPendingSelected((prev) => {
       const next = new Set(prev);
       if (everyOn) keys.forEach((k) => next.delete(k));
       else keys.forEach((k) => next.add(k));
@@ -231,16 +718,17 @@ export default function EventsPage() {
     });
   };
 
-  const visible = useMemo(
-    () => ALL_EVENTS.filter((e) => selected.has(e.key)),
-    [selected],
-  );
+  const applyFilters = () => {
+    setAppliedSelected(new Set(pendingSelected));
+  };
+
+  const chartMargin = { top: 8, right: 6, left: 2, bottom: 4 };
+  const chartMarginBottom = { ...chartMargin, bottom: 24 };
 
   return (
     <AnalyticsShell
       active="events"
       breadcrumb={{ prefix: 'Traffic', title: 'Events' }}
-      feedbackSubject="Feedback about events"
       toolbarExtras={
         <button
           type="button"
@@ -265,14 +753,14 @@ export default function EventsPage() {
             <div style={PS.headControls}>
               <div role="radiogroup" aria-label="Group by period" style={PS.switch}>
                 {PERIOD_OPTIONS.map((opt) => {
-                  const active = period === opt.value;
+                  const active = groupBy === opt.value;
                   return (
                     <button
                       key={opt.value}
                       type="button"
                       role="radio"
                       aria-checked={active}
-                      onClick={() => setPeriod(opt.value)}
+                      onClick={() => setGroupBy(opt.value)}
                       style={{
                         ...PS.switchOption,
                         background: active ? '#1d4ed8' : 'transparent',
@@ -311,8 +799,10 @@ export default function EventsPage() {
               <button
                 type="button"
                 style={{ ...PS.iconBtn, color: '#1d4ed8' }}
-                title="Download as XLSX"
-                aria-label="Download as XLSX"
+                title="Download as CSV"
+                aria-label="Download as CSV"
+                onClick={() => downloadEventsCsv(chartData, visibleKeys)}
+                disabled={noneSelected || !chartData.length}
               >
                 <IconDownload />
               </button>
@@ -321,12 +811,129 @@ export default function EventsPage() {
 
           <section style={PS.body}>
             <div style={PS.chartCard}>
-              <EventsChart
-                series={visible}
-                stacked={stacked}
-                logScale={logScale}
-                empty={noneSelected}
-              />
+              {loading ? (
+                <div style={{ ...PS.loading, flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 200 }}>
+                  Loading events…
+                </div>
+              ) : errorMsg ? (
+                <div style={{ ...PS.errorBox, flex: 1, display: 'flex', alignItems: 'center', minHeight: 200 }}>{errorMsg}</div>
+              ) : noneSelected ? (
+                <div style={{ ...PS.loading, flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 200 }}>
+                  No events selected — use the filter panel and Apply.
+                </div>
+              ) : displayData.length === 0 ? (
+                <div style={{ ...PS.loading, flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 200 }}>
+                  No data in this range.
+                </div>
+              ) : (
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'stretch',
+                    gap: 2,
+                    width: '100%',
+                    flex: 1,
+                    minHeight: 0,
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
+                    <ResponsiveContainer
+                      key={`${groupBy}-${raw?.startDate || ''}-${raw?.endDate || ''}`}
+                      width="100%"
+                      height="100%"
+                    >
+                      <LineChart data={displayData} margin={chartMarginBottom}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+                      {ongoingBand && (
+                        <ReferenceArea
+                          x1={ongoingBand.x1}
+                          x2={ongoingBand.x2}
+                          fill="#93c5fd"
+                          fillOpacity={0.22}
+                          strokeOpacity={0}
+                          ifOverflow="visible"
+                          label={{
+                            value: 'Ongoing period',
+                            position: 'insideTop',
+                            fill: '#64748b',
+                            fontSize: 11,
+                          }}
+                        />
+                      )}
+                      <XAxis
+                        dataKey="name"
+                        tick={{ fontSize: 11, fill: '#6b7280' }}
+                        tickLine={false}
+                        axisLine={{ stroke: '#6e7079' }}
+                        minTickGap={24}
+                        label={{
+                          value: 'DATE',
+                          position: 'insideBottomRight',
+                          offset: -4,
+                          fill: '#6E7079',
+                          fontSize: 11,
+                        }}
+                      />
+                      <YAxis
+                        tick={{ fontSize: 11, fill: '#6b7280' }}
+                        tickLine={false}
+                        axisLine={false}
+                        width={52}
+                        domain={logScale ? ['auto', 'auto'] : yDomainLinear}
+                        allowDataOverflow={!logScale}
+                        label={{
+                          value: 'EVENTS',
+                          angle: -90,
+                          position: 'insideLeft',
+                          fill: '#6E7079',
+                          fontSize: 11,
+                          offset: 10,
+                        }}
+                      />
+                      <Tooltip
+                        content={tooltipContent}
+                        wrapperStyle={{ outline: 'none', pointerEvents: 'none' }}
+                        cursor={{ stroke: '#94a3b8', strokeWidth: 1, strokeDasharray: '4 4' }}
+                      />
+                      {visibleKeys.map((k) => {
+                        const color = COLOR_BY_KEY[k] || '#64748b';
+                        const dataKey = logScale ? `${k}__lg` : stacked ? `${k}__stack` : k;
+                        return (
+                          <Line
+                            key={k}
+                            type="monotone"
+                            dataKey={dataKey}
+                            name={logScale ? `${k}__lg` : k}
+                            stroke={color}
+                            strokeWidth={2}
+                            dot={{ r: 2.5, fill: '#fff', strokeWidth: 1 }}
+                            isAnimationActive={false}
+                            connectNulls
+                          />
+                        );
+                      })}
+                      <Brush
+                        dataKey="name"
+                        height={24}
+                        stroke="#cbd5e1"
+                        fill="#f8fafc"
+                        gap={1}
+                        onChange={handleBrushChange}
+                        travellerWidth={8}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                  </div>
+                  {!logScale && (
+                    <VerticalYBrush
+                      lowNorm={yBrushNorm.low}
+                      highNorm={yBrushNorm.high}
+                      onChange={handleYBrushChange}
+                      disabled={noneSelected}
+                    />
+                  )}
+                </div>
+              )}
             </div>
           </section>
         </main>
@@ -348,7 +955,9 @@ export default function EventsPage() {
 
             <div style={PS.drawerBody}>
               <div style={PS.notice} role="note">
-                <span style={PS.noticeIcon}><IconInfo /></span>
+                <span style={PS.noticeIcon}>
+                  <IconInfo />
+                </span>
                 <span style={PS.noticeText}>
                   See{' '}
                   <a
@@ -358,25 +967,28 @@ export default function EventsPage() {
                     style={PS.noticeLink}
                   >
                     Events documentation
-                    <span style={{ marginLeft: '4px', display: 'inline-flex' }}><IconExternal /></span>
+                    <span style={{ marginLeft: '4px', display: 'inline-flex' }}>
+                      <IconExternal />
+                    </span>
                   </a>
+                  . Deletes, unrates, and personal-book topic edits are counted from server telemetry; global search hit clicks are counted when users leave this portal’s search results page.
                 </span>
               </div>
 
               <div style={PS.selectAllRow}>
                 <label style={{ ...PS.checkRow, fontWeight: 600 }}>
                   <Checkbox
-                    checked={allSelected}
-                    indeterminate={!allSelected && !noneSelected}
-                    onChange={toggleAll}
+                    checked={pendingSelected.size === allCount}
+                    indeterminate={pendingSelected.size > 0 && pendingSelected.size < allCount}
+                    onChange={toggleAllPending}
                   />
                   <span>Select all</span>
                 </label>
               </div>
 
-              {CATEGORIES.map((cat) => {
+              {EVENT_CATEGORIES.map((cat) => {
                 const keys = cat.events.map((e) => e.key);
-                const onCount = keys.filter((k) => selected.has(k)).length;
+                const onCount = keys.filter((k) => pendingSelected.has(k)).length;
                 const catChecked = onCount === keys.length;
                 const catIndeterminate = onCount > 0 && onCount < keys.length;
                 return (
@@ -386,7 +998,7 @@ export default function EventsPage() {
                         <Checkbox
                           checked={catChecked}
                           indeterminate={catIndeterminate}
-                          onChange={() => toggleCategory(cat)}
+                          onChange={() => toggleCategoryPending(cat)}
                         />
                         <span>{cat.label}</span>
                       </label>
@@ -396,8 +1008,8 @@ export default function EventsPage() {
                         <li key={e.key}>
                           <label style={PS.checkRow}>
                             <Checkbox
-                              checked={selected.has(e.key)}
-                              onChange={() => toggleOne(e.key)}
+                              checked={pendingSelected.has(e.key)}
+                              onChange={() => toggleOnePending(e.key)}
                             />
                             <span style={{ ...PS.colorDot, background: e.color }} aria-hidden="true" />
                             <span style={PS.eventName}>{e.label}</span>
@@ -411,7 +1023,9 @@ export default function EventsPage() {
             </div>
 
             <footer style={PS.drawerFoot}>
-              <button type="button" style={PS.applyBtn}>Apply</button>
+              <button type="button" style={PS.applyBtn} onClick={applyFilters}>
+                Apply
+              </button>
             </footer>
           </aside>
         )}
@@ -420,172 +1034,19 @@ export default function EventsPage() {
   );
 }
 
-/* ------------------------------ Checkbox ------------------------------ */
-
-function Checkbox({ checked, indeterminate, onChange }) {
-  const filled = checked || indeterminate;
-  return (
-    <span
-      role="checkbox"
-      aria-checked={indeterminate ? 'mixed' : checked}
-      tabIndex={0}
-      onClick={onChange}
-      onKeyDown={(e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); onChange(); } }}
-      style={{
-        ...CK.box,
-        background: filled ? '#1d4ed8' : '#ffffff',
-        borderColor: filled ? '#1d4ed8' : '#94a3b8',
-      }}
-    >
-      {indeterminate ? <span style={CK.dash} /> : checked ? <IconCheck /> : null}
-    </span>
-  );
-}
-
-/* ------------------------------ Chart ------------------------------ */
-
-function EventsChart({ series, stacked, logScale, empty }) {
-  const width = 1100;
-  const height = 360;
-  const padL = 80;
-  const padR = 24;
-  const padT = 40;
-  const padB = 50;
-  const innerW = width - padL - padR;
-  const innerH = height - padT - padB;
-
-  const yTicks = logScale ? Y_TICKS_LOG : Y_TICKS_LINEAR;
-
-  const transform = (v) => (logScale ? Math.log10(Math.max(v, 1)) : v);
-
-  const yMin = 0;
-  const yMax = logScale ? Math.log10(yTicks[yTicks.length - 1]) : yTicks[yTicks.length - 1];
-
-  const xStep = innerW / (MONTHS.length - 1);
-  const xPos = (i) => padL + i * xStep;
-  const yPos = (v) => {
-    const t = transform(v);
-    if (yMax === yMin) return padT + innerH;
-    const norm = (t - yMin) / (yMax - yMin);
-    return padT + innerH - Math.max(0, Math.min(1, norm)) * innerH;
-  };
-
-  const stackedSeries = useMemo(() => {
-    if (!stacked) return series;
-    const running = MONTHS.map(() => 0);
-    return series.map(({ label, color, key, values }) => {
-      const stackedVals = values.map((v, i) => {
-        running[i] += v;
-        return running[i];
-      });
-      return { key, label, color, values: stackedVals };
-    });
-  }, [series, stacked]);
-
-  const labelTickIdx = useMemo(
-    () => MONTH_LABELS.map((label) => MONTHS.indexOf(label)).filter((i) => i >= 0),
-    [],
-  );
-
-  const ongoingX = xPos(MONTHS.length - 1);
-  const lastTickX = xPos(MONTHS.length - 2);
-
-  const formatY = (v) => {
-    if (v >= 1000) return v.toLocaleString('en-US');
-    return String(v);
-  };
-
-  return (
-    <div style={CS.wrap}>
-      <div style={CS.svgWrap}>
-        <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" style={{ width: '100%', height }}>
-          <text x={padL} y={padT - 18} fontSize="11" fill="#6E7079" textAnchor="middle" fontFamily="Inter, sans-serif" fontWeight="600">
-            EVENTS
-          </text>
-
-          {yTicks.map((t) => (
-            <g key={t}>
-              <line x1={padL} y1={yPos(t)} x2={padL + innerW} y2={yPos(t)} stroke="#e0e6f1" />
-              <text x={padL - 8} y={yPos(t) + 3} fontSize="11" fill="#6e7079" textAnchor="end" fontFamily="Inter, sans-serif">
-                {formatY(t)}
-              </text>
-            </g>
-          ))}
-
-          <line x1={padL} y1={padT + innerH} x2={padL + innerW} y2={padT + innerH} stroke="#6e7079" />
-          <text x={padL + innerW + 6} y={padT + innerH + 3} fontSize="11" fill="#6E7079" fontFamily="Inter, sans-serif">
-            DATE
-          </text>
-
-          {labelTickIdx.map((idx) => (
-            <g key={idx}>
-              <line x1={xPos(idx)} y1={padT + innerH} x2={xPos(idx)} y2={padT + innerH + 5} stroke="#6e7079" />
-              <text x={xPos(idx)} y={padT + innerH + 18} fontSize="11" fill="#6e7079" textAnchor="middle" fontFamily="Inter, sans-serif">
-                {MONTHS[idx]}
-              </text>
-            </g>
-          ))}
-
-          <rect x={lastTickX} y={padT - 10} width={ongoingX - lastTickX} height={innerH + 10} fill="rgba(33,150,243,0.06)" />
-          <text x={(lastTickX + ongoingX) / 2} y={padT - 14} fontSize="11" fill="#475569" textAnchor="middle" fontFamily="Inter, sans-serif">
-            Ongoing period
-          </text>
-
-          {!empty && stackedSeries.map(({ key, label, color, values }) => {
-            const points = values.map((v, i) => `${xPos(i)},${yPos(v)}`).join(' ');
-            const isFlatZero = values.every((v) => v === 0);
-            return (
-              <g key={key} opacity={isFlatZero ? 0.55 : 1}>
-                <polyline points={points} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="bevel" />
-                {values.map((v, i) => (
-                  <circle
-                    key={i}
-                    cx={xPos(i)}
-                    cy={yPos(v)}
-                    r="2.6"
-                    fill="#ffffff"
-                    stroke={color}
-                    strokeWidth="1"
-                    opacity={i === values.length - 1 ? 0.55 : 1}
-                  >
-                    <title>{`${label} — ${MONTHS[i]}: ${v.toLocaleString('en-US')}`}</title>
-                  </circle>
-                ))}
-              </g>
-            );
-          })}
-
-          {empty && (
-            <text x={padL + innerW / 2} y={padT + innerH / 2} fontSize="13" fill="#94a3b8" textAnchor="middle" fontFamily="Inter, sans-serif">
-              No events selected
-            </text>
-          )}
-        </svg>
-      </div>
-
-      <div style={CS.legend}>
-        {series.map(({ key, label, color }) => (
-          <span key={key} style={CS.legendItem}>
-            <span style={{ ...CS.legendDot, background: color }} />
-            <span>{label}</span>
-          </span>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/* ------------------------------ Styles ------------------------------ */
-
 const PS = {
   layout: {
     position: 'relative',
     display: 'flex',
-    minHeight: 'calc(100vh - 60px - 56px)',
+    flex: 1,
+    flexDirection: 'column',
+    minHeight: 0,
+    minWidth: 0,
   },
   main: {
     flex: 1,
     minWidth: 0,
+    minHeight: 0,
     display: 'flex',
     flexDirection: 'column',
     background: '#ffffff',
@@ -600,7 +1061,7 @@ const PS = {
     borderBottom: '1px solid #e5e7eb',
   },
   headTagline: { fontSize: '0.85rem', color: '#475569', flex: 1 },
-  headControls: { display: 'inline-flex', alignItems: 'center', gap: '12px' },
+  headControls: { display: 'inline-flex', alignItems: 'center', gap: '12px', flexShrink: 0 },
   switch: {
     display: 'inline-flex',
     padding: '3px',
@@ -638,13 +1099,26 @@ const PS = {
     borderRadius: '50%',
     cursor: 'pointer',
   },
-  body: { padding: '18px 22px 28px', display: 'flex', flexDirection: 'column', gap: '16px' },
+  body: {
+    flex: 1,
+    minHeight: 0,
+    padding: '10px 16px 12px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+  },
   chartCard: {
+    flex: 1,
+    minHeight: 0,
     background: '#ffffff',
     border: '1px solid #e5e7eb',
     borderRadius: '12px',
-    padding: '16px 18px 18px',
+    padding: '10px 12px 8px',
+    display: 'flex',
+    flexDirection: 'column',
   },
+  loading: { padding: '48px', textAlign: 'center', color: '#64748b', fontSize: '0.9rem' },
+  errorBox: { padding: '24px', color: '#b91c1c', fontSize: '0.9rem' },
 
   drawer: {
     position: 'absolute',
@@ -760,30 +1234,6 @@ const PS = {
     cursor: 'pointer',
     fontFamily: 'inherit',
   },
-};
-
-const CS = {
-  wrap: { display: 'flex', flexDirection: 'column', gap: '8px' },
-  svgWrap: { width: '100%' },
-  legend: {
-    display: 'flex',
-    flexWrap: 'wrap',
-    gap: '4px 14px',
-    marginTop: '6px',
-    padding: '8px 4px 0',
-    borderTop: '1px solid #f1f5f9',
-    maxHeight: '120px',
-    overflowY: 'auto',
-  },
-  legendItem: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: '6px',
-    fontSize: '0.72rem',
-    color: '#334155',
-    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-  },
-  legendDot: { width: '9px', height: '9px', borderRadius: '50%', display: 'inline-block' },
 };
 
 const CK = {

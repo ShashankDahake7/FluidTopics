@@ -1,7 +1,9 @@
 const path = require('path');
 const express = require('express');
+const mongoose = require('mongoose');
 const router = express.Router();
 const Feedback = require('../models/Feedback');
+const Rating = require('../models/Rating');
 const Topic = require('../models/Topic');
 const FeedbackSettings = require('../models/FeedbackSettings');
 const EmailSettings = require('../models/EmailSettings');
@@ -207,6 +209,33 @@ router.post('/', optionalAuth, async (req, res, next) => {
       rating: hasRating ? Number(rating) : null,
       feedback: hasFeedback ? feedback.trim() : '',
     });
+
+    // Topic ratings analytics aggregates `Rating` documents (same collection as
+    // POST /api/topics/:id/rating). The reader submits via /feedback only — sync
+    // so stars/likes/dichotomous (normalized to 1–5) appear in analytics.
+    if (hasRating && req.user?.id && mongoose.isValidObjectId(topicId)) {
+      const val = Number(rating);
+      if (Number.isFinite(val) && val >= 1 && val <= 5) {
+        const uid = req.user._id || req.user.id;
+        const tid = new mongoose.Types.ObjectId(topicId);
+        try {
+          await Rating.findOneAndUpdate(
+            { userId: uid, topicId: tid },
+            {
+              userId: uid,
+              topicId: tid,
+              documentId: null,
+              unstructuredId: null,
+              value: val,
+              comment: hasFeedback ? String(feedback).trim() : '',
+            },
+            { upsert: true, new: true, setDefaultsOnInsert: true },
+          );
+        } catch (syncErr) {
+          console.warn('[feedback] Rating sync for analytics failed:', syncErr.message);
+        }
+      }
+    }
 
     // Recipients are required for the FT-managed delivery path. The mailto
     // fallback (Email service = "user") doesn't need them — we just hand the

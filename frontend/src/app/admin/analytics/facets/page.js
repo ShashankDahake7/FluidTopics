@@ -70,7 +70,6 @@ export default function FacetsPage() {
     <AnalyticsShell
       active="facets"
       breadcrumb={{ prefix: 'Search', title: 'Facets' }}
-      feedbackSubject="Feedback about facets"
       toolbarExtras={
         <div style={PS.toolbarRight}>
           <div style={PS.dateIndicator} title="Date range" aria-label="Date range">

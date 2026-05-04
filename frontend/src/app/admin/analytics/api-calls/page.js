@@ -194,7 +194,6 @@ export default function ApiCallsPage() {
     <AnalyticsShell
       active="api-calls"
       breadcrumb={{ prefix: 'Traffic', title: 'API calls' }}
-      feedbackSubject="Feedback about api calls evolution"
       toolbarExtras={
         <button
           type="button"

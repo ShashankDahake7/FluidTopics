@@ -2,6 +2,8 @@ const express = require('express');
 const mongoose = require('mongoose');
 const SavedSearch = require('../models/SavedSearch');
 const { auth } = require('../middleware/auth');
+const { trackFtEvent } = require('../services/analytics/analyticsService');
+const { analyticsFromReq } = require('../utils/clientIp');
 
 const router = express.Router();
 router.use(auth);
@@ -63,7 +65,17 @@ router.patch('/:id', async (req, res, next) => {
 // DELETE /api/saved-searches — clear all
 router.delete('/', async (req, res, next) => {
   try {
+    const n = await SavedSearch.countDocuments({ userId: req.user.id });
     await SavedSearch.deleteMany({ userId: req.user.id });
+    if (n > 0) {
+      trackFtEvent({
+        userId: req.user.id,
+        ftEvent: 'saved_search.delete',
+        data: { count: n },
+        userAgent: req.headers['user-agent'],
+        ...analyticsFromReq(req),
+      }).catch(() => {});
+    }
     res.json({ message: 'All saved searches deleted' });
   } catch (err) { next(err); }
 });
@@ -73,6 +85,12 @@ router.delete('/:id', async (req, res, next) => {
   try {
     const item = await SavedSearch.findOneAndDelete({ _id: req.params.id, userId: req.user.id });
     if (!item) return res.status(404).json({ error: 'Not found' });
+    trackFtEvent({
+      userId: req.user.id,
+      ftEvent: 'saved_search.delete',
+      userAgent: req.headers['user-agent'],
+      ...analyticsFromReq(req),
+    }).catch(() => {});
     res.json({ message: 'Saved search deleted' });
   } catch (err) { next(err); }
 });

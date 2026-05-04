@@ -1,4 +1,5 @@
 const Analytics = require('../../models/Analytics');
+const { countryFromIp } = require('../../utils/geoIp');
 const ReadingHistory = require('../../models/ReadingHistory');
 const Topic = require('../../models/Topic');
 const Document = require('../../models/Document');
@@ -8,7 +9,11 @@ const User = require('../../models/User');
  * Track an analytics event
  */
 const trackEvent = async (eventData) => {
-  const event = await Analytics.create(eventData);
+  let countryCode = eventData.countryCode;
+  if (countryCode == null || countryCode === '') {
+    countryCode = countryFromIp(eventData.ip) || '';
+  }
+  const event = await Analytics.create({ ...eventData, countryCode });
 
   // Update user behavior counters
   if (eventData.userId) {
@@ -20,6 +25,30 @@ const trackEvent = async (eventData) => {
   }
 
   return event;
+};
+
+/** Named Fluid Topics–style event (stored as eventType + data.ftEvent). */
+const trackFtEvent = async ({
+  userId,
+  sessionId,
+  ftEvent,
+  data = {},
+  userAgent,
+  ip,
+  countryCode,
+  timestamp,
+}) => {
+  if (!ftEvent) return null;
+  return trackEvent({
+    eventType: 'event',
+    userId: userId || null,
+    sessionId: sessionId || '',
+    data: { ...data, ftEvent },
+    userAgent: userAgent || '',
+    ip: ip || '',
+    ...(countryCode ? { countryCode } : {}),
+    timestamp: timestamp || new Date(),
+  });
 };
 
 /**
@@ -400,6 +429,7 @@ const exportAnalytics = async (eventType, days = 30) => {
 
 module.exports = {
   trackEvent,
+  trackFtEvent,
   trackEngagement,
   getDashboardStats,
   getContentGaps,

@@ -61,6 +61,15 @@ const configHistoryRoutes = require('./routes/configHistory');
 const tileIconsRoutes = require('./routes/tileIcons');
 
 const app = express();
+// Honor X-Forwarded-For from nginx / Next.js rewrites / Vercel (multiple hops).
+const _tp = process.env.TRUST_PROXY;
+if (_tp === '0' || _tp === 'false') {
+  app.set('trust proxy', false);
+} else if (_tp !== undefined && _tp !== '' && !Number.isNaN(Number(_tp))) {
+  app.set('trust proxy', Number(_tp));
+} else {
+  app.set('trust proxy', true);
+}
 
 // CORS allow-list — overridable via CORS_ORIGINS env var (comma-separated).
 // In production set this to your real origin(s); the dev defaults below

@@ -1,7 +1,20 @@
 'use client';
-import { useState, useEffect, useMemo, useRef } from 'react';
+
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import AnalyticsShell from '@/components/admin/AnalyticsShell';
 import api from '@/lib/api';
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Brush,
+  ResponsiveContainer,
+  ReferenceArea,
+  Cell,
+} from 'recharts';
 
 /* ------------------------------ Constants ------------------------------ */
 
@@ -9,7 +22,8 @@ const BAR_COLOR = '#9D207B';
 const BAR_COLOR_ONGOING = '#D395C2';
 
 const PERIOD_OPTIONS = [
-  { value: 'day',   label: 'Daily' },
+  { value: 'day', label: 'Daily' },
+  { value: 'week', label: 'Weekly' },
   { value: 'month', label: 'Monthly' },
 ];
 
@@ -23,69 +37,155 @@ const IconDownload = () => (
   </svg>
 );
 
+/* ------------------------------ Helpers (aligned with user-traffic / events) ------------------------------ */
+
+function rangeForGroup(groupBy) {
+  const end = new Date();
+  end.setHours(23, 59, 59, 999);
+  const start = new Date(end);
+  if (groupBy === 'day') {
+    start.setDate(start.getDate() - 90);
+  } else if (groupBy === 'week') {
+    start.setDate(start.getDate() - 52 * 7);
+  } else {
+    start.setMonth(start.getMonth() - 18);
+  }
+  start.setHours(0, 0, 0, 0);
+  return { start, end };
+}
+
+function formatAxisLabel(iso, groupBy) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  if (groupBy === 'month') {
+    return d.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' });
+  }
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+function periodIsOngoing(p) {
+  const now = Date.now();
+  const s = new Date(p.periodStartDate).getTime();
+  const e = new Date(p.periodEndDate).getTime();
+  return now >= s && now < e;
+}
+
+function ongoingBandExtents(chartData) {
+  const ongoing = chartData.filter((d) => d.ongoing);
+  if (!ongoing.length) return null;
+  return { x1: ongoing[0].name, x2: ongoing[ongoing.length - 1].name };
+}
+
+function downloadSessionsCsv(rows) {
+  if (!rows?.length) return;
+  const lines = ['Period,Session count'];
+  for (const row of rows) {
+    lines.push(`${JSON.stringify(row.name)},${row.sessionCount ?? ''}`);
+  }
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'sessions.csv';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function SessionTooltip({ active, payload }) {
+  if (!active || !payload?.length) return null;
+  const row = payload[0].payload;
+  const n = row?.sessionCount;
+  const label = row?.name ?? '';
+  const num = typeof n === 'number' ? n.toLocaleString('en-US') : n;
+  const suffix = row?.ongoing ? ' (ongoing partial period)' : '';
+  return (
+    <div
+      style={{
+        background: '#111827',
+        border: 'none',
+        borderRadius: '8px',
+        padding: '10px 14px',
+        color: '#f9fafb',
+        fontSize: '0.85rem',
+        boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.15)',
+      }}
+    >
+      {`${num} sessions opened in ${label}${suffix}`}
+    </div>
+  );
+}
+
 /* ------------------------------ Page ------------------------------ */
 
 export default function SessionsPage() {
   const [period, setPeriod] = useState('month');
-  const [data, setData] = useState([]);
+  const [rawResults, setRawResults] = useState([]);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState(null);
+  const { startDateIso, endDateIso } = useMemo(() => {
+    const { start, end } = rangeForGroup(period);
+    return { startDateIso: start.toISOString(), endDateIso: end.toISOString() };
+  }, [period]);
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
     setErrorMsg(null);
     try {
-      const now = new Date();
-      const start = new Date(now);
-      start.setMonth(start.getMonth() - (period === 'day' ? 2 : 20));
-
       const json = await api.post('/analytics/v2/traffic/sessions', {
-        startDate: start.toISOString().split('T')[0],
-        endDate: now.toISOString().split('T')[0],
+        startDate: startDateIso,
+        endDate: endDateIso,
         groupByPeriod: period,
       });
 
-      if (json.results) {
-        setData(json.results);
-      } else if (json.error) {
+      if (json?.results) {
+        setRawResults(json.results);
+      } else if (json?.error) {
         setErrorMsg(json.error);
+        setRawResults([]);
+      } else {
+        setErrorMsg('Unexpected response from server');
+        setRawResults([]);
       }
     } catch (e) {
       console.error(e);
       setErrorMsg(e.message);
+      setRawResults([]);
     } finally {
       setLoading(false);
     }
-  };
+  }, [period, startDateIso, endDateIso]);
 
   useEffect(() => {
-    fetchData();
-  }, [period]);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void fetchData();
+  }, [fetchData]);
 
-  const months = useMemo(
-    () =>
-      data.map((p) =>
-        new Date(p.periodStartDate).toLocaleDateString('en-US', {
-          month: period === 'day' ? 'short' : 'long',
-          year: 'numeric',
-          ...(period === 'day' && { day: 'numeric' }),
-        })
-      ),
-    [data, period]
-  );
+  const chartData = useMemo(() => {
+    if (!rawResults?.length) return [];
+    return rawResults.map((p) => ({
+      name: formatAxisLabel(p.periodStartDate, period),
+      sessionCount: p.sessionCount ?? 0,
+      periodStart: p.periodStartDate,
+      periodEnd: p.periodEndDate,
+      ongoing: periodIsOngoing(p),
+    }));
+  }, [rawResults, period]);
 
-  const values = useMemo(() => data.map((p) => p.sessionCount), [data]);
+  const ongoingBand = useMemo(() => ongoingBandExtents(chartData), [chartData]);
+
+  const chartMargin = { top: 12, right: 16, left: 4, bottom: 8 };
+  const chartMarginBottom = { ...chartMargin, bottom: 36 };
 
   return (
     <AnalyticsShell
       active="sessions"
       breadcrumb={{ prefix: 'Traffic', title: 'Sessions' }}
-      feedbackSubject="Feedback about sessions"
     >
       <div style={PS.layout}>
         <main style={PS.main}>
           <header style={PS.resultHead}>
-            <span style={PS.headTagline}>How many sessions were opened in your portal?</span>
+            <span style={PS.headTagline}>
+              How many sessions were opened in your portal last year?
+            </span>
             <div style={PS.headControls}>
               <div role="radiogroup" aria-label="Group by period" style={PS.switch}>
                 {PERIOD_OPTIONS.map((opt) => {
@@ -112,8 +212,10 @@ export default function SessionsPage() {
               <button
                 type="button"
                 style={{ ...PS.iconBtn, color: '#1d4ed8' }}
-                title="Download as XLSX"
-                aria-label="Download as XLSX"
+                title="Download as CSV"
+                aria-label="Download as CSV"
+                onClick={() => downloadSessionsCsv(chartData)}
+                disabled={!chartData.length}
               >
                 <IconDownload />
               </button>
@@ -122,14 +224,82 @@ export default function SessionsPage() {
 
           <section style={PS.body}>
             {loading ? (
-              <div style={{ padding: '60px', textAlign: 'center', color: '#64748b' }}>Loading…</div>
+              <div style={PS.loading}>Loading sessions…</div>
             ) : errorMsg ? (
-              <div style={{ padding: '40px', color: '#dc2626' }}>Error: {errorMsg}</div>
-            ) : values.length === 0 ? (
-              <div style={{ padding: '40px', color: '#64748b' }}>No session data available for the selected period.</div>
+              <div style={PS.error}>Error: {errorMsg}</div>
+            ) : chartData.length === 0 ? (
+              <div style={PS.empty}>No session data in this range. Sessions are derived from analytics events with a session id.</div>
             ) : (
               <div style={PS.chartCard}>
-                <SessionsBarChart values={values} months={months} />
+                <div style={{ width: '100%', height: 440 }}>
+                  <ResponsiveContainer
+                    key={`${period}-${startDateIso}-${endDateIso}-${rawResults?.length ?? 0}`}
+                    width="100%"
+                    height="100%"
+                  >
+                    <BarChart data={chartData} margin={chartMarginBottom}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+                      {ongoingBand && (
+                        <ReferenceArea
+                          x1={ongoingBand.x1}
+                          x2={ongoingBand.x2}
+                          fill="#93c5fd"
+                          fillOpacity={0.18}
+                          strokeOpacity={0}
+                          ifOverflow="visible"
+                          label={{
+                            value: 'Ongoing period',
+                            position: 'insideTop',
+                            fill: '#64748b',
+                            fontSize: 11,
+                          }}
+                        />
+                      )}
+                      <XAxis
+                        dataKey="name"
+                        tick={{ fontSize: 11, fill: '#6b7280' }}
+                        tickLine={false}
+                        axisLine={{ stroke: '#94a3b8' }}
+                        minTickGap={20}
+                        label={{
+                          value: 'DATE',
+                          position: 'insideBottomRight',
+                          offset: -6,
+                          fill: '#6E7079',
+                          fontSize: 11,
+                        }}
+                      />
+                      <YAxis
+                        tick={{ fontSize: 11, fill: '#6b7280' }}
+                        tickLine={false}
+                        axisLine={false}
+                        width={52}
+                        label={{
+                          value: 'SESSIONS',
+                          angle: -90,
+                          position: 'insideLeft',
+                          fill: '#6E7079',
+                          fontSize: 11,
+                          offset: 8,
+                        }}
+                      />
+                      <Tooltip content={(p) => <SessionTooltip {...p} />} cursor={{ fill: 'rgba(157, 32, 123, 0.08)' }} />
+                      <Bar dataKey="sessionCount" radius={[2, 2, 0, 0]} maxBarSize={56} isAnimationActive={false}>
+                        {chartData.map((entry, index) => (
+                          <Cell
+                            key={`cell-${entry.periodStart}-${index}`}
+                            fill={entry.ongoing ? BAR_COLOR_ONGOING : BAR_COLOR}
+                          />
+                        ))}
+                      </Bar>
+                      <Brush dataKey="name" height={28} stroke="#cbd5e1" fill="#f8fafc" travellerWidth={8} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+                <p style={PS.hint}>
+                  Distinct sessions per period use a 30‑minute inactivity timeout (same as Session list): repeated browser{' '}
+                  <code style={PS.code}>sessionId</code> after a gap counts as a new session; without an id, grouping is by user or IP.
+                </p>
               </div>
             )}
           </section>
@@ -138,130 +308,6 @@ export default function SessionsPage() {
     </AnalyticsShell>
   );
 }
-
-/* ------------------------------ Chart ------------------------------ */
-
-function SessionsBarChart({ values, months }) {
-  const containerRef = useRef(null);
-  const [dims, setDims] = useState({ W: 1100, H: 380 });
-
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const observer = new ResizeObserver((entries) => {
-      for (let entry of entries) {
-        const { width, height } = entry.contentRect;
-        if (width > 50 && height > 50) {
-          setDims({ W: width, H: height });
-        }
-      }
-    });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
-
-  const { W, H } = dims;
-  const padL = 80;
-  const padR = 24;
-  const padT = 40;
-  const padB = 50;
-  const innerW = W - padL - padR;
-  const innerH = H - padT - padB;
-
-  // Auto-scale Y axis
-  const rawMax = Math.max(...values, 1);
-  const step = rawMax <= 50 ? 10 : rawMax <= 500 ? 50 : rawMax <= 5000 ? 1000 : 3000;
-  const yMax = Math.max(step, Math.ceil((rawMax * 1.15) / step) * step);
-  const yTicks = [];
-  for (let v = 0; v <= yMax; v += step) yTicks.push(v);
-
-  const slotW = values.length > 0 ? innerW / values.length : innerW;
-  const barW = slotW * 0.62;
-
-  const xCenter = (i) => padL + slotW * (i + 0.5);
-  const yPos = (v) => padT + innerH - (v / yMax) * innerH;
-
-  // Show subset of x labels to avoid overlap
-  const labelCount = Math.max(1, Math.floor(innerW / 120));
-  const labelStep = Math.max(1, Math.ceil(values.length / labelCount));
-  const labelIdx = [];
-  for (let i = 0; i < values.length; i += labelStep) labelIdx.push(i);
-
-  // "Ongoing period" — last bar is partial
-  const ongoingX = values.length > 1 ? xCenter(values.length - 2) - slotW / 2 : padL;
-  const ongoingEndX = xCenter(values.length - 1) + slotW / 2;
-
-  return (
-    <div ref={containerRef} style={{ width: '100%', minHeight: '380px', flex: 1 }}>
-      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ width: '100%', height: H }}>
-        <text x={padL} y={padT - 18} fontSize="11" fill="#6E7079" textAnchor="middle" fontFamily="Inter, sans-serif" fontWeight="600">
-          SESSIONS
-        </text>
-
-        {yTicks.map((t) => (
-          <g key={t}>
-            <line x1={padL} y1={yPos(t)} x2={padL + innerW} y2={yPos(t)} stroke="#e0e6f1" />
-            <text x={padL - 8} y={yPos(t) + 3} fontSize="11" fill="#6e7079" textAnchor="end" fontFamily="Inter, sans-serif">
-              {t.toLocaleString('en-US')}
-            </text>
-          </g>
-        ))}
-
-        <line x1={padL} y1={padT + innerH} x2={padL + innerW} y2={padT + innerH} stroke="#6e7079" />
-        <text x={padL + innerW + 6} y={padT + innerH + 3} fontSize="11" fill="#6E7079" fontFamily="Inter, sans-serif">
-          DATE
-        </text>
-
-        {labelIdx.map((idx) => (
-          <g key={idx}>
-            <line x1={xCenter(idx)} y1={padT + innerH} x2={xCenter(idx)} y2={padT + innerH + 5} stroke="#6e7079" />
-            <text x={xCenter(idx)} y={padT + innerH + 18} fontSize="11" fill="#6e7079" textAnchor="middle" fontFamily="Inter, sans-serif">
-              {months[idx]}
-            </text>
-          </g>
-        ))}
-
-        {values.length > 1 && (
-          <>
-            <rect
-              x={ongoingX}
-              y={padT - 10}
-              width={ongoingEndX - ongoingX}
-              height={innerH + 10}
-              fill="rgba(33,150,243,0.06)"
-            />
-            <text x={(ongoingX + ongoingEndX) / 2} y={padT - 14} fontSize="11" fill="#475569" textAnchor="middle" fontFamily="Inter, sans-serif">
-              Ongoing period
-            </text>
-          </>
-        )}
-
-        {values.map((v, i) => {
-          const isOngoing = i === values.length - 1;
-          const x = xCenter(i) - barW / 2;
-          const y = yPos(v);
-          const h = padT + innerH - y;
-          return (
-            <g key={i}>
-              <rect
-                x={x}
-                y={y}
-                width={barW}
-                height={Math.max(0, h)}
-                fill={isOngoing ? BAR_COLOR_ONGOING : BAR_COLOR}
-                rx={1.5}
-              >
-                <title>{`${months[i]}: ${v.toLocaleString('en-US')}`}</title>
-              </rect>
-            </g>
-          );
-        })}
-      </svg>
-    </div>
-  );
-}
-
-/* ------------------------------ Styles ------------------------------ */
 
 const PS = {
   layout: {
@@ -285,7 +331,7 @@ const PS = {
     borderBottom: '1px solid #e5e7eb',
   },
   headTagline: { fontSize: '0.85rem', color: '#475569', flex: 1 },
-  headControls: { display: 'inline-flex', alignItems: 'center', gap: '12px' },
+  headControls: { display: 'inline-flex', alignItems: 'center', gap: '12px', flexShrink: 0 },
   switch: {
     display: 'inline-flex',
     padding: '3px',
@@ -313,15 +359,36 @@ const PS = {
     color: '#475569',
     cursor: 'pointer',
   },
-  body: { padding: '18px 22px 28px', display: 'flex', flexDirection: 'column', gap: '16px', flex: 1 },
+  body: {
+    padding: '18px 22px 28px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '16px',
+    flex: 1,
+  },
+  loading: { padding: '48px', textAlign: 'center', color: '#64748b' },
+  error: { padding: '40px', color: '#dc2626' },
+  empty: { padding: '40px', color: '#64748b', fontSize: '0.9rem', maxWidth: '520px', lineHeight: 1.5 },
   chartCard: {
     background: '#ffffff',
     border: '1px solid #e5e7eb',
     borderRadius: '12px',
-    padding: '16px 18px 18px',
+    padding: '16px 18px 12px',
     flex: 1,
     display: 'flex',
     flexDirection: 'column',
-    minHeight: '380px',
+    minHeight: '420px',
+  },
+  hint: {
+    margin: '12px 4px 0',
+    fontSize: '0.75rem',
+    color: '#64748b',
+    lineHeight: 1.45,
+  },
+  code: {
+    fontSize: '0.72rem',
+    background: '#f1f5f9',
+    padding: '1px 6px',
+    borderRadius: '4px',
   },
 };

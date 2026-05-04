@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
 import AnalyticsShell from '@/components/admin/AnalyticsShell';
 import api from '@/lib/api';
 
@@ -219,6 +220,15 @@ export default function AnalyticsHomePage() {
   return (
     <AnalyticsShell active="home" breadcrumb="Home">
       <div style={S.dashboard}>
+        <Link href="/admin/analytics/posthog" style={S.posthogBanner}>
+          <div>
+            <div style={S.posthogBannerTitle}>PostHog</div>
+            <div style={S.posthogBannerText}>
+              Live product analytics, sessions, and funnels — open the PostHog dashboard.
+            </div>
+          </div>
+          <span style={S.posthogBannerCta}>Open →</span>
+        </Link>
         <div style={S.row}>
           <div style={S.recapColumn}>
             <div style={S.colTitle}>Views in last 30 days</div>
@@ -263,6 +273,39 @@ const S = {
     padding: '20px 22px 28px',
     minHeight: '100%',
     background: '#f8fafc',
+  },
+  posthogBanner: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '16px',
+    marginBottom: '20px',
+    padding: '16px 20px',
+    background: 'linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%)',
+    border: '1px solid #ddd6fe',
+    borderRadius: '12px',
+    textDecoration: 'none',
+    color: 'inherit',
+    transition: 'box-shadow 0.15s ease',
+    boxShadow: '0 1px 2px rgba(91, 33, 182, 0.06)',
+  },
+  posthogBannerTitle: {
+    fontSize: '1rem',
+    fontWeight: 700,
+    color: '#5b21b6',
+    marginBottom: '4px',
+  },
+  posthogBannerText: {
+    fontSize: '0.88rem',
+    color: '#6d28d9',
+    lineHeight: 1.45,
+    maxWidth: '520px',
+  },
+  posthogBannerCta: {
+    flexShrink: 0,
+    fontSize: '0.95rem',
+    fontWeight: 700,
+    color: '#7c3aed',
   },
   row: {
     display: 'grid',

@@ -1,364 +1,81 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AnalyticsShell from '@/components/admin/AnalyticsShell';
+import api from '@/lib/api';
 
-/* ------------------------------ Static data ------------------------------ */
-
-const LOCALE_OPTIONS = [
-  { value: 'en-US', label: 'English (United States)' },
-  { value: 'en-GB', label: 'English (United Kingdom)' },
-  { value: 'fr-FR', label: 'French (France)' },
-  { value: 'de-DE', label: 'German (Germany)' },
-  { value: 'es-ES', label: 'Spanish (Spain)' },
-  { value: 'it-IT', label: 'Italian (Italy)' },
-  { value: 'ja-JP', label: 'Japanese (Japan)' },
-  { value: 'pt-BR', label: 'Portuguese (Brazil)' },
-  { value: 'zh-CN', label: 'Chinese (Simplified, China)' },
-];
-
-/* The first 50 rows mirror the Angular blueprint exactly. Each `facets`
- * entry corresponds to a chip (label + value) that's shown in the third
- * column when present. */
-const PRIMARY_ROWS = [
-  { queries: 10, term: 'planned overtime',                facets: [] },
-  { queries:  8, term: 'studio',                          facets: [] },
-  { queries:  6, term: '21100716',                        facets: [] },
-  { queries:  6, term: 'f&f tat',                         facets: [] },
-  { queries:  6, term: 'payroll',                         facets: [] },
-  { queries:  6, term: 'sapien',                          facets: [] },
-  { queries:  6, term: 'sftp',                            facets: [] },
-  { queries:  5, term: 'delegation',                      facets: [] },
-  { queries:  5, term: 'digital signature',               facets: [] },
-  { queries:  5, term: 'infraction',                      facets: [] },
-  { queries:  5, term: 'legal entity',                    facets: [] },
-  { queries:  5, term: 'pendo',                           facets: [] },
-  { queries:  5, term: 'reportee dashboard',              facets: [] },
-  { queries:  4, term: 'archival',                        facets: [] },
-  { queries:  4, term: 'beacon',                          facets: [] },
-  { queries:  4, term: 'dashboard',                       facets: [] },
-  { queries:  4, term: 'helix',                           facets: [] },
-  { queries:  4, term: 'ot',                              facets: [] },
-  { queries:  4, term: 'overtime',                        facets: [] },
-  { queries:  4, term: 'overtime threshold',              facets: [] },
-  { queries:  3, term: 'additional assignment',           facets: [] },
-  { queries:  3, term: 'adoption matrix',                 facets: [] },
-  { queries:  3, term: 'airplane',                        facets: [] },
-  { queries:  3, term: 'company',                         facets: [{ label: 'Module', value: 'Company' }] },
-  { queries:  3, term: 'docusign',                        facets: [] },
-  { queries:  3, term: 'error handling',                  facets: [{ label: 'Module', value: 'Darwinbox Studio' }] },
-  { queries:  3, term: 'irregular persona',               facets: [] },
-  { queries:  3, term: 'marathi',                         facets: [] },
-  { queries:  3, term: 'minimum wage',                    facets: [] },
-  { queries:  3, term: 'over night',                      facets: [] },
-  { queries:  3, term: 'permission',                      facets: [] },
-  { queries:  3, term: 'persona',                         facets: [] },
-  { queries:  3, term: 'sapiens',                         facets: [] },
-  { queries:  3, term: 'sso',                             facets: [] },
-  { queries:  3, term: 'superannuation',                  facets: [] },
-  { queries:  3, term: 'triggering task',                 facets: [] },
-  { queries:  3, term: 'updateprocesspay',                facets: [] },
-  { queries:  3, term: 'weekly off',                      facets: [] },
-  { queries:  2, term: '"employee preferences policy"',   facets: [] },
-  { queries:  2, term: '"org policy assignments"',        facets: [] },
-  { queries:  2, term: 'alumni',                          facets: [] },
-  { queries:  2, term: 'ampa',                            facets: [] },
-  { queries:  2, term: 'annual appraisal',                facets: [] },
-  { queries:  2, term: 'archive requisition',             facets: [] },
-  { queries:  2, term: 'attendance',                      facets: [] },
-  { queries:  2, term: 'authenticator',                   facets: [] },
-  { queries:  2, term: 'bank',                            facets: [] },
-  { queries:  2, term: 'birthday',                        facets: [] },
-  { queries:  2, term: 'confidential hiring',             facets: [] },
-  { queries:  2, term: 'contribution level',              facets: [] },
-];
-
-/* Lower-volume long-tail terms used to flesh out subsequent pages of mock
- * data so pagination has something to navigate. Some carry a Module chip
- * to demonstrate the Facets column rendering. */
-const TAIL_TERMS = [
-  { term: 'pendo guides', module: 'Engagement' },
-  { term: 'role mapping', module: null },
-  { term: 'ess portal', module: null },
-  { term: 'mss portal', module: null },
-  { term: 'manager self service', module: null },
-  { term: 'biometric attendance', module: 'Attendance' },
-  { term: 'rfid', module: null },
-  { term: 'geo fence', module: 'Attendance' },
-  { term: 'geo tag', module: null },
-  { term: 'leave year', module: null },
-  { term: 'leave balance carry forward', module: 'Leave' },
-  { term: 'optional holidays calendar', module: null },
-  { term: 'comp off lapse', module: null },
-  { term: 'shift mapping bulk', module: null },
-  { term: 'roster publish', module: null },
-  { term: 'roster swap', module: null },
-  { term: 'overtime calculation', module: 'Payroll' },
-  { term: 'shift differential payout', module: null },
-  { term: 'lop arrear', module: null },
-  { term: 'arrears workflow', module: null },
-  { term: 'salary advance', module: 'Payroll' },
-  { term: 'income tax slab', module: null },
-  { term: 'investment declaration deadline', module: null },
-  { term: 'rent receipt', module: null },
-  { term: 'lta exemption', module: null },
-  { term: 'flexi pay components', module: null },
-  { term: 'meal card vendor', module: null },
-  { term: 'esic dispensary', module: null },
-  { term: 'lwf state', module: null },
-  { term: 'pt slab', module: null },
-  { term: 'company structure import', module: null },
-  { term: 'job profile', module: 'Talent' },
-  { term: 'competency framework', module: 'Talent' },
-  { term: 'role library', module: null },
-  { term: 'succession plan', module: 'Talent' },
-  { term: 'high potential', module: null },
-  { term: 'nine box', module: null },
-  { term: '9-box', module: null },
-  { term: 'goal cascade', module: null },
-  { term: 'check ins', module: null },
-  { term: '360 questionnaire', module: null },
-  { term: 'rating scale', module: null },
-  { term: 'normalization', module: null },
-  { term: 'forced ranking', module: null },
-  { term: 'review form', module: null },
-  { term: 'review cycle', module: null },
-  { term: 'compensation review', module: null },
-  { term: 'promotion letter', module: null },
-  { term: 'increment letter', module: null },
-  { term: 'experience letter', module: 'Documents' },
-  { term: 'noc letter', module: null },
-  { term: 'address proof', module: null },
-  { term: 'kyc upload', module: null },
-  { term: 'pan verification', module: null },
-  { term: 'bgv vendor', module: null },
-  { term: 'reference check', module: null },
-  { term: 'offer comparison', module: null },
-  { term: 'candidate portal', module: null },
-  { term: 'interview kit', module: null },
-  { term: 'interview slot', module: null },
-  { term: 'panel interview', module: null },
-  { term: 'agency rebate', module: null },
-  { term: 'employee referral bonus', module: null },
-  { term: 'campus drive', module: null },
-  { term: 'walk in', module: null },
-  { term: 'asset request', module: null },
-  { term: 'asset retrieval', module: null },
-  { term: 'asset depreciation', module: null },
-  { term: 'helpdesk reopen', module: 'Helpdesk' },
-  { term: 'sla breach', module: 'Helpdesk' },
-  { term: 'first response time', module: null },
-  { term: 'mean time to resolve', module: null },
-  { term: 'csat survey', module: null },
-  { term: 'pulse survey trigger', module: null },
-  { term: 'engagement dashboard', module: null },
-  { term: 'enps cohort', module: null },
-  { term: 'kudos points', module: null },
-  { term: 'spot bonus', module: null },
-  { term: 'recognition leaderboard', module: null },
-  { term: 'long service award', module: null },
-  { term: 'town hall poll', module: null },
-  { term: 'announcement schedule', module: null },
-  { term: 'theme builder', module: null },
-  { term: 'logo override', module: null },
-  { term: 'primary color', module: null },
-  { term: 'banner image', module: null },
-  { term: 'mobile app force update', module: null },
-  { term: 'app version', module: null },
-  { term: 'fcm token', module: null },
-  { term: 'push notification template', module: null },
-  { term: 'email template variables', module: null },
-  { term: 'email retry queue', module: null },
-  { term: 'sms gateway', module: null },
-  { term: 'whatsapp template approval', module: null },
-  { term: 'webhook retry', module: null },
-  { term: 'audit trail filter', module: null },
-  { term: 'data anonymization', module: null },
-  { term: 'gdpr request status', module: null },
-  { term: 'consent log', module: null },
-  { term: 'role audit', module: null },
-  { term: 'login history', module: null },
-  { term: 'session timeout', module: null },
-  { term: 'mfa enforcement', module: null },
-  { term: 'sso saml', module: null },
-  { term: 'sso okta', module: 'Integrations' },
-  { term: 'sso azure ad', module: null },
-  { term: 'scim debug', module: null },
-  { term: 'workday outbound feed', module: null },
-  { term: 'sap inbound feed', module: null },
-  { term: 'oracle ebs feed', module: null },
-  { term: 'ramco hcm sync', module: null },
-  { term: 'tally export', module: null },
-  { term: 'gst return upload', module: null },
-  { term: 'epfo ecr file', module: null },
-  { term: 'esic monthly contribution', module: null },
-  { term: 'tds return q4', module: null },
-  { term: 'form 16a', module: null },
-  { term: 'form 12bb', module: null },
-  { term: 'pf transfer in', module: null },
-  { term: 'pf transfer out', module: null },
-  { term: 'gratuity calculation', module: 'Payroll' },
-  { term: 'leave encashment formula', module: null },
-  { term: 'fnf settlement', module: null },
-  { term: 'exit interview', module: null },
-  { term: 'clearance checklist', module: null },
-  { term: 'no dues certificate', module: null },
-  { term: 'experience certificate generation', module: null },
-  { term: 'reliveing letter', module: null },
-  { term: 'last working day', module: null },
-  { term: 'notice period buyout', module: null },
-  { term: 'absconding case', module: null },
-  { term: 'rehire eligible', module: null },
-  { term: 'do not rehire', module: null },
-  { term: 'concurrent employment', module: null },
-  { term: 'double pay day', module: null },
-  { term: 'missed punch', module: null },
-  { term: 'mass regularization', module: null },
-  { term: 'shift roster import error', module: null },
-  { term: 'attendance device sync', module: null },
-  { term: 'biometric raw data', module: null },
-  { term: 'face match threshold', module: null },
-  { term: 'liveness detection', module: null },
-  { term: 'mobile selfie attendance', module: null },
-  { term: 'wfh check-in', module: null },
-  { term: 'shift planner ai', module: null },
-  { term: 'roster optimization', module: null },
-  { term: 'workforce forecasting', module: null },
-  { term: 'labour budget', module: null },
-  { term: 'manpower planning', module: null },
-  { term: 'open positions report', module: null },
-  { term: 'time to hire', module: null },
-  { term: 'cost per hire', module: null },
-  { term: 'offer drop rate', module: null },
-  { term: 'attrition forecast', module: null },
-  { term: 'voluntary attrition', module: null },
-  { term: 'involuntary attrition', module: null },
-  { term: 'high performer attrition', module: null },
-  { term: 'retention plan', module: null },
-  { term: 'stay interview', module: null },
-  { term: 'engagement action plan', module: null },
-  { term: 'manager development plan', module: null },
-  { term: 'idp template', module: null },
-  { term: 'mentoring program', module: null },
-  { term: 'coaching session log', module: null },
-  { term: 'training nomination', module: null },
-  { term: 'training feedback', module: null },
-  { term: 'lms course catalog', module: null },
-  { term: 'lms certification expiry', module: null },
-  { term: 'lms scorm tracker', module: null },
-  { term: 'tin learning path', module: null },
-  { term: 'micro learning', module: null },
-  { term: 'compliance training', module: null },
-  { term: 'pos refresh', module: null },
-  { term: 'sap successfactors connector', module: null },
-  { term: 'workday recruiting bridge', module: null },
-  { term: 'oracle hcm fast formula', module: null },
-  { term: 'manage absence module', module: null },
-  { term: 'shift bidding', module: null },
-  { term: 'leave taken without approval', module: null },
-  { term: 'mass approve leaves', module: null },
-  { term: 'mass reject leaves', module: null },
-  { term: 'mass approve attendance', module: null },
-  { term: 'mass approve regularization', module: null },
-  { term: 'mass shift change', module: null },
-  { term: 'mass salary update', module: null },
-  { term: 'mass increment', module: null },
-  { term: 'mass promotion', module: null },
-  { term: 'mass exit', module: null },
-  { term: 'mass document upload', module: null },
-  { term: 'mass policy assignment', module: null },
-  { term: 'mass training enrollment', module: null },
-  { term: 'mass employee transfer', module: null },
-  { term: 'mass goal cascade', module: null },
-  { term: 'mass review trigger', module: null },
-  { term: 'mass announcement', module: null },
-  { term: 'mass communication log', module: null },
-  { term: 'mass sms send', module: null },
-  { term: 'mass email send', module: null },
-  { term: 'mass survey send', module: null },
-  { term: 'mass kudos send', module: null },
-  { term: 'mass reward distribute', module: null },
-  { term: 'mass nomination', module: null },
-  { term: 'mass certificate generate', module: null },
-  { term: 'mass payslip generate', module: null },
-  { term: 'mass form 16 generate', module: null },
-  { term: 'mass tax declaration approve', module: null },
-  { term: 'mass loan disburse', module: null },
-  { term: 'mass advance disburse', module: null },
-  { term: 'mass reimbursement approve', module: null },
-  { term: 'mass expense approve', module: null },
-  { term: 'mass travel approve', module: null },
-  { term: 'mass visa request', module: null },
-  { term: 'mass passport custody', module: null },
-  { term: 'mass insurance enrollment', module: null },
-  { term: 'mass benefit enrollment', module: null },
-  { term: 'mass pf nomination', module: null },
-  { term: 'mass gratuity nomination', module: null },
-  { term: 'mass beneficiary update', module: null },
-  { term: 'mass dependant update', module: null },
-  { term: 'mass medical declaration', module: null },
-  { term: 'mass health checkup', module: null },
-  { term: 'mass policy ack', module: null },
-  { term: 'mass training certificate upload', module: null },
-  { term: 'mass background verification', module: null },
-  { term: 'mass kyc upload', module: null },
-  { term: 'mass document expiry alert', module: null },
-  { term: 'mass passport expiry alert', module: null },
-  { term: 'mass visa expiry alert', module: null },
-  { term: 'mass certification expiry alert', module: null },
-  { term: 'mass wo allotment', module: null },
-  { term: 'mass weekly off', module: null },
-  { term: 'mass shift assignment', module: null },
-  { term: 'mass roster assignment', module: null },
-  { term: 'mass swipe import', module: null },
-  { term: 'mass biometric import', module: null },
-  { term: 'mass leave grant', module: null },
-  { term: 'mass leave revoke', module: null },
-  { term: 'mass leave encash', module: null },
-  { term: 'mass attendance regularize', module: null },
-  { term: 'mass approve overtime', module: null },
-  { term: 'mass deny overtime', module: null },
-  { term: 'mass shift swap approve', module: null },
-  { term: 'mass shift swap reject', module: null },
-  { term: 'mass training nominate', module: null },
-  { term: 'mass training waitlist', module: null },
-  { term: 'mass survey responder', module: null },
-  { term: 'mass form publish', module: null },
-  { term: 'mass workflow trigger', module: null },
-  { term: 'mass policy publish', module: null },
-  { term: 'mass announcement schedule', module: null },
-  { term: 'mass kudos schedule', module: null },
-];
-
+const ANALYTICS_DATA_RETENTION_DAYS = 730;
 const PAGE_SIZE = 50;
-const TOTAL_QUERIES = 502;
-const TOTAL_TERMS = 333;
+const LOCALE_ALL_LANGUAGES = '__all_languages__';
 
-function generateRows() {
-  const rows = [...PRIMARY_ROWS];
-  let counter = 2;
-  for (let i = 0; i < TAIL_TERMS.length && rows.length < TOTAL_TERMS; i++) {
-    const t = TAIL_TERMS[i];
-    rows.push({
-      queries: counter,
-      term: t.term,
-      facets: t.module ? [{ label: 'Module', value: t.module }] : [],
-    });
-    if (i % 18 === 17 && counter > 1) counter -= 1;
-  }
-  while (rows.length < TOTAL_TERMS) {
-    rows.push({
-      queries: 1,
-      term: `additional query placeholder ${rows.length + 1}`,
-      facets: [],
-    });
-  }
-  return rows;
+/* ------------------------------ Date range ------------------------------ */
+
+function defaultDateRangePreviousMonth() {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(now.getFullYear(), now.getMonth(), 0);
+  end.setHours(23, 59, 59, 999);
+  return { start, end };
 }
 
-const ALL_ROWS = generateRows();
+function presetLastWeek() {
+  const end = new Date();
+  end.setHours(23, 59, 59, 999);
+  const start = new Date(end);
+  start.setDate(start.getDate() - 6);
+  start.setHours(0, 0, 0, 0);
+  return { start, end };
+}
 
-/* ------------------------------ Icons ------------------------------ */
+function presetLast3Months() {
+  const end = new Date();
+  end.setHours(23, 59, 59, 999);
+  const start = new Date(end);
+  start.setDate(start.getDate() - 89);
+  start.setHours(0, 0, 0, 0);
+  return { start, end };
+}
+
+function toInputDate(d) {
+  const x = new Date(d);
+  const y = x.getFullYear();
+  const m = String(x.getMonth() + 1).padStart(2, '0');
+  const day = String(x.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function parseInputDate(s) {
+  const d = new Date(`${s}T12:00:00`);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function earliestAllowedStart() {
+  const d = new Date();
+  d.setDate(d.getDate() - ANALYTICS_DATA_RETENTION_DAYS);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function formatFacetsForXlsx(facets) {
+  if (!Array.isArray(facets) || !facets.length) return '';
+  return facets.map((f) => `${f.label}: ${f.value}`).join('; ');
+}
+
+async function downloadNoResultsXlsx(rows, totalQueries, rangeLabel) {
+  const XLSX = await import('xlsx');
+  const wb = XLSX.utils.book_new();
+  const aoa = [
+    ['Queries', 'Term', 'Facets'],
+    ...rows.map((r) => [r.queries, r.term, formatFacetsForXlsx(r.facets)]),
+  ];
+  aoa.push(['Total queries (range)', totalQueries, '']);
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'No results');
+  const safe = rangeLabel.replace(/[^\w-]+/g, '_').slice(0, 80);
+  XLSX.writeFile(wb, `searches-no-results-${safe}.xlsx`);
+}
+
+/* ------------------------------ Icons (same set as search-terms) ------------------------------ */
 
 const IconFilters = () => (
   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -428,41 +145,304 @@ const IconLast = () => (
 /* ------------------------------ Page ------------------------------ */
 
 export default function SearchesNoResultsPage() {
+  const def = useMemo(() => defaultDateRangePreviousMonth(), []);
+  const [rangeStart, setRangeStart] = useState(() => toInputDate(def.start));
+  const [rangeEnd, setRangeEnd] = useState(() => toInputDate(def.end));
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [customStart, setCustomStart] = useState(() => toInputDate(def.start));
+  const [customEnd, setCustomEnd] = useState(() => toInputDate(def.end));
+
   const [drawerOpen, setDrawerOpen] = useState(true);
-  const [locale, setLocale] = useState('en-US');
+  const [locale, setLocale] = useState('');
+  const [localeOptions, setLocaleOptions] = useState([{ value: '', label: 'All content locales' }]);
+  const [allLangEnabled, setAllLangEnabled] = useState(true);
   const [page, setPage] = useState(0);
 
-  const totalPages = Math.max(1, Math.ceil(TOTAL_TERMS / PAGE_SIZE));
+  const [rows, setRows] = useState([]);
+  const [totalQueries, setTotalQueries] = useState(0);
+  const [totalDistinctRows, setTotalDistinctRows] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState(null);
+  const [exporting, setExporting] = useState(false);
 
-  const visibleRows = useMemo(() => {
-    const start = page * PAGE_SIZE;
-    return ALL_ROWS.slice(start, start + PAGE_SIZE);
-  }, [page]);
+  const pickerRef = useRef(null);
 
-  const rangeStart = page * PAGE_SIZE + 1;
-  const rangeEnd = Math.min((page + 1) * PAGE_SIZE, TOTAL_TERMS);
+  const startIso = useMemo(() => {
+    const d = parseInputDate(rangeStart);
+    if (!d) return null;
+    d.setHours(0, 0, 0, 0);
+    return d.toISOString();
+  }, [rangeStart]);
+
+  const endIso = useMemo(() => {
+    const d = parseInputDate(rangeEnd);
+    if (!d) return null;
+    d.setHours(23, 59, 59, 999);
+    return d.toISOString();
+  }, [rangeEnd]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [langCfg, locData] = await Promise.all([
+          api.get('/languages/default').catch(() => ({})),
+          api.get('/locales').catch(() => ({})),
+        ]);
+        if (cancelled) return;
+        setAllLangEnabled(langCfg?.searchInAllLanguagesEnabled !== false);
+        const list = Array.isArray(locData?.locales) ? locData.locales : [];
+        const base = [{ value: '', label: 'All content locales' }];
+        if (langCfg?.searchInAllLanguagesEnabled !== false) {
+          base.push({
+            value: LOCALE_ALL_LANGUAGES,
+            label: 'All languages',
+          });
+        }
+        for (const l of list) {
+          base.push({
+            value: l.code,
+            label: l.name && l.code ? `${l.name} (${l.code})` : l.code || l.name,
+          });
+        }
+        setLocaleOptions(base);
+      } catch {
+        if (!cancelled) {
+          setLocaleOptions([
+            { value: '', label: 'All content locales' },
+            { value: LOCALE_ALL_LANGUAGES, label: 'All languages' },
+          ]);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const fetchData = useCallback(async () => {
+    if (!startIso || !endIso) return;
+    setLoading(true);
+    setErrorMsg(null);
+    try {
+      const body = {
+        startDate: startIso,
+        endDate: endIso,
+        page: page + 1,
+        pageSize: PAGE_SIZE,
+        ...(locale ? { locale } : {}),
+      };
+      const json = await api.post('/analytics/v2/search/no-results', body);
+      if (json?.error) {
+        setErrorMsg(json.error);
+        setRows([]);
+        setTotalQueries(0);
+        setTotalDistinctRows(0);
+        setTotalPages(1);
+        return;
+      }
+      setRows(
+        (json.terms || []).map((t) => ({
+          queries: t.queries,
+          term: t.term,
+          facets: Array.isArray(t.facets) ? t.facets : [],
+        }))
+      );
+      setTotalQueries(typeof json.totalQueries === 'number' ? json.totalQueries : 0);
+      setTotalDistinctRows(typeof json.totalDistinctRows === 'number' ? json.totalDistinctRows : 0);
+      setTotalPages(Math.max(1, typeof json.totalPages === 'number' ? json.totalPages : 1));
+    } catch (e) {
+      setErrorMsg(e.message || 'Request failed');
+      setRows([]);
+      setTotalQueries(0);
+      setTotalDistinctRows(0);
+      setTotalPages(1);
+    } finally {
+      setLoading(false);
+    }
+  }, [startIso, endIso, locale, page]);
+
+  useEffect(() => {
+    void fetchData();
+  }, [fetchData]);
+
+  useEffect(() => {
+    if (!pickerOpen) return;
+    const onDoc = (e) => {
+      if (pickerRef.current && !pickerRef.current.contains(e.target)) setPickerOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [pickerOpen]);
+
+  const applyRange = (start, end) => {
+    setErrorMsg(null);
+    setRangeStart(toInputDate(start));
+    setRangeEnd(toInputDate(end));
+    setCustomStart(toInputDate(start));
+    setCustomEnd(toInputDate(end));
+    setPickerOpen(false);
+    setPage(0);
+  };
+
+  const applyPreset = (key) => {
+    if (key === 'prevMonth') {
+      const { start, end } = defaultDateRangePreviousMonth();
+      applyRange(start, end);
+      return;
+    }
+    if (key === 'lastWeek') {
+      const { start, end } = presetLastWeek();
+      applyRange(start, end);
+      return;
+    }
+    if (key === 'last3mo') {
+      const { start, end } = presetLast3Months();
+      applyRange(start, end);
+    }
+  };
+
+  const applyCustom = () => {
+    const s = parseInputDate(customStart);
+    const e = parseInputDate(customEnd);
+    if (!s || !e || s > e) {
+      setErrorMsg('End date must be after start date.');
+      return;
+    }
+    if (s < earliestAllowedStart()) {
+      setErrorMsg(
+        `Start date must be within the analytics retention period (${ANALYTICS_DATA_RETENTION_DAYS} days).`
+      );
+      return;
+    }
+    applyRange(s, e);
+  };
+
+  const displayFrom = rangeStart;
+  const displayTo = rangeEnd;
+
+  const rangeStartIdx = totalDistinctRows === 0 ? 0 : page * PAGE_SIZE + 1;
+  const rangeEndIdx = Math.min((page + 1) * PAGE_SIZE, totalDistinctRows);
 
   const goFirst = () => setPage(0);
   const goPrev = () => setPage((p) => Math.max(0, p - 1));
   const goNext = () => setPage((p) => Math.min(totalPages - 1, p + 1));
-  const goLast = () => setPage(totalPages - 1);
+  const goLast = () => setPage(Math.max(0, totalPages - 1));
 
   const atStart = page === 0;
-  const atEnd = page === totalPages - 1;
+  const atEnd = page >= totalPages - 1 || totalPages <= 1;
+
+  const onLocaleChange = (val) => {
+    setLocale(val);
+    setPage(0);
+  };
+
+  const handleExport = async () => {
+    if (!startIso || !endIso) return;
+    setExporting(true);
+    setErrorMsg(null);
+    try {
+      const json = await api.post('/analytics/v2/search/no-results', {
+        startDate: startIso,
+        endDate: endIso,
+        page: 1,
+        pageSize: 10000,
+        export: true,
+        ...(locale ? { locale } : {}),
+      });
+      if (json?.error) {
+        setErrorMsg(json.error);
+        return;
+      }
+      const list = (json.terms || []).map((t) => ({
+        queries: t.queries,
+        term: t.term,
+        facets: Array.isArray(t.facets) ? t.facets : [],
+      }));
+      const total = typeof json.totalQueries === 'number' ? json.totalQueries : 0;
+      await downloadNoResultsXlsx(list, total, `${displayFrom}_${displayTo}`);
+    } catch (e) {
+      setErrorMsg(e.message || 'Export failed');
+    } finally {
+      setExporting(false);
+    }
+  };
 
   return (
     <AnalyticsShell
       active="searches-no-results"
       breadcrumb={{ prefix: 'Search', title: 'Searches with no results' }}
-      feedbackSubject="Feedback about searches with no results"
       toolbarExtras={
         <div style={PS.toolbarRight}>
-          <div style={PS.dateIndicator} title="Date range" aria-label="Date range">
-            <span style={PS.dateLabels}>
-              <span style={PS.dateLine}>From: 3/1/2026</span>
-              <span style={PS.dateLine}>To: 3/31/2026</span>
-            </span>
-            <span style={PS.dateCalendar} aria-hidden="true"><IconCalendar /></span>
+          <div style={PS.toolbarWrap} ref={pickerRef}>
+            <button
+              type="button"
+              style={PS.dateIndicator}
+              title="Change date range"
+              aria-expanded={pickerOpen}
+              aria-haspopup="dialog"
+              onClick={() => setPickerOpen((v) => !v)}
+            >
+              <span style={PS.dateLabels}>
+                <span style={PS.dateLine}>
+                  From: {displayFrom ? new Date(`${displayFrom}T12:00:00`).toLocaleDateString() : '—'}
+                </span>
+                <span style={PS.dateLine}>
+                  To: {displayTo ? new Date(`${displayTo}T12:00:00`).toLocaleDateString() : '—'}
+                </span>
+              </span>
+              <span style={PS.dateCalendar} aria-hidden="true">
+                <IconCalendar />
+              </span>
+            </button>
+            {pickerOpen && (
+              <div role="dialog" aria-label="Date range" style={PS.pickerPanel}>
+                <p style={PS.pickerTitle}>Quick ranges</p>
+                <div style={PS.presetRow}>
+                  <button type="button" style={PS.presetBtn} onClick={() => applyPreset('lastWeek')}>
+                    Last week
+                  </button>
+                  <button type="button" style={PS.presetBtn} onClick={() => applyPreset('last3mo')}>
+                    Last 3 months
+                  </button>
+                  <button type="button" style={PS.presetBtn} onClick={() => applyPreset('prevMonth')}>
+                    Previous month
+                  </button>
+                </div>
+                <p style={PS.pickerTitle}>Custom range</p>
+                <div style={PS.customRow}>
+                  <label style={PS.customLab}>
+                    From
+                    <input
+                      type="date"
+                      value={customStart}
+                      min={toInputDate(earliestAllowedStart())}
+                      max={customEnd}
+                      onChange={(e) => setCustomStart(e.target.value)}
+                      style={PS.dateInput}
+                    />
+                  </label>
+                  <label style={PS.customLab}>
+                    To
+                    <input
+                      type="date"
+                      value={customEnd}
+                      min={customStart}
+                      onChange={(e) => setCustomEnd(e.target.value)}
+                      style={PS.dateInput}
+                    />
+                  </label>
+                </div>
+                <button type="button" style={PS.applyBtn} onClick={applyCustom}>
+                  Apply
+                </button>
+                <p style={PS.retentionHint}>
+                  Default range is the previous calendar month. Start date must fall within the last{' '}
+                  {ANALYTICS_DATA_RETENTION_DAYS} days.
+                </p>
+              </div>
+            )}
           </div>
           <button
             type="button"
@@ -483,15 +463,24 @@ export default function SearchesNoResultsPage() {
     >
       <div style={PS.layout}>
         <main style={{ ...PS.main, marginRight: drawerOpen ? '330px' : 0 }}>
+          {errorMsg && (
+            <div style={PS.errorBanner} role="alert">
+              {errorMsg}
+            </div>
+          )}
           <header style={PS.resultHead}>
             <span style={PS.headTagline}>
-              Data is based on the number of search events sent to the server by the portal.
+              Data is based on the number of search events sent to the server by the portal. Queries flagged as
+              suspicious (potential injection) are not tracked and do not appear here. &quot;All languages&quot; shows
+              only searches run with that option, not a total across locales.
             </span>
             <button
               type="button"
               style={PS.downloadBtn}
               title="Download as XLSX"
               aria-label="Download as XLSX"
+              onClick={() => void handleExport()}
+              disabled={exporting || loading}
             >
               <IconDownload />
             </button>
@@ -499,55 +488,66 @@ export default function SearchesNoResultsPage() {
 
           <section style={PS.body}>
             <div style={PS.tableWrap}>
-              <table style={PS.table}>
-                <colgroup>
-                  <col style={{ width: '110px' }} />
-                  <col style={{ width: '38%' }} />
-                  <col />
-                </colgroup>
-                <thead>
-                  <tr>
-                    <th style={PS.thQ}>Queries</th>
-                    <th style={PS.thT}>Terms</th>
-                    <th style={PS.thF}>Facets</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {visibleRows.map((r, i) => (
-                    <tr key={`${page}-${i}`} style={i % 2 === 0 ? PS.trEven : PS.trOdd}>
-                      <td style={PS.tdQ}>{r.queries.toLocaleString('en-US')}</td>
-                      <td style={PS.tdT}>{r.term}</td>
-                      <td style={PS.tdF}>
-                        {r.facets && r.facets.length > 0 && (
-                          <div style={PS.chipStack}>
-                            {r.facets.map((f, idx) => (
-                              <span key={idx} style={PS.chip} title={`${f.label}: ${f.value}`}>
-                                <span style={PS.chipLabel}>{f.label} ({f.label}):</span>
-                                <span style={PS.chipValue}>{f.value}</span>
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                      </td>
+              {loading ? (
+                <p style={PS.loading}>Loading…</p>
+              ) : (
+                <table style={PS.table}>
+                  <colgroup>
+                    <col style={{ width: '100px' }} />
+                    <col />
+                    <col style={{ minWidth: '200px' }} />
+                  </colgroup>
+                  <thead>
+                    <tr>
+                      <th style={PS.thQ}>Queries</th>
+                      <th style={PS.thT}>Terms</th>
+                      <th style={PS.thF}>Facets</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {rows.map((r, i) => (
+                      <tr key={`${r.term}-${i}-${r.queries}`} style={i % 2 === 0 ? PS.trEven : PS.trOdd}>
+                        <td style={PS.tdQ}>{r.queries.toLocaleString('en-US')}</td>
+                        <td style={PS.tdT}>{r.term}</td>
+                        <td style={PS.tdF}>
+                          {r.facets?.length ? (
+                            <div style={PS.facetChips}>
+                              {r.facets.map((f, j) => (
+                                <span key={j} style={PS.facetChip} title={`${f.label}: ${f.value}`}>
+                                  <span style={PS.facetLab}>{f.label}</span>
+                                  {f.value}
+                                </span>
+                              ))}
+                            </div>
+                          ) : (
+                            <span style={PS.facetEmpty}>—</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+              {!loading && rows.length === 0 && !errorMsg && (
+                <p style={PS.empty}>No zero-result searches in this range.</p>
+              )}
             </div>
 
             <footer style={PS.pager}>
               <span style={PS.totalLabel}>
-                Total queries: <strong>{TOTAL_QUERIES.toLocaleString('en-US')}</strong>
+                Total queries: <strong>{totalQueries.toLocaleString('en-US')}</strong>
               </span>
               <div style={PS.pagerActions}>
                 <span style={PS.rangeLabel}>
-                  {rangeStart.toLocaleString('en-US')} – {rangeEnd.toLocaleString('en-US')} of {TOTAL_TERMS.toLocaleString('en-US')}
+                  {totalDistinctRows === 0
+                    ? '0 – 0 of 0'
+                    : `${rangeStartIdx.toLocaleString('en-US')} – ${rangeEndIdx.toLocaleString('en-US')} of ${totalDistinctRows.toLocaleString('en-US')}`}
                 </span>
                 <button
                   type="button"
                   style={atStart ? PS.pagerBtnDisabled : PS.pagerBtn}
                   onClick={goFirst}
-                  disabled={atStart}
+                  disabled={atStart || loading}
                   aria-label="First page"
                   title="First page"
                 >
@@ -557,7 +557,7 @@ export default function SearchesNoResultsPage() {
                   type="button"
                   style={atStart ? PS.pagerBtnDisabled : PS.pagerBtn}
                   onClick={goPrev}
-                  disabled={atStart}
+                  disabled={atStart || loading}
                   aria-label="Previous page"
                   title="Previous page"
                 >
@@ -567,7 +567,7 @@ export default function SearchesNoResultsPage() {
                   type="button"
                   style={atEnd ? PS.pagerBtnDisabled : PS.pagerBtn}
                   onClick={goNext}
-                  disabled={atEnd}
+                  disabled={atEnd || loading}
                   aria-label="Next page"
                   title="Next page"
                 >
@@ -577,7 +577,7 @@ export default function SearchesNoResultsPage() {
                   type="button"
                   style={atEnd ? PS.pagerBtnDisabled : PS.pagerBtn}
                   onClick={goLast}
-                  disabled={atEnd}
+                  disabled={atEnd || loading}
                   aria-label="Last page"
                   title="Last page"
                 >
@@ -607,9 +607,15 @@ export default function SearchesNoResultsPage() {
               <FieldSelect
                 label="Content Locale"
                 value={locale}
-                options={LOCALE_OPTIONS}
-                onChange={setLocale}
+                options={localeOptions}
+                onChange={onLocaleChange}
               />
+              {!allLangEnabled && (
+                <p style={PS.drawerHint}>
+                  The &quot;All languages&quot; option is hidden because Search in all languages is disabled in site
+                  language settings.
+                </p>
+              )}
             </div>
           </aside>
         )}
@@ -617,8 +623,6 @@ export default function SearchesNoResultsPage() {
     </AnalyticsShell>
   );
 }
-
-/* ------------------------------ Field select ------------------------------ */
 
 function FieldSelect({ label, value, options, onChange }) {
   const [open, setOpen] = useState(false);
@@ -628,8 +632,12 @@ function FieldSelect({ label, value, options, onChange }) {
 
   useEffect(() => {
     if (!open) return;
-    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
-    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    const onDoc = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
     document.addEventListener('mousedown', onDoc);
     document.addEventListener('keydown', onKey);
     return () => {
@@ -649,19 +657,24 @@ function FieldSelect({ label, value, options, onChange }) {
         aria-expanded={open}
       >
         <span style={FS.value}>{current.label}</span>
-        <span style={FS.chevron} aria-hidden="true"><IconChevronDown /></span>
+        <span style={FS.chevron} aria-hidden="true">
+          <IconChevronDown />
+        </span>
       </button>
       {open && (
         <ul role="listbox" style={FS.list}>
           {options.map((opt) => {
             const active = opt.value === value;
             return (
-              <li key={opt.value}>
+              <li key={`${opt.value}-opt`}>
                 <button
                   type="button"
                   role="option"
                   aria-selected={active}
-                  onClick={() => { onChange(opt.value); setOpen(false); }}
+                  onClick={() => {
+                    onChange(opt.value);
+                    setOpen(false);
+                  }}
                   style={{
                     ...FS.option,
                     background: active ? '#eff6ff' : 'transparent',
@@ -680,8 +693,6 @@ function FieldSelect({ label, value, options, onChange }) {
   );
 }
 
-/* ------------------------------ Styles ------------------------------ */
-
 const PS = {
   layout: {
     position: 'relative',
@@ -696,8 +707,17 @@ const PS = {
     background: '#ffffff',
     transition: 'margin-right 200ms ease',
   },
-
+  errorBanner: {
+    margin: '0 16px',
+    padding: '10px 14px',
+    background: '#fef2f2',
+    border: '1px solid #fecaca',
+    borderRadius: '8px',
+    color: '#991b1b',
+    fontSize: '0.85rem',
+  },
   toolbarRight: { display: 'inline-flex', alignItems: 'center', gap: '10px' },
+  toolbarWrap: { position: 'relative' },
   toolbarIconBtn: {
     width: '34px',
     height: '34px',
@@ -717,11 +737,58 @@ const PS = {
     borderRadius: '999px',
     background: '#ffffff',
     color: '#475569',
+    cursor: 'pointer',
+    fontFamily: 'inherit',
   },
   dateLabels: { display: 'inline-flex', flexDirection: 'column', lineHeight: 1.1 },
   dateLine: { fontSize: '0.7rem', color: '#475569' },
   dateCalendar: { display: 'inline-flex', color: '#1d4ed8' },
-
+  pickerPanel: {
+    position: 'absolute',
+    top: 'calc(100% + 6px)',
+    right: 0,
+    zIndex: 20,
+    width: 'min(320px, 92vw)',
+    padding: '14px 16px',
+    background: '#ffffff',
+    border: '1px solid #e5e7eb',
+    borderRadius: '10px',
+    boxShadow: '0 10px 25px rgba(15, 23, 42, 0.12)',
+  },
+  pickerTitle: { margin: '0 0 8px', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', textTransform: 'uppercase' },
+  presetRow: { display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' },
+  presetBtn: {
+    padding: '6px 10px',
+    fontSize: '0.78rem',
+    border: '1px solid #cbd5e1',
+    borderRadius: '6px',
+    background: '#f8fafc',
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+  },
+  customRow: { display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '10px' },
+  customLab: { display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.78rem', color: '#64748b' },
+  dateInput: {
+    padding: '6px 8px',
+    border: '1px solid #cbd5e1',
+    borderRadius: '6px',
+    fontSize: '0.85rem',
+    fontFamily: 'inherit',
+  },
+  applyBtn: {
+    width: '100%',
+    padding: '8px 12px',
+    marginTop: '4px',
+    border: 'none',
+    borderRadius: '6px',
+    background: '#1d4ed8',
+    color: '#ffffff',
+    fontWeight: 600,
+    fontSize: '0.85rem',
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+  },
+  retentionHint: { margin: '10px 0 0', fontSize: '0.7rem', color: '#64748b', lineHeight: 1.4 },
   resultHead: {
     display: 'flex',
     alignItems: 'flex-start',
@@ -743,18 +810,16 @@ const PS = {
     color: '#1d4ed8',
     cursor: 'pointer',
   },
-
-  body: {
-    display: 'flex',
-    flexDirection: 'column',
-    flex: 1,
-    padding: '18px 22px 0',
-  },
+  body: { display: 'flex', flexDirection: 'column', flex: 1, padding: '18px 22px 0' },
+  loading: { padding: '24px', color: '#64748b', margin: 0 },
+  empty: { padding: '24px', color: '#94a3b8', margin: 0 },
   tableWrap: {
     border: '1px solid #e5e7eb',
     borderRadius: '8px',
     background: '#ffffff',
-    overflow: 'hidden',
+    overflow: 'auto',
+    minHeight: '120px',
+    maxHeight: 'calc(100vh - 280px)',
   },
   table: {
     width: '100%',
@@ -765,84 +830,76 @@ const PS = {
   },
   thQ: {
     textAlign: 'right',
-    padding: '10px 18px',
+    padding: '10px 14px',
     background: '#f8fafc',
     color: '#475569',
     fontWeight: 600,
     fontSize: '0.78rem',
-    letterSpacing: '0.02em',
     borderBottom: '1px solid #e5e7eb',
     position: 'sticky',
     top: 0,
+    zIndex: 1,
   },
   thT: {
     textAlign: 'left',
-    padding: '10px 18px',
+    padding: '10px 14px',
     background: '#f8fafc',
     color: '#475569',
     fontWeight: 600,
     fontSize: '0.78rem',
-    letterSpacing: '0.02em',
     borderBottom: '1px solid #e5e7eb',
     position: 'sticky',
     top: 0,
+    zIndex: 1,
   },
   thF: {
     textAlign: 'left',
-    padding: '10px 18px',
+    padding: '10px 14px',
     background: '#f8fafc',
     color: '#475569',
     fontWeight: 600,
     fontSize: '0.78rem',
-    letterSpacing: '0.02em',
     borderBottom: '1px solid #e5e7eb',
     position: 'sticky',
     top: 0,
+    zIndex: 1,
   },
   trEven: { background: '#ffffff' },
   trOdd: { background: '#fafbfd' },
   tdQ: {
-    padding: '8px 18px',
+    padding: '8px 14px',
     textAlign: 'right',
-    color: '#0f172a',
     fontVariantNumeric: 'tabular-nums',
     borderBottom: '1px solid #f1f5f9',
-    width: '110px',
     verticalAlign: 'top',
   },
   tdT: {
-    padding: '8px 18px',
+    padding: '8px 14px',
     textAlign: 'left',
-    color: '#0f172a',
-    wordBreak: 'break-all',
+    wordBreak: 'break-word',
     borderBottom: '1px solid #f1f5f9',
     verticalAlign: 'top',
   },
   tdF: {
-    padding: '8px 18px',
+    padding: '8px 14px',
     textAlign: 'left',
-    color: '#0f172a',
     borderBottom: '1px solid #f1f5f9',
     verticalAlign: 'top',
   },
-
-  chipStack: { display: 'flex', flexDirection: 'column', gap: '4px' },
-  chip: {
+  facetChips: { display: 'flex', flexWrap: 'wrap', gap: '6px' },
+  facetChip: {
     display: 'inline-flex',
-    alignItems: 'center',
-    gap: '6px',
-    padding: '4px 10px',
-    background: '#eef2ff',
-    border: '1px solid #c7d2fe',
+    alignItems: 'baseline',
+    gap: '4px',
+    padding: '3px 8px',
     borderRadius: '999px',
+    background: '#f1f5f9',
     fontSize: '0.78rem',
-    color: '#1e293b',
-    width: 'fit-content',
+    color: '#334155',
     maxWidth: '100%',
   },
-  chipLabel: { color: '#475569', fontWeight: 500 },
-  chipValue: { color: '#1d4ed8', fontWeight: 600 },
-
+  facetLab: { fontWeight: 600, color: '#64748b', marginRight: '2px' },
+  facetEmpty: { color: '#94a3b8', fontSize: '0.85rem' },
   pager: {
     display: 'flex',
     alignItems: 'center',
@@ -879,7 +936,6 @@ const PS = {
     cursor: 'not-allowed',
     opacity: 0.55,
   },
-
   drawer: {
     position: 'absolute',
     top: 0,
@@ -921,6 +977,7 @@ const PS = {
     flexDirection: 'column',
     gap: '14px',
   },
+  drawerHint: { margin: 0, fontSize: '0.75rem', color: '#64748b', lineHeight: 1.45 },
 };
 
 const FS = {
@@ -943,7 +1000,7 @@ const FS = {
     textAlign: 'left',
   },
   value: { flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-  chevron: { display: 'inline-flex', color: '#475569' },
+  chevron: { display: 'inline-flex', color: '#475569', flexShrink: 0 },
   list: {
     position: 'absolute',
     top: 'calc(100% + 4px)',

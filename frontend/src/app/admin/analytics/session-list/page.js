@@ -1,120 +1,124 @@
 'use client';
-import { useMemo, useRef, useState } from 'react';
+
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AnalyticsShell from '@/components/admin/AnalyticsShell';
+import api from '@/lib/api';
 
-/* ------------------------------ Mock data ------------------------------ */
-/* 50 rows mirror the Angular blueprint exactly (4/19/2026 sessions). */
-
-const SESSIONS = [
-  { date: '4/19/2026, 07:29 PM', duration: '20min 18s',  userId: '623c78e6-e18d-44ee-897d-7b78c0d9ef95', uniqueQueries: 3, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 7,  topicViews: 31 },
-  { date: '4/19/2026, 07:21 PM', duration: '13min 29s',  userId: 'c98005d4-6994-4456-a45a-4108a5be6eed', uniqueQueries: 0, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 1,  topicViews: 4 },
-  { date: '4/19/2026, 07:14 PM', duration: '13s',         userId: '009c7ed0-dbae-437f-b78f-ccdee165707d', uniqueQueries: 0, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 1,  topicViews: 0 },
-  { date: '4/19/2026, 06:54 PM', duration: '1min 17s',    userId: '745f3ec3-cdfc-41e2-a07d-972e8b724164', uniqueQueries: 0, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 1,  topicViews: 2 },
-  { date: '4/19/2026, 06:24 PM', duration: '12s',         userId: 'Unauthenticated',                       uniqueQueries: 1, uniqueQueriesNoResults: 1, docSearches: 0, docSearchesNoResults: 0, documentViews: 0,  topicViews: 0 },
-  { date: '4/19/2026, 05:55 PM', duration: '8s',          userId: '19674d84-b57c-4492-8e8a-90e305356f52', uniqueQueries: 0, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 1,  topicViews: 1 },
-  { date: '4/19/2026, 05:43 PM', duration: '45s',         userId: '3079f91a-3a7f-4c0f-b117-7ec5015d764b', uniqueQueries: 0, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 1,  topicViews: 1 },
-  { date: '4/19/2026, 05:21 PM', duration: '22min 38s',   userId: '36c28f34-343a-4176-8292-883b77aaac4f', uniqueQueries: 4, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 5,  topicViews: 14 },
-  { date: '4/19/2026, 05:19 PM', duration: '1min 11s',    userId: 'c7a668da-8ca0-4c1d-afd5-1c23fe61ca34', uniqueQueries: 0, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 3,  topicViews: 3 },
-  { date: '4/19/2026, 05:13 PM', duration: '4min 4s',     userId: '6039ee45-7114-4d89-87f1-a99d950d0b51', uniqueQueries: 0, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 1,  topicViews: 3 },
-  { date: '4/19/2026, 05:12 PM', duration: '9s',          userId: '24242d52-7035-4ff8-80ee-c58ac38bdb30', uniqueQueries: 0, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 1,  topicViews: 1 },
-  { date: '4/19/2026, 05:04 PM', duration: '27min 24s',   userId: '618bfc41-5adc-40d5-b5b5-da0684df634d', uniqueQueries: 5, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 7,  topicViews: 20 },
-  { date: '4/19/2026, 04:30 PM', duration: '12min 1s',    userId: 'b39ffdf8-79c2-4a10-a330-37f1827d1fce', uniqueQueries: 0, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 5,  topicViews: 20 },
-  { date: '4/19/2026, 04:28 PM', duration: '1min 2s',     userId: '9979f0ba-336d-41a7-a1d2-ab5236b0b954', uniqueQueries: 3, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 2,  topicViews: 2 },
-  { date: '4/19/2026, 04:25 PM', duration: '32min 56s',   userId: 'c98005d4-6994-4456-a45a-4108a5be6eed', uniqueQueries: 0, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 1,  topicViews: 8 },
-  { date: '4/19/2026, 04:21 PM', duration: '34s',         userId: 'da03f4d6-e8dd-4ae0-9213-760d43b345bc', uniqueQueries: 2, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 1,  topicViews: 1 },
-  { date: '4/19/2026, 04:16 PM', duration: '4s',          userId: '6039ee45-7114-4d89-87f1-a99d950d0b51', uniqueQueries: 0, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 1,  topicViews: 0 },
-  { date: '4/19/2026, 04:16 PM', duration: '40s',         userId: 'e1c1d338-12c7-4905-801e-d627722cbb01', uniqueQueries: 0, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 1,  topicViews: 3 },
-  { date: '4/19/2026, 03:58 PM', duration: '32s',         userId: 'b39ffdf8-79c2-4a10-a330-37f1827d1fce', uniqueQueries: 0, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 0,  topicViews: 4 },
-  { date: '4/19/2026, 03:51 PM', duration: '8min 19s',    userId: '2185a448-2b59-496a-b4d1-ecd1586ec0a7', uniqueQueries: 0, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 1,  topicViews: 1 },
-  { date: '4/19/2026, 03:33 PM', duration: '12s',         userId: '6aab3901-b092-4e67-8edf-a4c36614769e', uniqueQueries: 1, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 1,  topicViews: 1 },
-  { date: '4/19/2026, 03:21 PM', duration: '2min 52s',    userId: 'cb95fc71-f991-4b86-b748-b8b90e034335', uniqueQueries: 0, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 1,  topicViews: 1 },
-  { date: '4/19/2026, 03:14 PM', duration: '27min 8s',    userId: '4bfbfca2-d7fc-491f-9fef-d594ecdb674f', uniqueQueries: 0, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 4,  topicViews: 8 },
-  { date: '4/19/2026, 03:03 PM', duration: '42s',         userId: 'Unauthenticated',                       uniqueQueries: 0, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 0,  topicViews: 0 },
-  { date: '4/19/2026, 02:59 PM', duration: '4min 33s',    userId: '9b5d7b2c-6c5b-45fe-a102-08e63325b6fc', uniqueQueries: 0, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 1,  topicViews: 2 },
-  { date: '4/19/2026, 02:44 PM', duration: '18s',         userId: '745f3ec3-cdfc-41e2-a07d-972e8b724164', uniqueQueries: 1, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 1,  topicViews: 1 },
-  { date: '4/19/2026, 02:36 PM', duration: '3min 5s',     userId: '159f3134-51e1-43e7-b2d9-0737749fcc6f', uniqueQueries: 0, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 1,  topicViews: 1 },
-  { date: '4/19/2026, 02:24 PM', duration: '1min 25s',    userId: '6039ee45-7114-4d89-87f1-a99d950d0b51', uniqueQueries: 0, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 1,  topicViews: 3 },
-  { date: '4/19/2026, 02:16 PM', duration: '1min 41s',    userId: '45a191e0-5aea-4639-ad15-bad527643f14', uniqueQueries: 0, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 4,  topicViews: 3 },
-  { date: '4/19/2026, 01:35 PM', duration: '2min 10s',    userId: 'Unauthenticated',                       uniqueQueries: 0, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 0,  topicViews: 0 },
-  { date: '4/19/2026, 01:24 PM', duration: '21s',         userId: '2185a448-2b59-496a-b4d1-ecd1586ec0a7', uniqueQueries: 0, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 1,  topicViews: 1 },
-  { date: '4/19/2026, 01:15 PM', duration: '9min 19s',    userId: 'd55ed4ab-6e0d-424d-9af6-0c9c52d9ad0c', uniqueQueries: 2, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 4,  topicViews: 12 },
-  { date: '4/19/2026, 01:13 PM', duration: '2s',          userId: '6039ee45-7114-4d89-87f1-a99d950d0b51', uniqueQueries: 0, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 1,  topicViews: 0 },
-  { date: '4/19/2026, 12:46 PM', duration: '1min 43s',    userId: '17f250cd-3700-4bf0-9ced-325bd3197cf4', uniqueQueries: 1, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 2,  topicViews: 2 },
-  { date: '4/19/2026, 12:45 PM', duration: '3min 51s',    userId: '7eb50cfe-d2e8-48be-ab63-0a0bb6708b9a', uniqueQueries: 1, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 4,  topicViews: 7 },
-  { date: '4/19/2026, 12:45 PM', duration: '2min 31s',    userId: 'a3a437f4-9d59-4a1c-a418-7ffd083022ca', uniqueQueries: 0, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 4,  topicViews: 3 },
-  { date: '4/19/2026, 12:44 PM', duration: '< 1s',        userId: 'Unauthenticated',                       uniqueQueries: 0, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 0,  topicViews: 1 },
-  { date: '4/19/2026, 12:35 PM', duration: '13s',         userId: 'ba493d2c-9d84-421e-9822-ae67612f9aee', uniqueQueries: 1, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 1,  topicViews: 1 },
-  { date: '4/19/2026, 12:35 PM', duration: '2s',          userId: 'Unauthenticated',                       uniqueQueries: 1, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 0,  topicViews: 0 },
-  { date: '4/19/2026, 12:09 PM', duration: '19min 21s',   userId: 'cb4914c7-3ac6-49cd-b620-adf5e282323e', uniqueQueries: 1, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 4,  topicViews: 5 },
-  { date: '4/19/2026, 11:57 AM', duration: '15min 42s',   userId: 'a3a437f4-9d59-4a1c-a418-7ffd083022ca', uniqueQueries: 0, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 4,  topicViews: 11 },
-  { date: '4/19/2026, 11:55 AM', duration: '2min 17s',    userId: '5232258d-c4f9-4d76-8a9a-8fc219c5d39f', uniqueQueries: 1, uniqueQueriesNoResults: 0, docSearches: 1, docSearchesNoResults: 0, documentViews: 1,  topicViews: 1 },
-  { date: '4/19/2026, 11:24 AM', duration: '12s',         userId: '17f250cd-3700-4bf0-9ced-325bd3197cf4', uniqueQueries: 0, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 1,  topicViews: 2 },
-  { date: '4/19/2026, 11:24 AM', duration: '30s',         userId: 'a3a437f4-9d59-4a1c-a418-7ffd083022ca', uniqueQueries: 0, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 1,  topicViews: 2 },
-  { date: '4/19/2026, 11:23 AM', duration: '4s',          userId: 'Unauthenticated',                       uniqueQueries: 0, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 0,  topicViews: 0 },
-  { date: '4/19/2026, 10:39 AM', duration: '19s',         userId: 'Unauthenticated',                       uniqueQueries: 0, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 0,  topicViews: 0 },
-  { date: '4/19/2026, 10:32 AM', duration: '6min 17s',    userId: '53525d98-ca93-47da-9004-8282bf5dde1e', uniqueQueries: 0, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 1,  topicViews: 17 },
-  { date: '4/19/2026, 10:26 AM', duration: '3min 9s',     userId: '1c8f8bec-1002-41f1-8e78-7dce78d5595e', uniqueQueries: 0, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 1,  topicViews: 1 },
-  { date: '4/19/2026, 10:23 AM', duration: '15min 45s',   userId: 'd84abe9c-e102-4cc2-9cd4-b1731f339c0a', uniqueQueries: 0, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 5,  topicViews: 4 },
-  { date: '4/19/2026, 10:13 AM', duration: '6min 53s',    userId: '35ef8234-0e4e-4f63-94eb-25842ea349ae', uniqueQueries: 2, uniqueQueriesNoResults: 0, docSearches: 0, docSearchesNoResults: 0, documentViews: 2,  topicViews: 5 },
-];
-
-const TOTAL_SESSIONS = 3338;
 const PAGE_SIZE = 50;
 
 const COLUMNS = [
-  { key: 'date',                   label: 'Session start (UTC)' },
-  { key: 'duration',               label: 'Active duration' },
-  { key: 'userId',                 label: 'User ID' },
-  { key: 'uniqueQueries',          label: 'Unique search queries' },
+  { key: 'date', label: 'Session start (UTC)' },
+  { key: 'duration', label: 'Active duration' },
+  { key: 'userId', label: 'User ID' },
+  { key: 'uniqueQueries', label: 'Unique search queries' },
   { key: 'uniqueQueriesNoResults', label: 'Unique search queries with no results' },
-  { key: 'docSearches',            label: 'Searches in doc' },
-  { key: 'docSearchesNoResults',   label: 'Searches in doc with no results' },
-  { key: 'documentViews',          label: 'Document views' },
-  { key: 'topicViews',             label: 'Topic views' },
+  { key: 'docSearches', label: 'Searches in doc' },
+  { key: 'docSearchesNoResults', label: 'Searches in doc with no results' },
+  { key: 'documentViews', label: 'Document views' },
+  { key: 'topicViews', label: 'Topic views' },
 ];
 
 const LANGUAGE_OPTIONS = [
-  { value: 'all',   label: 'All' },
+  { value: 'all', label: 'All' },
   { value: 'en-US', label: 'English (United States)' },
   { value: 'it-IT', label: 'Italian (Italy)' },
 ];
 
 const AUTH_OPTIONS = [
-  { value: 'all',             label: 'All' },
-  { value: 'authenticated',   label: 'Authenticated' },
+  { value: 'all', label: 'All' },
+  { value: 'authenticated', label: 'Authenticated' },
   { value: 'unauthenticated', label: 'Unauthenticated' },
 ];
 
-/* ------------------------------ Helpers ------------------------------ */
-
-function parseDateToMs(s) {
-  /* "4/19/2026, 07:29 PM" → epoch ms */
-  const m = s.match(/^(\d+)\/(\d+)\/(\d+),\s*(\d+):(\d+)\s*(AM|PM)$/i);
-  if (!m) return 0;
-  const [, mo, dy, yr, hh, mm, ap] = m;
-  let h = parseInt(hh, 10) % 12;
-  if (ap.toUpperCase() === 'PM') h += 12;
-  return new Date(parseInt(yr, 10), parseInt(mo, 10) - 1, parseInt(dy, 10), h, parseInt(mm, 10)).getTime();
+function defaultDateRange() {
+  const end = new Date();
+  end.setHours(23, 59, 59, 999);
+  const start = new Date(end);
+  start.setDate(start.getDate() - 6);
+  start.setHours(0, 0, 0, 0);
+  return { start, end };
 }
 
-function parseDurationToSec(s) {
-  if (!s) return 0;
-  if (s === '< 1s') return 0;
-  let total = 0;
-  const h = s.match(/(\d+)\s*h(?!\w)/);
-  const m = s.match(/(\d+)\s*min/);
-  const sec = s.match(/(\d+)\s*s(?![a-z])/);
-  if (h) total += parseInt(h[1], 10) * 3600;
-  if (m) total += parseInt(m[1], 10) * 60;
-  if (sec) total += parseInt(sec[1], 10);
-  return total;
+function toInputDate(d) {
+  const x = new Date(d);
+  const y = x.getFullYear();
+  const m = String(x.getMonth() + 1).padStart(2, '0');
+  const day = String(x.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
-function compareValues(a, b, key) {
-  if (key === 'date') return parseDateToMs(a) - parseDateToMs(b);
-  if (key === 'duration') return parseDurationToSec(a) - parseDurationToSec(b);
-  if (typeof a === 'number' && typeof b === 'number') return a - b;
-  return String(a).localeCompare(String(b));
+function parseInputDate(s) {
+  const d = new Date(`${s}T12:00:00`);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function formatSessionStartUtc(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString('en-US', {
+    timeZone: 'UTC',
+    month: 'numeric',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
+}
+
+function formatDuration(ms) {
+  if (ms == null || ms <= 0) return '< 1s';
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const sec = s % 60;
+  const h = Math.floor(m / 60);
+  const min = m % 60;
+  if (h > 0) {
+    const parts = [`${h}h`];
+    if (min > 0) parts.push(`${min}min`);
+    if (sec > 0) parts.push(`${sec}s`);
+    return parts.join(' ');
+  }
+  if (sec > 0) return `${min}min ${sec}s`;
+  return `${min}min`;
+}
+
+function downloadCsv(rows) {
+  if (!rows?.length) return;
+  const headers = [
+    'Session start (UTC)',
+    'Active duration (ms)',
+    'User ID',
+    'Unique search queries',
+    'Unique search queries with no results',
+    'Searches in doc',
+    'Searches in doc with no results',
+    'Document views',
+    'Topic views',
+  ];
+  const lines = [headers.join(',')];
+  for (const r of rows) {
+    lines.push(
+      [
+        JSON.stringify(r.sessionStartFormatted),
+        r.durationMs,
+        JSON.stringify(r.userIdDisplay),
+        r.uniqueQueries,
+        r.uniqueQueriesNoResults,
+        r.docSearches,
+        r.docSearchesNoResults,
+        r.documentViews,
+        r.topicViews,
+      ].join(',')
+    );
+  }
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'session-list.csv';
+  a.click();
+  URL.revokeObjectURL(a.href);
 }
 
 /* ------------------------------ Icons ------------------------------ */
@@ -191,6 +195,10 @@ const IconCaret = ({ open }) => (
 /* ------------------------------ Page ------------------------------ */
 
 export default function SessionListPage() {
+  const def = useMemo(() => defaultDateRange(), []);
+  const [rangeStart, setRangeStart] = useState(() => toInputDate(def.start));
+  const [rangeEnd, setRangeEnd] = useState(() => toInputDate(def.end));
+
   const [drawerOpen, setDrawerOpen] = useState(true);
   const [sortKey, setSortKey] = useState('date');
   const [sortDir, setSortDir] = useState('desc');
@@ -198,25 +206,99 @@ export default function SessionListPage() {
   const [language, setLanguage] = useState('all');
   const [authStatus, setAuthStatus] = useState('all');
   const [userIdFilter, setUserIdFilter] = useState('');
+  const [debouncedUserFilter, setDebouncedUserFilter] = useState('');
+  const lastDebouncedUserTrimmed = useRef(undefined);
   const [page, setPage] = useState(0);
 
-  const filtered = useMemo(() => {
-    return SESSIONS.filter((row) => {
-      if (authStatus === 'authenticated' && row.userId === 'Unauthenticated') return false;
-      if (authStatus === 'unauthenticated' && row.userId !== 'Unauthenticated') return false;
-      if (userIdFilter.trim() && !row.userId.toLowerCase().includes(userIdFilter.trim().toLowerCase())) return false;
-      return true;
-    });
-  }, [authStatus, userIdFilter]);
+  const [rows, setRows] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState(null);
 
-  const sorted = useMemo(() => {
-    const arr = [...filtered];
-    arr.sort((a, b) => {
-      const cmp = compareValues(a[sortKey], b[sortKey], sortKey);
-      return sortDir === 'asc' ? cmp : -cmp;
-    });
-    return arr;
-  }, [filtered, sortKey, sortDir]);
+  useEffect(() => {
+    const t = setTimeout(() => {
+      const next = userIdFilter.trim();
+      if (lastDebouncedUserTrimmed.current === undefined) {
+        lastDebouncedUserTrimmed.current = next;
+        setDebouncedUserFilter(next);
+        return;
+      }
+      if (next !== lastDebouncedUserTrimmed.current) {
+        lastDebouncedUserTrimmed.current = next;
+        setDebouncedUserFilter(next);
+        setPage(0);
+      }
+    }, 400);
+    return () => clearTimeout(t);
+  }, [userIdFilter]);
+
+  const startIso = useMemo(() => {
+    const d = parseInputDate(rangeStart);
+    if (!d) return null;
+    d.setHours(0, 0, 0, 0);
+    return d.toISOString();
+  }, [rangeStart]);
+
+  const endIso = useMemo(() => {
+    const d = parseInputDate(rangeEnd);
+    if (!d) return null;
+    d.setHours(23, 59, 59, 999);
+    return d.toISOString();
+  }, [rangeEnd]);
+
+  const fetchData = useCallback(async () => {
+    if (!startIso || !endIso) return;
+    setLoading(true);
+    setErrorMsg(null);
+    try {
+      const json = await api.post('/analytics/v2/traffic/session-list', {
+        startDate: startIso,
+        endDate: endIso,
+        page: page + 1,
+        perPage: PAGE_SIZE,
+        sortBy: sortKey,
+        sortDir,
+        authStatus,
+        interfaceLanguage: language,
+        userIdContains: debouncedUserFilter,
+      });
+      if (json?.results) {
+        const mapped = json.results.map((r) => ({
+          ...r,
+          sessionStartFormatted: formatSessionStartUtc(r.sessionStart),
+          durationLabel: formatDuration(r.durationMs),
+          userIdDisplay: r.userId || 'Unauthenticated',
+        }));
+        setRows(mapped);
+        setTotal(typeof json.total === 'number' ? json.total : 0);
+      } else if (json?.error) {
+        setErrorMsg(json.error);
+        setRows([]);
+        setTotal(0);
+      }
+    } catch (e) {
+      console.error(e);
+      setErrorMsg(e.message);
+      setRows([]);
+      setTotal(0);
+    } finally {
+      setLoading(false);
+    }
+  }, [
+    startIso,
+    endIso,
+    page,
+    sortKey,
+    sortDir,
+    authStatus,
+    language,
+    debouncedUserFilter,
+  ]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch analytics when query inputs change
+    void fetchData();
+  }, [fetchData]);
 
   const handleSort = (key) => {
     if (key === sortKey) {
@@ -225,11 +307,12 @@ export default function SessionListPage() {
       setSortKey(key);
       setSortDir(key === 'date' ? 'desc' : 'desc');
     }
+    setPage(0);
   };
 
-  const totalPages = Math.max(1, Math.ceil(TOTAL_SESSIONS / PAGE_SIZE));
-  const rangeFrom = page * PAGE_SIZE + 1;
-  const rangeTo = Math.min((page + 1) * PAGE_SIZE, TOTAL_SESSIONS);
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const rangeFrom = total === 0 ? 0 : page * PAGE_SIZE + 1;
+  const rangeTo = total === 0 ? 0 : Math.min((page + 1) * PAGE_SIZE, total);
 
   return (
     <AnalyticsShell
@@ -238,15 +321,40 @@ export default function SessionListPage() {
       breadcrumbTrailing={
         <SessionInfoPopover open={showInfo} onToggle={() => setShowInfo((v) => !v)} onClose={() => setShowInfo(false)} />
       }
-      feedbackSubject="Feedback about session list and session journey"
       toolbarExtras={
         <>
-          <div style={PS.dateIndicator} title="Date range" aria-label="Date range">
+          <div style={PS.dateIndicator} title="Date range (local)" aria-label="Date range">
             <span style={PS.dateLabels}>
-              <span style={PS.dateLine}>From: 4/13/2026</span>
-              <span style={PS.dateLine}>To: 4/19/2026</span>
+              <label style={PS.dateLine}>
+                From:{' '}
+                <input
+                  type="date"
+                  value={rangeStart}
+                  onChange={(e) => {
+                    setRangeStart(e.target.value);
+                    setPage(0);
+                  }}
+                  style={PS.dateInput}
+                  aria-label="From date"
+                />
+              </label>
+              <label style={PS.dateLine}>
+                To:{' '}
+                <input
+                  type="date"
+                  value={rangeEnd}
+                  onChange={(e) => {
+                    setRangeEnd(e.target.value);
+                    setPage(0);
+                  }}
+                  style={PS.dateInput}
+                  aria-label="To date"
+                />
+              </label>
             </span>
-            <span style={PS.dateCalendar} aria-hidden="true"><IconCalendar /></span>
+            <span style={PS.dateCalendar} aria-hidden="true">
+              <IconCalendar />
+            </span>
           </div>
           <button
             type="button"
@@ -275,8 +383,10 @@ export default function SessionListPage() {
               <button
                 type="button"
                 style={{ ...PS.iconBtn, color: '#1d4ed8' }}
-                title="Download as XLSX"
-                aria-label="Download as XLSX"
+                title="Download current page as CSV"
+                aria-label="Download current page as CSV"
+                onClick={() => downloadCsv(rows)}
+                disabled={!rows.length}
               >
                 <IconDownload />
               </button>
@@ -284,94 +394,116 @@ export default function SessionListPage() {
           </header>
 
           <section style={PS.body}>
-            <div style={PS.tableCard}>
-              <div style={PS.tableScroll}>
-                <table style={PS.table} role="table" aria-label="Session list">
-                  <thead>
-                    <tr style={PS.headerRow}>
-                      {COLUMNS.map((col) => {
-                        const isActive = sortKey === col.key;
-                        return (
-                          <th
-                            key={col.key}
-                            style={PS.th}
-                            scope="col"
-                            aria-sort={isActive ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
-                          >
-                            <span style={PS.thInner}>
-                              <span style={PS.thLabel}>{col.label}</span>
-                              <button
-                                type="button"
-                                style={{
-                                  ...PS.sortBtn,
-                                  color: isActive ? '#1d4ed8' : '#64748b',
-                                }}
-                                onClick={() => handleSort(col.key)}
-                                aria-label={
-                                  isActive
-                                    ? `Sort ${col.label} in ${sortDir === 'asc' ? 'descending' : 'ascending'} order`
-                                    : `Sort ${col.label} in descending order`
-                                }
-                                title={
-                                  isActive
-                                    ? `Sort in ${sortDir === 'asc' ? 'descending' : 'ascending'} order`
-                                    : 'Sort in descending order'
-                                }
-                              >
-                                {!isActive ? <IconSortNone /> : sortDir === 'asc' ? <IconSortAsc /> : <IconSortDesc />}
-                              </button>
-                            </span>
-                          </th>
-                        );
-                      })}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {sorted.map((row, i) => (
-                      <tr
-                        key={`${row.date}-${row.userId}-${i}`}
-                        style={PS.row}
-                        tabIndex={0}
-                        onMouseEnter={(e) => { e.currentTarget.style.background = '#f8fafc'; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.background = '#ffffff'; }}
-                      >
-                        <td style={{ ...PS.td, whiteSpace: 'nowrap' }}>{row.date.replace(', ', ', ')}</td>
-                        <td style={PS.td}>{row.duration}</td>
-                        <td style={{ ...PS.td, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', fontSize: '0.78rem' }}>
-                          {row.userId}
-                        </td>
-                        <td style={PS.td}>{row.uniqueQueries}</td>
-                        <td style={PS.td}>{row.uniqueQueriesNoResults}</td>
-                        <td style={PS.td}>{row.docSearches}</td>
-                        <td style={PS.td}>{row.docSearchesNoResults}</td>
-                        <td style={PS.td}>{row.documentViews}</td>
-                        <td style={PS.td}>{row.topicViews}</td>
+            {loading ? (
+              <div style={PS.loading}>Loading sessions…</div>
+            ) : errorMsg ? (
+              <div style={PS.error}>Error: {errorMsg}</div>
+            ) : (
+              <div style={PS.tableCard}>
+                <div style={PS.tableScroll}>
+                  <table style={PS.table} role="table" aria-label="Session list">
+                    <thead>
+                      <tr style={PS.headerRow}>
+                        {COLUMNS.map((col) => {
+                          const isActive = sortKey === col.key;
+                          return (
+                            <th
+                              key={col.key}
+                              style={PS.th}
+                              scope="col"
+                              aria-sort={isActive ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
+                            >
+                              <span style={PS.thInner}>
+                                <span style={PS.thLabel}>{col.label}</span>
+                                <button
+                                  type="button"
+                                  style={{
+                                    ...PS.sortBtn,
+                                    color: isActive ? '#1d4ed8' : '#64748b',
+                                  }}
+                                  onClick={() => handleSort(col.key)}
+                                  aria-label={
+                                    isActive
+                                      ? `Sort ${col.label} in ${sortDir === 'asc' ? 'descending' : 'ascending'} order`
+                                      : `Sort ${col.label}`
+                                  }
+                                  title={
+                                    isActive
+                                      ? `Sort in ${sortDir === 'asc' ? 'descending' : 'ascending'} order`
+                                      : 'Sort'
+                                  }
+                                >
+                                  {!isActive ? <IconSortNone /> : sortDir === 'asc' ? <IconSortAsc /> : <IconSortDesc />}
+                                </button>
+                              </span>
+                            </th>
+                          );
+                        })}
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody>
+                      {rows.map((row, i) => (
+                        <tr
+                          key={`${row.sessionKey}-${i}`}
+                          style={PS.row}
+                          tabIndex={0}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.background = '#f8fafc';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.background = '#ffffff';
+                          }}
+                        >
+                          <td style={{ ...PS.td, whiteSpace: 'nowrap' }}>{row.sessionStartFormatted}</td>
+                          <td style={PS.td}>{row.durationLabel}</td>
+                          <td style={{ ...PS.td, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', fontSize: '0.78rem' }}>
+                            {row.userIdDisplay}
+                          </td>
+                          <td style={PS.td}>{row.uniqueQueries}</td>
+                          <td style={PS.td}>{row.uniqueQueriesNoResults}</td>
+                          <td style={PS.td}>{row.docSearches}</td>
+                          <td style={PS.td}>{row.docSearchesNoResults}</td>
+                          <td style={PS.td}>{row.documentViews}</td>
+                          <td style={PS.td}>{row.topicViews}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
 
-              <div style={PS.pager}>
-                <div style={PS.pagerRange} aria-live="polite">
-                  {rangeFrom} – {rangeTo} of {TOTAL_SESSIONS.toLocaleString('en-US')}
-                </div>
-                <div style={PS.pagerActions}>
-                  <PagerBtn label="First page" disabled={page === 0} onClick={() => setPage(0)}>
-                    <PagerArrowFirst />
-                  </PagerBtn>
-                  <PagerBtn label="Previous page" disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>
-                    <PagerArrowPrev />
-                  </PagerBtn>
-                  <PagerBtn label="Next page" disabled={page >= totalPages - 1} onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}>
-                    <PagerArrowNext />
-                  </PagerBtn>
-                  <PagerBtn label="Last page" disabled={page >= totalPages - 1} onClick={() => setPage(totalPages - 1)}>
-                    <PagerArrowLast />
-                  </PagerBtn>
+                {!loading && !rows.length && !errorMsg && (
+                  <div style={PS.emptyBanner}>No sessions in this date range with the current filters.</div>
+                )}
+
+                <div style={PS.pager}>
+                  <div style={PS.pagerRange} aria-live="polite">
+                    {total === 0 ? '0' : `${rangeFrom} – ${rangeTo}`} of {total.toLocaleString('en-US')}
+                  </div>
+                  <div style={PS.pagerActions}>
+                    <PagerBtn label="First page" disabled={page === 0} onClick={() => setPage(0)}>
+                      <PagerArrowFirst />
+                    </PagerBtn>
+                    <PagerBtn label="Previous page" disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>
+                      <PagerArrowPrev />
+                    </PagerBtn>
+                    <PagerBtn
+                      label="Next page"
+                      disabled={page >= totalPages - 1 || total === 0}
+                      onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+                    >
+                      <PagerArrowNext />
+                    </PagerBtn>
+                    <PagerBtn
+                      label="Last page"
+                      disabled={page >= totalPages - 1 || total === 0}
+                      onClick={() => setPage(totalPages - 1)}
+                    >
+                      <PagerArrowLast />
+                    </PagerBtn>
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
           </section>
         </main>
 
@@ -391,23 +523,28 @@ export default function SessionListPage() {
             </header>
 
             <div style={PS.drawerBody}>
+              <p style={PS.drawerHint}>
+                Interface language filters events that recorded <code style={PS.code}>filters.lang</code> / locale on analytics payloads; leave All if clients do not send it.
+              </p>
               <FieldSelect
                 label="Interface language"
                 value={language}
-                onChange={setLanguage}
+                onChange={(v) => {
+                  setLanguage(v);
+                  setPage(0);
+                }}
                 options={LANGUAGE_OPTIONS}
               />
               <FieldSelect
                 label="Authentication status"
                 value={authStatus}
-                onChange={setAuthStatus}
+                onChange={(v) => {
+                  setAuthStatus(v);
+                  setPage(0);
+                }}
                 options={AUTH_OPTIONS}
               />
-              <FieldText
-                label="User ID"
-                value={userIdFilter}
-                onChange={setUserIdFilter}
-              />
+              <FieldText label="User ID" value={userIdFilter} onChange={setUserIdFilter} />
             </div>
           </aside>
         )}
@@ -434,24 +571,21 @@ function SessionInfoPopover({ open, onToggle, onClose }) {
       </button>
       {open && (
         <>
-          <span
-            onClick={onClose}
-            aria-hidden="true"
-            style={{ position: 'fixed', inset: 0, zIndex: 19 }}
-          />
+          <span onClick={onClose} aria-hidden="true" style={{ position: 'fixed', inset: 0, zIndex: 19 }} />
           <div role="tooltip" style={PS.popover}>
-            A session is a sequence of events carried out by a single user, which stops after 30 minutes of inactivity or when the user logs out.
+            A row is one “visit” session: we use a 30-minute inactivity timeout. That applies even when a browser session id is present, so a long gap starts a new row (avoiding multi-day “durations” from the same tab id).
+            If no session id was stored, we group by user (or IP if anonymous) with the same rule.
+            Active duration is from first to last event in that row, within the selected date range.
+            Metrics cover only activity in that range.
             <br />
             <br />
-            Click on a line to display the session journey.
+            Session journey drill-down may be added later.
           </div>
         </>
       )}
     </span>
   );
 }
-
-/* ------------------------------ Form fields ------------------------------ */
 
 function FieldSelect({ label, value, onChange, options }) {
   const [open, setOpen] = useState(false);
@@ -471,11 +605,7 @@ function FieldSelect({ label, value, onChange, options }) {
       </button>
       {open && (
         <>
-          <span
-            onClick={() => setOpen(false)}
-            aria-hidden="true"
-            style={{ position: 'fixed', inset: 0, zIndex: 19 }}
-          />
+          <span onClick={() => setOpen(false)} aria-hidden="true" style={{ position: 'fixed', inset: 0, zIndex: 19 }} />
           <ul role="listbox" style={FS.menu}>
             {options.map((opt) => {
               const isSel = opt.value === value;
@@ -485,7 +615,10 @@ function FieldSelect({ label, value, onChange, options }) {
                     type="button"
                     role="option"
                     aria-selected={isSel}
-                    onClick={() => { onChange(opt.value); setOpen(false); }}
+                    onClick={() => {
+                      onChange(opt.value);
+                      setOpen(false);
+                    }}
                     style={{
                       ...FS.option,
                       background: isSel ? '#eff6ff' : 'transparent',
@@ -515,12 +648,11 @@ function FieldText({ label, value, onChange }) {
         onChange={(e) => onChange(e.target.value)}
         style={FS.input}
         aria-label={label}
+        placeholder="Substring match"
       />
     </div>
   );
 }
-
-/* ------------------------------ Pager ------------------------------ */
 
 function PagerBtn({ label, disabled, onClick, children }) {
   return (
@@ -561,8 +693,6 @@ const PagerArrowLast = () => (
     <path d="M5.59 7.41L10.18 12l-4.59 4.59L7 18l6-6-6-6zM16 6h2v12h-2z" />
   </svg>
 );
-
-/* ------------------------------ Styles ------------------------------ */
 
 const PS = {
   layout: {
@@ -648,11 +778,21 @@ const PS = {
     borderRadius: '8px',
     background: '#ffffff',
   },
-  dateLabels: { display: 'flex', flexDirection: 'column', lineHeight: 1.15 },
-  dateLine: { fontSize: '0.7rem', color: '#475569', fontWeight: 500 },
-  dateCalendar: { display: 'inline-flex', color: '#1d4ed8' },
+  dateLabels: { display: 'flex', flexDirection: 'column', gap: '6px', lineHeight: 1.15 },
+  dateLine: { fontSize: '0.72rem', color: '#475569', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '6px' },
+  dateInput: {
+    border: '1px solid #cbd5e1',
+    borderRadius: '4px',
+    padding: '2px 6px',
+    fontSize: '0.72rem',
+    fontFamily: 'inherit',
+    color: '#0f172a',
+  },
+  dateCalendar: { display: 'inline-flex', color: '#1d4ed8', flexShrink: 0 },
 
   body: { padding: '18px 22px 28px', display: 'flex', flexDirection: 'column', gap: '16px' },
+  loading: { padding: '48px', textAlign: 'center', color: '#64748b' },
+  error: { padding: '40px', color: '#dc2626' },
   tableCard: {
     background: '#ffffff',
     border: '1px solid #e5e7eb',
@@ -705,6 +845,12 @@ const PS = {
     color: '#1f2937',
     fontSize: '0.78rem',
     verticalAlign: 'middle',
+  },
+  emptyBanner: {
+    padding: '16px 18px',
+    fontSize: '0.85rem',
+    color: '#64748b',
+    borderTop: '1px solid #f1f5f9',
   },
 
   pager: {
@@ -777,6 +923,18 @@ const PS = {
     display: 'flex',
     flexDirection: 'column',
     gap: '16px',
+  },
+  drawerHint: {
+    fontSize: '0.72rem',
+    color: '#64748b',
+    lineHeight: 1.45,
+    margin: 0,
+  },
+  code: {
+    fontSize: '0.68rem',
+    background: '#f1f5f9',
+    padding: '1px 5px',
+    borderRadius: '4px',
   },
 };
 

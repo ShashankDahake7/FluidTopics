@@ -9,6 +9,7 @@ const {
   matchCustomTemplates,
   suggestCustomTemplates,
 } = require('./customTemplates');
+const { purgeUnstructuredMissingFromStorage } = require('../unstructuredCleanup');
 
 const SEARCH_INDEX = process.env.ATLAS_SEARCH_INDEX || 'default';
 const AUTOCOMPLETE_INDEX = process.env.ATLAS_AUTOCOMPLETE_INDEX || 'autocomplete_title';
@@ -78,6 +79,22 @@ function buildUnstructuredHit(doc, query, titlesOnly) {
   };
 }
 
+/** $group _id: collapse duplicate uploads that share the same display title (case-insensitive). */
+function unstructuredGroupIdExpr() {
+  return {
+    $cond: [
+      {
+        $gt: [
+          { $strLenCP: { $trim: { input: { $ifNull: ['$title', ''] } } } },
+          0,
+        ],
+      },
+      { $toLower: { $trim: { input: '$title' } } },
+      { $concat: ['__id__', { $toString: '$_id' }] },
+    ],
+  };
+}
+
 async function searchUnstructuredDocuments({ query, filters = {}, page = 1, limit = 20, titlesOnly = false }) {
   const q = (query || '').trim();
   if (!q) return { hits: [], total: 0 };
@@ -103,20 +120,57 @@ async function searchUnstructuredDocuments({ query, filters = {}, page = 1, limi
 
   const skip = (page - 1) * limit;
 
-  let cursor = UnstructuredDocument.find(
-    mongoFilter,
-    titlesOnly ? {} : { score: { $meta: 'textScore' } }
-  );
-  if (!titlesOnly) cursor = cursor.sort({ score: { $meta: 'textScore' } });
-  else cursor = cursor.sort({ updatedAt: -1 });
+  // One row per distinct normalized title: keep the highest-ranked document (text score or latest).
+  const sortBeforeGroup = titlesOnly
+    ? [{ $sort: { updatedAt: -1 } }]
+    : [
+        { $addFields: { score: { $meta: 'textScore' } } },
+        { $sort: { score: -1 } },
+      ];
 
-  const [rawDocs, total] = await Promise.all([
-    cursor.skip(skip).limit(limit).select('title description metadata mimeType contentText').lean(),
-    UnstructuredDocument.countDocuments(mongoFilter),
+  const groupStage = {
+    $group: {
+      _id: unstructuredGroupIdExpr(),
+      doc: { $first: '$$ROOT' },
+    },
+  };
+
+  const sortAfterGroup = titlesOnly
+    ? [{ $sort: { 'doc.updatedAt': -1 } }]
+    : [{ $sort: { 'doc.score': -1 } }];
+
+  const dedupedPipeline = [
+    { $match: mongoFilter },
+    ...sortBeforeGroup,
+    groupStage,
+    ...sortAfterGroup,
+  ];
+
+  const [countAgg, rawDocs] = await Promise.all([
+    UnstructuredDocument.aggregate([...dedupedPipeline, { $count: 'total' }]),
+    UnstructuredDocument.aggregate([
+      ...dedupedPipeline,
+      { $skip: skip },
+      { $limit: limit },
+      { $replaceRoot: { newRoot: '$doc' } },
+      {
+        $project: {
+          title: 1,
+          description: 1,
+          metadata: 1,
+          mimeType: 1,
+          contentText: 1,
+          filePath: 1,
+          hasContentHtml: { $gt: [{ $strLenCP: { $ifNull: ['$contentHtml', ''] } }, 0] },
+        },
+      },
+    ]),
   ]);
 
-  const hits = rawDocs.map((d) => buildUnstructuredHit(d, q, titlesOnly));
-  return { hits, total };
+  const total = countAgg[0]?.total ?? 0;
+  const { kept, removed } = await purgeUnstructuredMissingFromStorage(rawDocs);
+  const hits = kept.map((d) => buildUnstructuredHit(d, q, titlesOnly));
+  return { hits, total: Math.max(0, total - removed) };
 }
 
 const toLegacyHighlight = (raw, query) => {

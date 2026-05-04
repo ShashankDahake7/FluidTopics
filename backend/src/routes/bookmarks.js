@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const Bookmark = require('../models/Bookmark');
 const { auth: authenticate } = require('../middleware/auth');
+const { trackFtEvent } = require('../services/analytics/analyticsService');
+const { analyticsFromReq } = require('../utils/clientIp');
 
 // All routes require authentication
 router.use(authenticate);
@@ -128,6 +130,13 @@ router.delete('/:id', async (req, res, next) => {
     if (!result) {
       return res.status(404).json({ error: 'Bookmark not found' });
     }
+
+    trackFtEvent({
+      userId: req.user.id,
+      ftEvent: 'bookmark.delete',
+      userAgent: req.headers['user-agent'],
+      ...analyticsFromReq(req),
+    }).catch(() => {});
 
     res.json({ message: 'Bookmark removed' });
   } catch (err) {

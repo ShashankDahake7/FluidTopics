@@ -1,13 +1,8 @@
 'use client';
-import { useEffect, useMemo, useRef, useState } from 'react';
+
+import { useEffect, useRef, useState } from 'react';
 import AnalyticsShell from '@/components/admin/AnalyticsShell';
-
-/* ------------------------------ Data ------------------------------ */
-
-const TYPE_BOOK = 'BOOK_PLAIN';
-const TYPE_UNSTRUCTURED = 'UNSTRUCTURED_DOC';
-
-
+import api, { getStoredUser } from '@/lib/api';
 
 /* ------------------------------ Icons ------------------------------ */
 
@@ -49,6 +44,11 @@ const IconSortDesc = () => (
     <polyline points="18 15 12 9 6 15" />
   </svg>
 );
+const IconSortAsc = () => (
+  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <polyline points="6 9 12 15 18 9" />
+  </svg>
+);
 const IconChevLeft = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <polyline points="15 18 9 12 15 6" />
@@ -77,6 +77,13 @@ const IconBook = () => (
     <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
   </svg>
 );
+const IconArticle = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+    <polyline points="14 2 14 8 20 8" />
+    <line x1="9" y1="15" x2="15" y2="15" />
+  </svg>
+);
 const IconUnstructured = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
@@ -92,161 +99,131 @@ const IconKebab = () => (
     <circle cx="12" cy="18" r="1.5" />
   </svg>
 );
+function defaultDateRange() {
+  const end = new Date();
+  end.setHours(23, 59, 59, 999);
+  const start = new Date(end);
+  start.setMonth(start.getMonth() - 1);
+  start.setHours(0, 0, 0, 0);
+  return { start, end };
+}
 
-const COLOR = {
-  books: '#9D207B',
-  unstructured: '#CFB017',
-  articles: '#361FAD',
-  topics: '#45A191',
-  attachments: '#BD0F49',
-};
+function formatShortDate(d) {
+  if (!(d instanceof Date) || Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' });
+}
 
-const DOC_GROUP = [
-  { key: 'books',         label: 'Books',                  color: COLOR.books },
-  { key: 'unstructured',  label: 'Unstructured documents', color: COLOR.unstructured },
-  { key: 'articles',      label: 'Articles',               color: COLOR.articles },
-];
-const OTHER_GROUP = [
-  { key: 'topics',       label: 'Topics (books only)', color: COLOR.topics },
-  { key: 'attachments',  label: 'Attachments',         color: COLOR.attachments },
-];
+function roleMustSpecifyUserId(user) {
+  const roles = user?.roles || [];
+  const elevated = roles.some((r) => ['admin', 'superadmin', 'ANALYTICS_USER'].includes(r));
+  return roles.includes('BEHAVIOR_DATA_USER') && !elevated;
+}
 
-const Tick = ({ size = 14 }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <polyline points="20 6 9 17 4 12" />
-  </svg>
-);
-
-function Checkbox({ checked, indeterminate, onChange, label, color, bold = false }) {
-  return (
-    <label style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', position: 'relative', userSelect: 'none', cursor: 'pointer' }}>
-      <span
-        style={{
-          width: '16px', height: '16px', borderRadius: '3px',
-          border: '1.5px solid #94a3b8', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-          flexShrink: 0,
-          background: checked || indeterminate ? '#1d4ed8' : '#ffffff',
-          borderColor: checked || indeterminate ? '#1d4ed8' : '#94a3b8',
-        }}
-        aria-hidden="true"
-      >
-        {checked && <Tick size={12} />}
-        {indeterminate && <span style={{ width: '8px', height: '2px', background: '#ffffff', borderRadius: '1px' }} />}
-      </span>
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-        style={{ position: 'absolute', inset: 0, width: '16px', height: '16px', opacity: 0, margin: 0, cursor: 'pointer' }}
-      />
-      {color && <span style={{ width: '9px', height: '9px', borderRadius: '50%', display: 'inline-block', flexShrink: 0, background: color }} aria-hidden="true" />}
-      <span style={{ fontSize: '0.86rem', fontWeight: bold ? 600 : 500, color: '#0f172a' }}>{label}</span>
-    </label>
-  );
+function TypeIcon({ contentKind }) {
+  if (contentKind === 'UNSTRUCTURED') return <IconUnstructured />;
+  if (contentKind === 'ARTICLE') return <IconArticle />;
+  return <IconBook />;
 }
 
 /* ------------------------------ Page ------------------------------ */
 
 export default function DocumentViewsPage() {
   const [drawerOpen, setDrawerOpen] = useState(true);
-  const [heatmapDoc, setHeatmapDoc] = useState(null);
+  const [calendarOpen, setCalendarOpen] = useState(false);
+
+  const { start: defaultStart, end: defaultEnd } = defaultDateRange();
+  const [rangeStart, setRangeStart] = useState(defaultStart);
+  const [rangeEnd, setRangeEnd] = useState(defaultEnd);
+  const [appliedRange, setAppliedRange] = useState({ start: defaultStart, end: defaultEnd });
+
   const [titleQuery, setTitleQuery] = useState('');
-  const [userId, setUserId] = useState('');
-  
-  const [pending, setPending] = useState({ books: true, unstructured: true, articles: true, topics: false, attachments: false });
-  const [applied, setApplied] = useState({ books: true, unstructured: true, articles: true, topics: false, attachments: false });
+  /** Debounced value sent to the API (title filter). */
+  const [debouncedTitle, setDebouncedTitle] = useState('');
 
-  const [appliedTitleQuery, setAppliedTitleQuery] = useState('');
-  const [activeMenuRow, setActiveMenuRow] = useState(null);
-
-  const allDoc = ['books', 'unstructured', 'articles'];
-  const allOther = ['topics', 'attachments'];
-
-  const isGroupChecked = (keys) => keys.every((k) => pending[k]);
-  const isGroupIndeterm = (keys) => keys.some((k) => pending[k]) && !isGroupChecked(keys);
-  const allChecked = [...allDoc, ...allOther].every((k) => pending[k]);
-  const allIndeterm = [...allDoc, ...allOther].some((k) => pending[k]) && !allChecked;
-
-  const setOne = (k, v) => setPending(s => ({ ...s, [k]: v }));
-  const setGroup = (keys, v) => setPending((s) => ({ ...s, ...Object.fromEntries(keys.map((k) => [k, v])) }));
-  
-  const handleApply = () => {
-    setApplied({ ...pending });
-    setAppliedTitleQuery(titleQuery);
-  };
+  const [sortDesc, setSortDesc] = useState(true);
+  const [page, setPage] = useState(1);
+  const perPage = 50;
 
   const [data, setData] = useState(null);
   const [totalViews, setTotalViews] = useState(0);
   const [totalRows, setTotalRows] = useState(0);
-  const [page, setPage] = useState(1);
-  const perPage = 50;
   const [loading, setLoading] = useState(true);
+  const [activeMenuRow, setActiveMenuRow] = useState(null);
+  const [titleFilterFocused, setTitleFilterFocused] = useState(false);
 
   useEffect(() => {
-    let active = true;
-    const fetchData = async () => {
+    const id = setTimeout(() => {
+      setDebouncedTitle(titleQuery);
+      setPage(1);
+    }, 350);
+    return () => clearTimeout(id);
+  }, [titleQuery]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
       setLoading(true);
       try {
-        const token = localStorage.getItem('token');
-        const typeFilters = [];
-        if (applied.books) typeFilters.push('books');
-        if (applied.unstructured) typeFilters.push('unstructuredDocuments');
-        if (applied.articles) typeFilters.push('articles');
-        if (applied.topics) typeFilters.push('topics');
-        if (applied.attachments) typeFilters.push('attachments');
-
-        const payload = {
-           startDate: '2024-01-01',
-           endDate: '2026-12-31',
-           paging: { page, perPage },
-           filters: {
-             type: typeFilters
-           }
+        const u = getStoredUser();
+        const filters = {
+          titleQuery: debouncedTitle.trim() || undefined,
         };
-        if (userId.trim()) payload.filters.userId = userId.trim();
-
-        const res = await fetch('/api/analytics/v2/documents/views-top', {
-          method: 'POST',
-          headers: {
-             'Content-Type': 'application/json',
-             ...(token && { Authorization: `Bearer ${token}` })
-          },
-          body: JSON.stringify(payload)
-        });
-        const json = await res.json();
-        if (active && json.results) {
-           setData(json.results);
-           setTotalRows(json.paging?.totalCount || 0);
-           setTotalViews(json.totalDisplayCount || 0);
+        if (roleMustSpecifyUserId(u) && u?._id) {
+          filters.userId = String(u._id);
         }
+        const payload = {
+          startDate: appliedRange.start.toISOString(),
+          endDate: appliedRange.end.toISOString(),
+          sortOrder: sortDesc ? 'desc' : 'asc',
+          paging: { page, perPage },
+          filters,
+        };
+        const json = await api.post('/analytics/v2/documents/views-top', payload);
+        if (cancelled) return;
+        setData(json.results || []);
+        setTotalRows(json.paging?.totalCount || 0);
+        setTotalViews(json.totalDisplayCount || 0);
       } catch (e) {
         console.error(e);
+        if (!cancelled) {
+          setData([]);
+          setTotalRows(0);
+          setTotalViews(0);
+        }
       } finally {
-        if (active) setLoading(false);
+        if (!cancelled) setLoading(false);
       }
+    })();
+    return () => {
+      cancelled = true;
     };
-    fetchData();
-    return () => { active = false; };
-  }, [page, applied, userId]);
+  }, [appliedRange, debouncedTitle, sortDesc, page]);
 
-  const filteredRows = useMemo(() => {
-    if (!data) return [];
-    const q = appliedTitleQuery.trim().toLowerCase();
-    if (!q) return data;
-    return data.filter((r) => r.title.toLowerCase().includes(q));
-  }, [data, appliedTitleQuery]);
+  const exportTableCsv = () => {
+    if (!data?.length) return;
+    const rows = [
+      ['Views', 'Title', 'Type', 'Metadata'].join(','),
+      ...data.map((r) => {
+        const meta = (r.metadata || []).map((m) => m.display || `${m.label}(${m.key}): ${m.values[0]}`).join('; ');
+        return [r.displayCount, `"${(r.title || '').replace(/"/g, '""')}"`, r.contentKind || r.type, `"${meta.replace(/"/g, '""')}"`].join(',');
+      }),
+    ].join('\n');
+    downloadBlob(rows, `document-views-${formatShortDate(appliedRange.start).replace(/\//g, '-')}.csv`, 'text/csv;charset=utf-8');
+  };
 
   const breadcrumb = { prefix: 'Knowledge Hub', title: 'Document views' };
 
   const toolbarExtras = (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
-      <span style={TS.dateBadge} title="Date range">
+      <button type="button" style={TS.dateBadge} title="Date range" onClick={() => setCalendarOpen(true)}>
         <span style={TS.dateBadgeText}>
-          <span>From: 3/1/2026</span>
-          <span>To: 3/31/2026</span>
+          <span>From: {formatShortDate(appliedRange.start)}</span>
+          <span>To: {formatShortDate(appliedRange.end)}</span>
         </span>
-        <span style={TS.dateBadgeIcon}><IconCalendar /></span>
-      </span>
+        <span style={TS.dateBadgeIcon}>
+          <IconCalendar />
+        </span>
+      </button>
       <button
         type="button"
         style={{ ...TS.iconBtn, color: drawerOpen ? '#1d4ed8' : '#0f172a' }}
@@ -263,22 +240,20 @@ export default function DocumentViewsPage() {
     <AnalyticsShell
       active="document-views"
       breadcrumb={breadcrumb}
-      feedbackSubject="Feedback about document views"
       toolbarExtras={toolbarExtras}
     >
       <div style={PS.layout}>
         <main style={PS.main}>
           <header style={PS.resultHead}>
-            <span style={PS.headTagline}>
-              Data is based on the number of times users read a document.
-            </span>
-            <button type="button" style={PS.downloadBtn} title="Download as XLSX" aria-label="Download as XLSX">
+            <span style={PS.headTagline}>Data is based on the number of times users read a document.</span>
+            <button type="button" style={PS.downloadBtn} title="Export table as CSV" aria-label="Export table as CSV" onClick={exportTableCsv}>
               <IconDownload />
             </button>
           </header>
 
           <section style={PS.body}>
             <div style={PS.tableCard}>
+              <div style={PS.tableScroll}>
               <table style={PS.table}>
                 <colgroup>
                   <col style={{ width: '90px' }} />
@@ -289,43 +264,59 @@ export default function DocumentViewsPage() {
                 <thead>
                   <tr style={PS.tableHeadRow}>
                     <th style={PS.th}>
-                      <span style={PS.headerCell}>
-                        <span>Views</span>
-                        <IconSortDesc />
-                      </span>
+                      <button
+                        type="button"
+                        style={PS.sortBtn}
+                        onClick={() => {
+                          setSortDesc((d) => !d);
+                          setPage(1);
+                        }}
+                      >
+                        <span style={PS.headerCell}>
+                          Views
+                          {sortDesc ? <IconSortDesc /> : <IconSortAsc />}
+                        </span>
+                      </button>
                     </th>
-                    <th style={PS.th}><span style={PS.headerCell}>Title</span></th>
-                    <th style={PS.th}><span style={PS.headerCell}>Metadata</span></th>
+                    <th style={PS.th}>
+                      <span style={PS.headerCell}>Title</span>
+                    </th>
+                    <th style={PS.th}>
+                      <span style={PS.headerCell}>Metadata</span>
+                    </th>
                     <th style={PS.th} />
                   </tr>
                 </thead>
                 <tbody>
                   {loading ? (
                     <tr>
-                      <td colSpan={4} style={PS.emptyCell}>Loading...</td>
+                      <td colSpan={4} style={PS.emptyCell}>
+                        Loading…
+                      </td>
                     </tr>
-                  ) : filteredRows.length === 0 ? (
+                  ) : !data || data.length === 0 ? (
                     <tr>
-                      <td colSpan={4} style={PS.emptyCell}>No documents match the current filters.</td>
+                      <td colSpan={4} style={PS.emptyCell}>
+                        No documents match the current filters.
+                      </td>
                     </tr>
                   ) : (
-                    filteredRows.map((r, idx) => (
-                      <tr key={`${r.id || r.title}-${idx}`} style={PS.tableRow}>
+                    data.map((r, idx) => (
+                      <tr key={`${r.id}-${idx}`} style={PS.tableRow}>
                         <td style={PS.td}>{formatNum(r.displayCount)}</td>
                         <td style={PS.td}>
                           <span style={PS.titleCell}>
                             <span style={PS.titleIcon}>
-                              {r.type === TYPE_UNSTRUCTURED ? <IconUnstructured /> : <IconBook />}
+                              <TypeIcon contentKind={r.contentKind} />
                             </span>
                             <span style={PS.titleText}>{r.title}</span>
                           </span>
                         </td>
                         <td style={PS.td}>
                           <span style={PS.metaList}>
-                            {r.metadata && r.metadata.map((m) => (
-                              <span key={m.key} style={PS.metaChip}>
-                                <span style={PS.metaKey}>{m.key}:&nbsp;</span>
-                                <span style={PS.metaVal}>{m.values[0]}</span>
+                            {(r.metadata || []).map((m) => (
+                              <span key={`${m.key}-${m.values[0]}`} style={PS.metaChip}>
+                                <span style={PS.metaChipInner}>{m.display || `${m.label}(${m.key}): ${m.values[0]}`}</span>
                               </span>
                             ))}
                           </span>
@@ -335,10 +326,7 @@ export default function DocumentViewsPage() {
                             open={activeMenuRow === idx}
                             onToggle={() => setActiveMenuRow((v) => (v === idx ? null : idx))}
                             onClose={() => setActiveMenuRow(null)}
-                            onViewHeatmap={() => {
-                              setActiveMenuRow(null);
-                              setHeatmapDoc(r);
-                            }}
+                            readerHref={r.link}
                           />
                         </td>
                       </tr>
@@ -346,6 +334,7 @@ export default function DocumentViewsPage() {
                   )}
                 </tbody>
               </table>
+              </div>
 
               <div style={PS.pager}>
                 <span style={PS.totalLabel}>
@@ -355,10 +344,22 @@ export default function DocumentViewsPage() {
                   {totalRows > 0 ? `${(page - 1) * perPage + 1} – ${Math.min(page * perPage, totalRows)}` : '0'} of {formatNum(totalRows)}
                 </span>
                 <div style={PS.pagerBtns}>
-                  <PagerBtn disabled={page === 1} aria-label="First page" onClick={() => setPage(1)}><IconChevDoubleLeft /></PagerBtn>
-                  <PagerBtn disabled={page === 1} aria-label="Previous page" onClick={() => setPage(p => p - 1)}><IconChevLeft /></PagerBtn>
-                  <PagerBtn disabled={page * perPage >= totalRows} aria-label="Next page" onClick={() => setPage(p => p + 1)}><IconChevRight /></PagerBtn>
-                  <PagerBtn disabled={page * perPage >= totalRows} aria-label="Last page" onClick={() => setPage(Math.ceil(totalRows / perPage))}><IconChevDoubleRight /></PagerBtn>
+                  <PagerBtn disabled={page === 1} aria-label="First page" onClick={() => setPage(1)}>
+                    <IconChevDoubleLeft />
+                  </PagerBtn>
+                  <PagerBtn disabled={page === 1} aria-label="Previous page" onClick={() => setPage((p) => p - 1)}>
+                    <IconChevLeft />
+                  </PagerBtn>
+                  <PagerBtn disabled={page * perPage >= totalRows} aria-label="Next page" onClick={() => setPage((p) => p + 1)}>
+                    <IconChevRight />
+                  </PagerBtn>
+                  <PagerBtn
+                    disabled={page * perPage >= totalRows}
+                    aria-label="Last page"
+                    onClick={() => setPage(Math.max(1, Math.ceil(totalRows / perPage)))}
+                  >
+                    <IconChevDoubleRight />
+                  </PagerBtn>
                 </div>
               </div>
             </div>
@@ -373,82 +374,39 @@ export default function DocumentViewsPage() {
             </button>
           </header>
           <section style={DS.drawerBody}>
-            <div style={DS.selectAll}>
-              <Checkbox
-                label="All types"
-                bold
-                checked={allChecked}
-                indeterminate={allIndeterm}
-                onChange={(v) => { setOne('books', v); setOne('unstructured', v); setOne('articles', v); setOne('topics', v); setOne('attachments', v); }}
-              />
-            </div>
-
-            <fieldset style={{ border: 'none', padding: 0, margin: 0 }}>
-              <legend className="sr-only">Document types</legend>
-              <div style={DS.group}>
-                <Checkbox
-                  label="All documents"
-                  bold
-                  checked={isGroupChecked(allDoc)}
-                  indeterminate={isGroupIndeterm(allDoc)}
-                  onChange={(v) => setGroup(allDoc, v)}
-                />
-                <ul style={DS.list}>
-                  {DOC_GROUP.map((s) => (
-                    <li key={s.key} style={DS.listItem}>
-                      <Checkbox
-                        label={s.label}
-                        color={s.color}
-                        checked={pending[s.key]}
-                        onChange={(v) => setOne(s.key, v)}
-                      />
-                    </li>
-                  ))}
-                </ul>
-              </div>
-
-              <div style={DS.group}>
-                <Checkbox
-                  label="All other components"
-                  bold
-                  checked={isGroupChecked(allOther)}
-                  indeterminate={isGroupIndeterm(allOther)}
-                  onChange={(v) => setGroup(allOther, v)}
-                />
-                <ul style={DS.list}>
-                  {OTHER_GROUP.map((s) => (
-                    <li key={s.key} style={DS.listItem}>
-                      <Checkbox
-                        label={s.label}
-                        color={s.color}
-                        checked={pending[s.key]}
-                        onChange={(v) => setOne(s.key, v)}
-                      />
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </fieldset>
-
-            <div style={DS.sectionTitle}>Document title</div>
-            <FloatingInput label="Search by title" value={titleQuery} onChange={setTitleQuery} />
-
-            <fieldset style={DS.fieldset}>
-              <legend style={DS.legend}>Metadata</legend>
-              <p style={DS.emptyMessage}>Select a metadata value in the result tags to add a filter.</p>
-            </fieldset>
-
-            <div style={DS.sectionTitle}>User</div>
-            <FloatingInput label="User ID" value={userId} onChange={setUserId} />
+            <label htmlFor="doc-views-title-filter" style={DS.drawerFieldLabel}>
+              Document title
+            </label>
+            <input
+              id="doc-views-title-filter"
+              type="search"
+              value={titleQuery}
+              onChange={(e) => setTitleQuery(e.target.value)}
+              autoComplete="off"
+              placeholder="Search by title"
+              aria-label="Search by document title"
+              style={titleFilterFocused ? DS.titleInputFocus : DS.titleInput}
+              onFocus={() => setTitleFilterFocused(true)}
+              onBlur={() => setTitleFilterFocused(false)}
+            />
           </section>
-          <footer style={DS.drawerFooter}>
-            <button type="button" style={DS.applyBtn} onClick={handleApply}>Apply</button>
-          </footer>
         </aside>
-        
-        {heatmapDoc && (
-          <HeatmapDrawer doc={heatmapDoc} onClose={() => setHeatmapDoc(null)} />
+
+        {calendarOpen && (
+          <DateRangeModal
+            rangeStart={rangeStart}
+            rangeEnd={rangeEnd}
+            onChangeStart={setRangeStart}
+            onChangeEnd={setRangeEnd}
+            onApply={() => {
+              setAppliedRange({ start: rangeStart, end: rangeEnd });
+              setPage(1);
+              setCalendarOpen(false);
+            }}
+            onClose={() => setCalendarOpen(false)}
+          />
         )}
+
       </div>
     </AnalyticsShell>
   );
@@ -457,7 +415,16 @@ export default function DocumentViewsPage() {
 /* ----------------------------- Helpers ----------------------------- */
 
 function formatNum(n) {
-  return n.toLocaleString('en-US');
+  return Number(n).toLocaleString('en-US');
+}
+
+function downloadBlob(text, filename, mime) {
+  const blob = new Blob([text], { type: mime });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
 }
 
 function PagerBtn({ children, disabled, ...rest }) {
@@ -478,12 +445,16 @@ function PagerBtn({ children, disabled, ...rest }) {
   );
 }
 
-function RowActions({ open, onToggle, onClose, onViewHeatmap }) {
+function RowActions({ open, onToggle, onClose, readerHref }) {
   const ref = useRef(null);
   useEffect(() => {
     if (!open) return undefined;
-    const onClick = (e) => { if (!ref.current?.contains(e.target)) onClose(); };
-    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    const onClick = (e) => {
+      if (!ref.current?.contains(e.target)) onClose();
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') onClose();
+    };
     document.addEventListener('mousedown', onClick);
     document.addEventListener('keydown', onKey);
     return () => {
@@ -499,132 +470,98 @@ function RowActions({ open, onToggle, onClose, onViewHeatmap }) {
       </button>
       {open && (
         <div role="menu" style={PS.menu}>
-          <button type="button" style={PS.menuItem} role="menuitem" onClick={onClose}>Show document</button>
-          <button type="button" style={PS.menuItem} role="menuitem" onClick={onViewHeatmap}>View heatmap</button>
+          <button
+            type="button"
+            style={PS.menuItem}
+            role="menuitem"
+            onClick={() => {
+              onClose();
+              if (readerHref) window.open(readerHref, '_blank', 'noopener,noreferrer');
+            }}
+          >
+            Show document
+          </button>
         </div>
       )}
     </span>
   );
 }
 
-function FloatingInput({ label, value, onChange }) {
-  const [focused, setFocused] = useState(false);
-  const filled = value && String(value).length > 0;
-  const floating = focused || filled;
-  return (
-    <label style={{
-      ...IS.wrapper,
-      borderColor: focused ? '#1d4ed8' : '#cbd5e1',
-      boxShadow: focused ? '0 0 0 1px rgba(29, 78, 216, 0.2)' : 'none',
-    }}>
-      <span style={{
-        ...IS.label,
-        top: floating ? '6px' : '50%',
-        fontSize: floating ? '0.7rem' : '0.85rem',
-        transform: floating ? 'translateY(0)' : 'translateY(-50%)',
-        color: focused ? '#1d4ed8' : '#475569',
-      }}>{label}</span>
-      <input
-        type="text"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onFocus={() => setFocused(true)}
-        onBlur={() => setFocused(false)}
-        style={IS.input}
-      />
-    </label>
-  );
-}
-
-function HeatmapDrawer({ doc, onClose }) {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let active = true;
-    const fetchHeatmap = async () => {
-      setLoading(true);
-      try {
-        const token = localStorage.getItem('token');
-        const res = await fetch(`/api/analytics/v2/documents/${doc.id}/topics/views-heatmap`, {
-          method: 'POST',
-          headers: {
-             'Content-Type': 'application/json',
-             ...(token && { Authorization: `Bearer ${token}` })
-          },
-          body: JSON.stringify({
-             startDate: '2024-01-01',
-             endDate: '2026-12-31'
-          })
-        });
-        const json = await res.json();
-        if (active) {
-           setData(json.results || []);
-        }
-      } catch (e) {
-        console.error(e);
-      } finally {
-        if (active) setLoading(false);
-      }
-    };
-    fetchHeatmap();
-    return () => { active = false; };
-  }, [doc.id]);
-
-  const maxViews = data ? Math.max(...data.flatMap(d => {
-    const getAllCounts = (node) => [node.displayCount, ...(node.children ? node.children.flatMap(getAllCounts) : [])];
-    return getAllCounts(d);
-  }), 1) : 1;
-
-  const renderTree = (nodes, level = 0) => {
-    return nodes.map(n => (
-      <div key={n.id} style={{ marginBottom: '8px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', paddingLeft: `${level * 16}px` }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-             <div style={{ fontSize: '0.85rem', color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={n.title}>
-               {n.title}
-             </div>
-             <div style={{ width: '100%', background: '#e2e8f0', height: '6px', borderRadius: '3px', marginTop: '4px' }}>
-               <div style={{ width: `${(n.displayCount / maxViews) * 100}%`, background: '#1d4ed8', height: '100%', borderRadius: '3px' }} />
-             </div>
-          </div>
-          <div style={{ fontSize: '0.8rem', color: '#475569', fontWeight: 600, width: '40px', textAlign: 'right' }}>
-            {formatNum(n.displayCount)}
-          </div>
-        </div>
-        {n.children && n.children.length > 0 && (
-          <div style={{ marginTop: '8px' }}>
-            {renderTree(n.children, level + 1)}
-          </div>
-        )}
-      </div>
-    ));
+function DateRangeModal({ rangeStart, rangeEnd, onChangeStart, onChangeEnd, onApply, onClose }) {
+  const setPreset = (key) => {
+    const end = new Date();
+    end.setHours(23, 59, 59, 999);
+    const start = new Date(end);
+    if (key === 'week') start.setDate(start.getDate() - 7);
+    else if (key === 'month') start.setMonth(start.getMonth() - 1);
+    else if (key === 'quarter') start.setMonth(start.getMonth() - 3);
+    start.setHours(0, 0, 0, 0);
+    onChangeStart(start);
+    onChangeEnd(end);
   };
 
   return (
-    <>
-      <div style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.2)', zIndex: 40 }} onClick={onClose} />
-      <aside style={{ ...DS.drawer, position: 'fixed', right: 0, top: 0, bottom: 0, width: '400px', zIndex: 50, boxShadow: '-4px 0 24px rgba(0,0,0,0.1)' }}>
-        <header style={DS.drawerHead}>
-          <div style={{ display: 'flex', flexDirection: 'column' }}>
-            <span style={DS.drawerTitle}>Topic Heatmap</span>
-            <span style={{ fontSize: '0.75rem', color: '#475569', marginTop: '2px' }}>{doc.title}</span>
-          </div>
-          <button type="button" style={DS.drawerClose} aria-label="Close" onClick={onClose}>
+    <div style={DM.backdrop} onClick={onClose} role="presentation">
+      <div style={DM.panel} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Date range">
+        <div style={DM.head}>
+          <span style={DM.title}>Date range</span>
+          <button type="button" style={DM.close} aria-label="Close" onClick={onClose}>
             <IconClose />
           </button>
-        </header>
-        <section style={{ ...DS.drawerBody, padding: '20px 18px' }}>
-          {loading ? (
-             <div style={{ color: '#475569', fontSize: '0.85rem' }}>Loading heatmap...</div>
-          ) : data && data.length > 0 ? (
-             renderTree(data)
-          ) : (
-             <div style={DS.emptyMessage}>No topic data available for this document.</div>
-          )}
-        </section>
-      </aside>
-    </>
+        </div>
+        <div style={DM.presets}>
+          <button type="button" style={DM.presetBtn} onClick={() => setPreset('week')}>
+            Past week
+          </button>
+          <button type="button" style={DM.presetBtn} onClick={() => setPreset('month')}>
+            Past month
+          </button>
+          <button type="button" style={DM.presetBtn} onClick={() => setPreset('quarter')}>
+            Past 3 months
+          </button>
+        </div>
+        <div style={DM.custom}>
+          <label style={DM.lab}>
+            Start
+            <input
+              type="date"
+              value={rangeStart.toISOString().slice(0, 10)}
+              onChange={(e) => {
+                const d = new Date(e.target.value);
+                if (!Number.isNaN(d.getTime())) {
+                  d.setHours(0, 0, 0, 0);
+                  onChangeStart(d);
+                }
+              }}
+              style={DM.dateIn}
+            />
+          </label>
+          <label style={DM.lab}>
+            End
+            <input
+              type="date"
+              value={rangeEnd.toISOString().slice(0, 10)}
+              onChange={(e) => {
+                const d = new Date(e.target.value);
+                if (!Number.isNaN(d.getTime())) {
+                  d.setHours(23, 59, 59, 999);
+                  onChangeEnd(d);
+                }
+              }}
+              style={DM.dateIn}
+            />
+          </label>
+        </div>
+        <div style={DM.actions}>
+          <button type="button" style={DM.secondary} onClick={onClose}>
+            Cancel
+          </button>
+          <button type="button" style={DM.primary} onClick={onApply}>
+            Apply range
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -651,15 +588,25 @@ const TS = {
     border: '1px solid #cbd5e1',
     background: '#ffffff',
     color: '#0f172a',
+    cursor: 'pointer',
+    fontFamily: 'inherit',
   },
-  dateBadgeText: { display: 'inline-flex', flexDirection: 'column', lineHeight: 1.1, fontSize: '0.7rem', color: '#475569' },
+  dateBadgeText: { display: 'inline-flex', flexDirection: 'column', lineHeight: 1.1, fontSize: '0.7rem', color: '#475569', textAlign: 'left' },
   dateBadgeIcon: { display: 'inline-flex', color: '#475569' },
 };
 
 const PS = {
-  layout: { display: 'flex', minHeight: 'calc(100vh - 60px - 56px)', background: '#ffffff', overflow: 'hidden' },
-  main: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' },
+  layout: {
+    display: 'flex',
+    flex: 1,
+    minHeight: 0,
+    background: '#ffffff',
+    overflow: 'hidden',
+    alignItems: 'stretch',
+  },
+  main: { flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' },
   resultHead: {
+    flexShrink: 0,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -680,17 +627,52 @@ const PS = {
     cursor: 'pointer',
     borderRadius: '50%',
   },
-  body: { padding: '12px 22px 24px', display: 'flex', flexDirection: 'column', gap: '14px' },
-
+  body: {
+    flex: 1,
+    minHeight: 0,
+    overflow: 'hidden',
+    padding: '12px 22px 24px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '14px',
+  },
   tableCard: {
+    flex: 1,
+    minHeight: 0,
+    display: 'flex',
+    flexDirection: 'column',
     background: '#ffffff',
     border: '1px solid #e5e7eb',
     borderRadius: '12px',
     overflow: 'hidden',
   },
+  tableScroll: {
+    flex: 1,
+    minHeight: 0,
+    overflow: 'auto',
+    overflowX: 'auto',
+    WebkitOverflowScrolling: 'touch',
+    scrollbarGutter: 'stable',
+    scrollbarWidth: 'thin',
+  },
   table: { width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' },
   tableHeadRow: { background: '#f8fafc', borderBottom: '1px solid #e5e7eb' },
-  th: { padding: '12px 14px', textAlign: 'left' },
+  th: {
+    padding: '12px 14px',
+    textAlign: 'left',
+    position: 'sticky',
+    top: 0,
+    zIndex: 1,
+    background: '#f8fafc',
+    boxShadow: '0 1px 0 #e5e7eb',
+  },
+  sortBtn: {
+    border: 'none',
+    background: 'transparent',
+    padding: 0,
+    cursor: 'pointer',
+    font: 'inherit',
+  },
   headerCell: {
     display: 'inline-flex',
     alignItems: 'center',
@@ -705,20 +687,17 @@ const PS = {
   titleCell: { display: 'inline-flex', alignItems: 'center', gap: '8px' },
   titleIcon: { color: '#94a3b8', display: 'inline-flex' },
   titleText: { color: '#0f172a' },
-  metaList: { display: 'flex', flexWrap: 'wrap', gap: '4px' },
+  metaList: { display: 'flex', flexWrap: 'wrap', gap: '6px' },
   metaChip: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    padding: '3px 8px',
+    display: 'inline-block',
+    padding: '4px 8px',
     fontSize: '0.74rem',
     background: '#f1f5f9',
-    border: '1px solid #e2e8f0',
-    borderRadius: '4px',
+    borderRadius: '999px',
     color: '#0f172a',
     maxWidth: '100%',
   },
-  metaKey: { color: '#475569', fontWeight: 500 },
-  metaVal: { color: '#0f172a', fontWeight: 600 },
+  metaChipInner: { fontWeight: 500 },
 
   kebabBtn: {
     width: '30px',
@@ -736,7 +715,7 @@ const PS = {
     position: 'absolute',
     right: 0,
     top: '32px',
-    minWidth: '160px',
+    minWidth: '180px',
     background: '#ffffff',
     border: '1px solid #e2e8f0',
     borderRadius: '8px',
@@ -747,7 +726,7 @@ const PS = {
   menuItem: {
     display: 'block',
     width: '100%',
-    padding: '8px 12px',
+    padding: '10px 14px',
     background: 'transparent',
     border: 'none',
     cursor: 'pointer',
@@ -755,7 +734,6 @@ const PS = {
     fontSize: '0.82rem',
     textAlign: 'left',
   },
-
   pager: {
     display: 'flex',
     alignItems: 'center',
@@ -780,41 +758,12 @@ const PS = {
   },
 };
 
-const IS = {
-  wrapper: {
-    position: 'relative',
-    display: 'block',
-    width: '100%',
-    border: '1px solid #cbd5e1',
-    borderRadius: '6px',
-    background: '#ffffff',
-    transition: 'border-color 120ms ease, box-shadow 120ms ease',
-  },
-  label: {
-    position: 'absolute',
-    left: '12px',
-    pointerEvents: 'none',
-    background: '#ffffff',
-    padding: '0 4px',
-    transform: 'translateY(-50%)',
-    transition: 'top 120ms ease, font-size 120ms ease, color 120ms ease',
-  },
-  input: {
-    width: '100%',
-    padding: '14px 12px 6px',
-    border: 'none',
-    outline: 'none',
-    background: 'transparent',
-    fontSize: '0.85rem',
-    color: '#0f172a',
-    borderRadius: '6px',
-  },
-};
-
 const DS = {
   drawer: {
     width: '330px',
     flexShrink: 0,
+    alignSelf: 'stretch',
+    minHeight: 0,
     borderLeft: '1px solid #e5e7eb',
     background: '#ffffff',
     display: 'flex',
@@ -822,6 +771,7 @@ const DS = {
     transition: 'margin-right 200ms ease, visibility 200ms',
   },
   drawerHead: {
+    flexShrink: 0,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -841,45 +791,106 @@ const DS = {
     alignItems: 'center',
     justifyContent: 'center',
   },
-  drawerBody: { padding: '14px 18px 14px', overflowY: 'auto', flex: 1 },
-  selectAll: { paddingBottom: '12px', borderBottom: '1px solid #f1f5f9', marginBottom: '12px' },
-  group: { marginBottom: '14px' },
-  list: { listStyle: 'none', padding: '4px 0 0 22px', margin: 0, display: 'flex', flexDirection: 'column', gap: '6px' },
-  listItem: { padding: '4px 0' },
-  sectionTitle: { fontSize: '0.8rem', fontWeight: 600, color: '#0f172a' },
-  fieldset: {
-    border: 'none',
-    padding: 0,
-    margin: '6px 0 0 0',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '6px',
-  },
-  legend: { fontSize: '0.8rem', fontWeight: 600, color: '#0f172a', padding: 0 },
-  emptyMessage: {
-    margin: 0,
-    padding: '8px 10px',
-    background: '#f8fafc',
-    border: '1px dashed #cbd5e1',
-    borderRadius: '6px',
-    color: '#475569',
-    fontSize: '0.78rem',
-  },
-  drawerFooter: {
-    padding: '12px 18px',
-    borderTop: '1px solid #e5e7eb',
-    background: '#ffffff',
-  },
-  applyBtn: {
-    width: '100%',
-    padding: '10px 14px',
-    background: '#1d4ed8',
-    color: '#ffffff',
-    border: 'none',
-    borderRadius: '8px',
-    fontSize: '0.88rem',
+  drawerBody: { padding: '14px 18px 14px', overflowY: 'auto', flex: 1, minHeight: 0 },
+  drawerFieldLabel: {
+    display: 'block',
+    fontSize: '0.8rem',
     fontWeight: 600,
+    color: '#0f172a',
+    marginBottom: '8px',
+  },
+  titleInput: {
+    width: '100%',
+    boxSizing: 'border-box',
+    padding: '10px 12px',
+    border: '1px solid #cbd5e1',
+    borderRadius: '6px',
+    fontSize: '0.9rem',
+    color: '#0f172a',
+    background: '#ffffff',
     fontFamily: 'inherit',
+    outline: 'none',
+  },
+  titleInputFocus: {
+    width: '100%',
+    boxSizing: 'border-box',
+    padding: '10px 12px',
+    border: '1px solid #1d4ed8',
+    borderRadius: '6px',
+    fontSize: '0.9rem',
+    color: '#0f172a',
+    background: '#ffffff',
+    fontFamily: 'inherit',
+    outline: 'none',
+    boxShadow: '0 0 0 1px rgba(29, 78, 216, 0.2)',
+  },
+};
+
+const DM = {
+  backdrop: {
+    position: 'fixed',
+    inset: 0,
+    background: 'rgba(15, 23, 42, 0.35)',
+    zIndex: 80,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 16,
+  },
+  panel: {
+    background: '#fff',
+    borderRadius: 12,
+    boxShadow: '0 20px 50px rgba(15,23,42,0.2)',
+    maxWidth: 400,
+    width: '100%',
+    padding: 0,
+    overflow: 'hidden',
+  },
+  head: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '14px 16px',
+    borderBottom: '1px solid #e5e7eb',
+  },
+  title: { fontWeight: 600, fontSize: '0.95rem', color: '#0f172a' },
+  close: {
+    border: 'none',
+    background: 'transparent',
     cursor: 'pointer',
+    padding: 4,
+    color: '#64748b',
+  },
+  presets: { display: 'flex', flexWrap: 'wrap', gap: 8, padding: '12px 16px' },
+  presetBtn: {
+    padding: '6px 12px',
+    borderRadius: 8,
+    border: '1px solid #e2e8f0',
+    background: '#f8fafc',
+    cursor: 'pointer',
+    fontSize: '0.82rem',
+    fontFamily: 'inherit',
+  },
+  custom: { display: 'flex', flexDirection: 'column', gap: 12, padding: '0 16px 16px' },
+  lab: { display: 'flex', flexDirection: 'column', gap: 6, fontSize: '0.78rem', color: '#475569', fontWeight: 600 },
+  dateIn: { padding: '8px 10px', borderRadius: 8, border: '1px solid #cbd5e1', fontSize: '0.9rem' },
+  actions: { display: 'flex', justifyContent: 'flex-end', gap: 8, padding: 16, borderTop: '1px solid #f1f5f9' },
+  secondary: {
+    padding: '8px 14px',
+    borderRadius: 8,
+    border: '1px solid #cbd5e1',
+    background: '#fff',
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+  },
+  primary: {
+    padding: '8px 14px',
+    borderRadius: 8,
+    border: 'none',
+    background: '#1d4ed8',
+    color: '#fff',
+    fontWeight: 600,
+    cursor: 'pointer',
+    fontFamily: 'inherit',
   },
 };

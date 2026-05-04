@@ -15,7 +15,11 @@ const {
   requireDocumentAccess,
 } = require('../services/accessRules/accessRulesService');
 
+const { trackEvent } = require('../services/analytics/analyticsService');
+const { clientSessionIdFromReq } = require('../utils/clientSessionId');
+const { analyticsFromReq } = require('../utils/clientIp');
 const { putFile, getObjectStream, deleteFromAllBuckets } = require('../services/storage/s3Service');
+const { deleteUnstructuredByIds } = require('../services/unstructuredCleanup');
 
 const router = express.Router();
 
@@ -98,6 +102,15 @@ router.get('/:id/content', optionalAuth, async (req, res, next) => {
     // Bump view count, fire and forget.
     UnstructuredDocument.updateOne({ _id: d._id }, { $inc: { viewCount: 1 } }).catch(() => {});
 
+    trackEvent({
+      eventType: 'view',
+      userId: req.user?._id || null,
+      sessionId: clientSessionIdFromReq(req),
+      data: { unstructuredId: d._id },
+      userAgent: req.headers['user-agent'],
+      ...analyticsFromReq(req),
+    }).catch(() => {});
+
     if (d.contentHtml) {
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       return res.send(d.contentHtml);
@@ -115,6 +128,8 @@ router.get('/:id/content', optionalAuth, async (req, res, next) => {
       } catch (err) {
         const status = err?.$metadata?.httpStatusCode || err?.statusCode;
         if (status === 404 || err?.name === 'NotFound' || err?.name === 'NoSuchKey') {
+          // Drop the DB row so search and lists stop surfacing a broken file.
+          await deleteUnstructuredByIds([d._id]).catch(() => {});
           return res.status(404).json({ error: 'File missing in storage' });
         }
         throw err;

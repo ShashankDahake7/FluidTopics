@@ -1,4 +1,5 @@
 const AuditLog = require('../../models/AuditLog');
+const { clientIpFromReq } = require('../../utils/clientIp');
 
 // One-stop helper for writing audit-trail rows from user-management endpoints.
 // Designed to be fire-and-forget — failures are logged to console.error but
@@ -36,7 +37,7 @@ async function writeAudit(req, {
       targetUserIds:  ids,
       context:        context && typeof context === 'object' ? context : {},
       summary:        String(summary || ''),
-      ip:             req.ip || req.headers?.['x-forwarded-for'] || '',
+      ip:             clientIpFromReq(req) || '',
       userAgent:      (req.headers?.['user-agent'] || '').slice(0, 500),
     });
   } catch (e) {

@@ -5,6 +5,7 @@ const User = require('../models/User');
 const Session = require('../models/Session');
 const DefaultRolesConfig = require('../models/DefaultRolesConfig');
 const config = require('../config/env');
+const { clientIpFromReq } = require('../utils/clientIp');
 const { auth } = require('../middleware/auth');
 const emailService = require('../services/email/emailService');
 const vocab = require('../services/users/rolesVocabulary');
@@ -62,7 +63,7 @@ const issueSession = async (user, req, actorId = null) => {
     userId: user._id,
     refreshTokenHash: hash(refresh),
     userAgent: (req.headers['user-agent'] || '').slice(0, 250),
-    ip: req.ip || '',
+    ip: clientIpFromReq(req) || '',
     expiresAt: new Date(Date.now() + REFRESH_TTL_MS),
     actorId: actorId || null,
   });
@@ -491,7 +492,7 @@ async function darwinboxHelpPortalHandoff(req, res) {
     sp: q.sp ?? null,
     dataLength: rawData.length,
     dataPrefix: rawData.slice(0, 48),
-    ip: req.ip,
+    ip: clientIpFromReq(req),
   });
 
   try {

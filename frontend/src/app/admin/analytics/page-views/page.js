@@ -1,129 +1,127 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AnalyticsShell from '@/components/admin/AnalyticsShell';
+import api from '@/lib/api';
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Brush,
+  ResponsiveContainer,
+  ReferenceArea,
+} from 'recharts';
 
-/* ------------------------------ Time axis ------------------------------ */
+/* ------------------------------ Path → bucket (first match wins) ------------------------------ */
 
-const MONTHS = [
-  'September 2024', 'October 2024', 'November 2024', 'December 2024',
-  'January 2025',   'February 2025', 'March 2025',    'April 2025',
-  'May 2025',       'June 2025',     'July 2025',     'August 2025',
-  'September 2025', 'October 2025',  'November 2025', 'December 2025',
-  'January 2026',   'February 2026', 'March 2026',    'April 2026',
+function normalizePath(raw) {
+  if (raw == null || typeof raw !== 'string') return '(unknown)';
+  let x = raw.trim();
+  if (!x.startsWith('/')) x = `/${x}`;
+  if (x.length > 1 && x.endsWith('/')) x = x.slice(0, -1);
+  return x || '/';
+}
+
+/** Ordered rules — most specific prefixes first. */
+const PAGE_RULES = [
+  { key: 'admin', label: 'Administration', group: 'Admin', color: '#64748b', url: '/admin', match: (p) => p.startsWith('/admin') },
+  { key: 'dashboard-file', label: 'File viewer', group: 'Portal', color: '#33CC7F', url: '/dashboard/file', match: (p) => p.startsWith('/dashboard/file') },
+  { key: 'dashboard-docs', label: 'Document reader', group: 'Portal', color: '#1980B2', url: '/dashboard/docs', match: (p) => p.startsWith('/dashboard/docs') },
+  { key: 'dashboard-templates', label: 'Templates', group: 'Portal', color: '#B4643C', url: '/dashboard/templates', match: (p) => p.startsWith('/dashboard/templates') },
+  { key: 'dashboard-home', label: 'Dashboard', group: 'Portal', color: '#9D207B', url: '/dashboard', match: (p) => p === '/dashboard' },
+  { key: 'search', label: 'Search', group: 'Portal', color: '#BD0F49', url: '/search', match: (p) => p === '/search' },
+  { key: 'reader-pretty', label: 'Reader (pretty URL)', group: 'Reader', color: '#361FAD', url: '/r/…', match: (p) => p.startsWith('/r/') || p === '/r' },
+  { key: 'collections', label: 'Collections', group: 'Library', color: '#CFB017', url: '/mylibrary/collections', match: (p) => p.startsWith('/mylibrary/collections') },
+  { key: 'mylibrary', label: 'My Library', group: 'Library', color: '#45A191', url: '/mylibrary', match: (p) => p.startsWith('/mylibrary') },
+  { key: 'profile', label: 'Profile', group: 'Account', color: '#7A891A', url: '/profile', match: (p) => p.startsWith('/profile') },
+  { key: 'login', label: 'Login', group: 'Account', color: '#71718E', url: '/login', match: (p) => p.startsWith('/login') },
+  {
+    key: 'auth-password',
+    label: 'Password reset',
+    group: 'Account',
+    color: '#b8860b',
+    url: '/forgot-password',
+    match: (p) => p.startsWith('/forgot-password') || p.startsWith('/reset-password'),
+  },
+  { key: 'other', label: 'Other routes', group: 'Other', color: '#94a3b8', url: '…', match: () => true },
 ];
 
-const MONTH_LABELS = [
-  'September 2024', 'December 2024', 'March 2025', 'June 2025',
-  'September 2025', 'December 2025', 'March 2026',
-];
+function pageKeyForPath(path) {
+  const p = normalizePath(path);
+  for (const r of PAGE_RULES) {
+    if (r.key === 'other') break;
+    if (r.match(p)) return r.key;
+  }
+  return 'other';
+}
 
-const Y_TICKS_LINEAR = [0, 10000, 20000, 30000, 40000, 50000, 60000, 70000, 80000];
-const Y_TICKS_LOG = [1, 10, 100, 1000, 10000, 100000];
+const ALL_PAGE_KEYS = PAGE_RULES.map((r) => r.key);
+const COLOR_BY_KEY = Object.fromEntries(PAGE_RULES.map((r) => [r.key, r.color]));
+const LABEL_BY_KEY = Object.fromEntries(PAGE_RULES.map((r) => [r.key, r.label]));
+
+const PAGE_GROUPS = (() => {
+  const by = new Map();
+  for (const r of PAGE_RULES) {
+    if (!by.has(r.group)) by.set(r.group, []);
+    by.get(r.group).push(r);
+  }
+  return Array.from(by.entries()).map(([label, items]) => ({
+    key: label.toLowerCase().replace(/\s+/g, '-'),
+    label,
+    items: items.map((r) => ({
+      key: r.key,
+      label: r.label,
+      color: r.color,
+      url: r.url,
+    })),
+  }));
+})();
 
 const PERIOD_OPTIONS = [
-  { value: 'DAILY',   label: 'Daily' },
-  { value: 'WEEKLY',  label: 'Weekly' },
-  { value: 'MONTHLY', label: 'Monthly' },
+  { value: 'day', label: 'Daily' },
+  { value: 'week', label: 'Weekly' },
+  { value: 'month', label: 'Monthly' },
 ];
 
-/* ------------------------------ Page groups ------------------------------ */
+function rangeForGroup(groupBy) {
+  const end = new Date();
+  end.setHours(23, 59, 59, 999);
+  const start = new Date(end);
+  if (groupBy === 'day') {
+    start.setDate(start.getDate() - 90);
+  } else if (groupBy === 'week') {
+    start.setDate(start.getDate() - 52 * 7);
+  } else {
+    start.setMonth(start.getMonth() - 18);
+  }
+  start.setHours(0, 0, 0, 0);
+  return { start, end };
+}
 
-/* Colors mirror the dot palette from the Angular blueprint's filter drawer
- * (color-chart-1..N base values). Each page has a distinct color so it can be
- * picked out from the filter and matched to a series in the chart. */
-const PAGE_GROUPS = [
-  {
-    key: 'homepages',
-    label: 'Homepages',
-    items: [
-      { key: 'home-classic',   label: 'Classic Homepage', color: '#9D207B' },
-      { key: 'home-default',   label: 'Default homepage', color: '#CFB017' },
-      { key: 'home-default-2', label: 'Default homepage 2', suffix: ' - Italian (Italy)', color: '#361FAD' },
-      { key: 'homepage-en',    label: 'Homepage', suffix: ' - English (United States)', color: '#45A191' },
-    ],
-  },
-  {
-    key: 'custom-pages',
-    label: 'Custom pages',
-    items: [
-      { key: 'p-askdarwin',    label: 'Ask Darwin',          url: '/p/askdarwin',          color: '#BD0F49' },
-      { key: 'p-comingsoon',   label: 'Coming Soon',         url: '/p/comingsoon',         color: '#7A891A' },
-      { key: 'p-countryguide', label: 'countryguide',        url: '/p/countryguide',       color: '#1980B2' },
-      { key: 'p-faqs',         label: 'FAQs',                url: '/p/faqs',               color: '#B4643C' },
-      { key: 'p-prem23',       label: 'HomepagePrem23april', url: '/p/HomepagePrem23april', color: '#33CC7F' },
-      { key: 'p-legalchanges', label: 'Legal Changes',       url: '/p/legalchanges',       color: '#71718E' },
-      { key: 'p-releasenotes', label: 'Release Notes',       url: '/p/ReleaseNotes',       color: '#9D207B' },
-      { key: 'p-testhome',     label: 'Test Home',           url: '/p/testhome',           color: '#CFB017' },
-      { key: 'p-testbga',      label: 'TestBGA',             url: '/p/testbga',            color: '#361FAD' },
-      { key: 'p-upcoming',     label: "What's Upcoming",     url: '/p/upcoming',           color: '#45A191' },
-    ],
-  },
-  {
-    key: 'search-pages',
-    label: 'Search pages',
-    items: [
-      { key: 'search-classic', label: 'Classic Search page', color: '#BD0F49' },
-      { key: 'search-default', label: 'Default search',      color: '#7A891A' },
-    ],
-  },
-  {
-    key: 'reader-pages',
-    label: 'Reader pages',
-    items: [
-      { key: 'reader-classic', label: 'Classic Reader page', color: '#1980B2' },
-      { key: 'reader-default', label: 'Default reader',      color: '#B4643C' },
-    ],
-  },
-  {
-    key: 'viewer-pages',
-    label: 'Viewer pages',
-    items: [
-      { key: 'viewer-page', label: 'Viewer page', color: '#33CC7F' },
-    ],
-  },
-];
+function formatAxisLabel(iso, groupBy) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  if (groupBy === 'month') {
+    return d.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' });
+  }
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
 
-const ALL_PAGES = PAGE_GROUPS.flatMap((g) => g.items);
-const PAGE_BY_KEY = Object.fromEntries(ALL_PAGES.map((p) => [p.key, p]));
-const ALL_PAGE_KEYS = ALL_PAGES.map((p) => p.key);
+function periodIsOngoing(p) {
+  const now = Date.now();
+  const s = new Date(p.periodStartDate).getTime();
+  const e = new Date(p.periodEndDate).getTime();
+  return now >= s && now < e;
+}
 
-/* Mock value series for each page (length === MONTHS.length). The non-trivial
- * series mirror the visible curves and tooltip values shown in the Angular
- * blueprint (e.g. "Default reader" peaks at ~74k, "Homepage" sits ~14k, etc.).
- * Pages with no recorded views are kept at zero — they still appear in the
- * legend / filter so the user can toggle them on. */
-const SERIES_VALUES = {
-  'reader-default':  [49531, 50983, 57071, 65514, 74481, 66051, 68250, 66527, 68429, 58272, 74816, 51860, 51650, 49418, 49914, 44366, 44598, 46273, 52128, 36547],
-  'homepage-en':     [14652, 14215, 15083, 15075, 18182, 16898, 15185, 16685, 15716, 13952, 17452, 14933, 15483, 14600, 14503, 12964, 13272, 13995, 14884, 11255],
-  'p-releasenotes':  [1852, 1384, 2168, 2322, 1711, 2046, 1905, 1753, 1809, 1719, 2071, 1963, 1542, 1408, 1633, 1784, 1352, 1411, 1774, 1013],
-  'p-upcoming':      [397, 1400, 1287, 445, 1589, 1193, 523, 1835, 878, 604, 1331, 1056, 539, 1597, 1024, 405, 1287, 1762, 1031, 559],
-  'viewer-page':     [720, 818, 882, 1547, 1773, 1414, 1675, 1545, 1290, 1041, 1382, 1218, 996, 1158, 1239, 1144, 1156, 1340, 1454, 1010],
-  'p-askdarwin':     [16287, 0, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-  'reader-classic':  [4, 0, 0, 0, 0, 6, 6, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0],
-};
-
-/* Build the canonical SERIES list in the order pages appear in the filter. */
-const SERIES = ALL_PAGES.map((p) => ({
-  key: p.key,
-  label: p.label,
-  color: p.color,
-  values: SERIES_VALUES[p.key] || new Array(MONTHS.length).fill(0),
-}));
-
-/* ------------------------------ Filter selects ------------------------------ */
-
-const LANGUAGE_OPTIONS = [
-  { value: 'all',   label: 'All' },
-  { value: 'en-US', label: 'English (United States)' },
-  { value: 'it-IT', label: 'Italian (Italy)' },
-];
-
-const AUTH_OPTIONS = [
-  { value: 'all',             label: 'All' },
-  { value: 'authenticated',   label: 'Authenticated' },
-  { value: 'unauthenticated', label: 'Unauthenticated' },
-];
+function ongoingBandExtents(chartData) {
+  const ongoing = chartData.filter((d) => d.ongoing);
+  if (!ongoing.length) return null;
+  return { x1: ongoing[0].name, x2: ongoing[ongoing.length - 1].name };
+}
 
 /* ------------------------------ Icons ------------------------------ */
 
@@ -187,21 +185,186 @@ const IconChevron = () => (
   </svg>
 );
 
+function Checkbox({ checked, indeterminate, onChange }) {
+  const filled = checked || indeterminate;
+  return (
+    <span
+      role="checkbox"
+      aria-checked={indeterminate ? 'mixed' : checked}
+      tabIndex={0}
+      onClick={onChange}
+      onKeyDown={(e) => {
+        if (e.key === ' ' || e.key === 'Enter') {
+          e.preventDefault();
+          onChange();
+        }
+      }}
+      style={{
+        ...CK.box,
+        background: filled ? '#1d4ed8' : '#ffffff',
+        borderColor: filled ? '#1d4ed8' : '#94a3b8',
+      }}
+    >
+      {indeterminate ? <span style={CK.dash} /> : checked ? <IconCheck /> : null}
+    </span>
+  );
+}
+
+function downloadPageViewsCsv(chartData, keys) {
+  if (!chartData.length || !keys.length) return;
+  const header = ['Period', ...keys.map((k) => LABEL_BY_KEY[k] || k)];
+  const lines = [header.join(',')];
+  for (const row of chartData) {
+    const cells = [JSON.stringify(row.name)];
+    for (const k of keys) {
+      const v = row[k];
+      cells.push(v === undefined || v === null ? '' : String(v));
+    }
+    lines.push(cells.join(','));
+  }
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'page-views.csv';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+const LANGUAGE_OPTIONS = [
+  { value: 'all', label: 'All' },
+  { value: 'en-US', label: 'English (United States)' },
+  { value: 'it-IT', label: 'Italian (Italy)' },
+];
+
+const AUTH_OPTIONS = [
+  { value: 'all', label: 'All' },
+  { value: 'authenticated', label: 'Authenticated' },
+  { value: 'unauthenticated', label: 'Unauthenticated' },
+];
+
 /* ------------------------------ Page ------------------------------ */
 
 export default function PageViewsPage() {
-  const [period, setPeriod] = useState('MONTHLY');
+  const [groupBy, setGroupBy] = useState('month');
+  const [raw, setRaw] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState(null);
+
   const [stacked, setStacked] = useState(false);
   const [logScale, setLogScale] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(true);
 
-  const [language, setLanguage] = useState('en-US');
+  const [language, setLanguage] = useState('all');
   const [authStatus, setAuthStatus] = useState('all');
 
   const [selectedPages, setSelectedPages] = useState(() => new Set(ALL_PAGE_KEYS));
 
+  const { startDateIso, endDateIso } = useMemo(() => {
+    const { start, end } = rangeForGroup(groupBy);
+    return { startDateIso: start.toISOString(), endDateIso: end.toISOString() };
+  }, [groupBy]);
+
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    setErrorMsg(null);
+    try {
+      const json = await api.post('/analytics/v2/traffic/page-views', {
+        startDate: startDateIso,
+        endDate: endDateIso,
+        groupByPeriod: groupBy,
+        authStatus,
+        interfaceLanguage: language,
+      });
+      if (json?.periods && json?.pathCounts) {
+        setRaw(json);
+      } else if (json?.error) {
+        setErrorMsg(json.error);
+        setRaw(null);
+      } else {
+        setErrorMsg('Unexpected response from server');
+        setRaw(null);
+      }
+    } catch (e) {
+      console.error(e);
+      setErrorMsg(e.message);
+      setRaw(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [startDateIso, endDateIso, groupBy, authStatus, language]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- load chart when query inputs change
+    void fetchData();
+  }, [fetchData]);
+
+  const seriesByKey = useMemo(() => {
+    const pc = raw?.pathCounts || {};
+    const n = raw?.periods?.length || 0;
+    const out = {};
+    for (const k of ALL_PAGE_KEYS) out[k] = new Array(n).fill(0);
+    for (const [path, counts] of Object.entries(pc)) {
+      const key = pageKeyForPath(path);
+      for (let i = 0; i < n; i++) {
+        out[key][i] += counts[i] || 0;
+      }
+    }
+    return out;
+  }, [raw]);
+
+  const chartData = useMemo(() => {
+    if (!raw?.periods?.length) return [];
+    return raw.periods.map((per, idx) => {
+      const row = {
+        name: formatAxisLabel(per.periodStartDate, groupBy),
+        ongoing: periodIsOngoing(per),
+      };
+      for (const k of ALL_PAGE_KEYS) {
+        const v = seriesByKey[k][idx] ?? 0;
+        row[k] = v;
+        row[`${k}__lg`] = v > 0 ? Math.log10(v) : null;
+      }
+      return row;
+    });
+  }, [raw, seriesByKey, groupBy]);
+
+  const stackedData = useMemo(() => {
+    if (!stacked) return chartData;
+    const keys = ALL_PAGE_KEYS.filter((k) => selectedPages.has(k));
+    return chartData.map((row) => {
+      const next = { ...row };
+      let run = 0;
+      for (const k of keys) {
+        run += row[k] || 0;
+        next[`${k}__stack`] = run;
+        next[`${k}__stack__lg`] = run > 0 ? Math.log10(run) : null;
+      }
+      return next;
+    });
+  }, [chartData, stacked, selectedPages]);
+
+  const displayData = stacked ? stackedData : chartData;
+
+  const visibleKeys = useMemo(
+    () => ALL_PAGE_KEYS.filter((k) => selectedPages.has(k)),
+    [selectedPages],
+  );
+
+  const noneSelected = visibleKeys.length === 0;
+
+  const ongoingBand = useMemo(() => ongoingBandExtents(displayData), [displayData]);
+
+  const tooltipFormatter = (value, name) => {
+    const label = LABEL_BY_KEY[name] || name;
+    if (logScale) {
+      const real = value != null && value !== '' ? Math.round(10 ** Number(value)) : 0;
+      return [real.toLocaleString('en-US'), label];
+    }
+    return [typeof value === 'number' ? value.toLocaleString('en-US') : value, label];
+  };
+
   const allPagesOn = selectedPages.size === ALL_PAGE_KEYS.length;
-  const nonePages  = selectedPages.size === 0;
+  const nonePages = selectedPages.size === 0;
 
   const toggleAllPages = () => {
     setSelectedPages(allPagesOn ? new Set() : new Set(ALL_PAGE_KEYS));
@@ -227,16 +390,13 @@ export default function PageViewsPage() {
     });
   };
 
-  const visibleSeries = useMemo(
-    () => SERIES.filter((s) => selectedPages.has(s.key)),
-    [selectedPages],
-  );
+  const chartMargin = { top: 12, right: 16, left: 4, bottom: 8 };
+  const chartMarginBottom = { ...chartMargin, bottom: 32 };
 
   return (
     <AnalyticsShell
       active="page-views"
       breadcrumb={{ prefix: 'Traffic', title: 'Page views' }}
-      feedbackSubject="Feedback about page views"
       toolbarExtras={
         <button
           type="button"
@@ -258,19 +418,19 @@ export default function PageViewsPage() {
         <main style={{ ...PS.main, marginRight: drawerOpen ? '330px' : 0 }}>
           <header style={PS.resultHead}>
             <span style={PS.headTagline}>
-              Data is based on the number of times an end-user views a page.
+              Data is based on the number of times an end-user views a page (<code style={PS.code}>page.display</code>).
             </span>
             <div style={PS.headControls}>
               <div role="radiogroup" aria-label="Group by period" style={PS.switch}>
                 {PERIOD_OPTIONS.map((opt) => {
-                  const active = period === opt.value;
+                  const active = groupBy === opt.value;
                   return (
                     <button
                       key={opt.value}
                       type="button"
                       role="radio"
                       aria-checked={active}
-                      onClick={() => setPeriod(opt.value)}
+                      onClick={() => setGroupBy(opt.value)}
                       style={{
                         ...PS.switchOption,
                         background: active ? '#1d4ed8' : 'transparent',
@@ -309,8 +469,10 @@ export default function PageViewsPage() {
               <button
                 type="button"
                 style={{ ...PS.iconBtn, color: '#1d4ed8' }}
-                title="Download as XLSX"
-                aria-label="Download as XLSX"
+                title="Download as CSV"
+                aria-label="Download as CSV"
+                onClick={() => downloadPageViewsCsv(chartData, visibleKeys)}
+                disabled={noneSelected || !chartData.length}
               >
                 <IconDownload />
               </button>
@@ -319,13 +481,111 @@ export default function PageViewsPage() {
 
           <section style={PS.body}>
             <div style={PS.chartCard}>
-              <PageViewsChart
-                series={visibleSeries}
-                stacked={stacked}
-                logScale={logScale}
-                empty={nonePages}
-              />
+              {loading ? (
+                <div style={PS.loading}>Loading page views…</div>
+              ) : errorMsg ? (
+                <div style={PS.errorBox}>{errorMsg}</div>
+              ) : noneSelected ? (
+                <div style={PS.loading}>No page categories selected.</div>
+              ) : displayData.length === 0 ? (
+                <div style={PS.loading}>No data in this range. Navigate the portal to record page views.</div>
+              ) : (
+                <div style={{ width: '100%', height: 420 }}>
+                  <ResponsiveContainer
+                    key={`${groupBy}-${raw?.startDate || ''}-${raw?.endDate || ''}`}
+                    width="100%"
+                    height="100%"
+                  >
+                    <LineChart data={displayData} margin={chartMarginBottom}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+                      {ongoingBand && (
+                        <ReferenceArea
+                          x1={ongoingBand.x1}
+                          x2={ongoingBand.x2}
+                          fill="#93c5fd"
+                          fillOpacity={0.22}
+                          strokeOpacity={0}
+                          ifOverflow="visible"
+                          label={{
+                            value: 'Ongoing period',
+                            position: 'insideTop',
+                            fill: '#64748b',
+                            fontSize: 11,
+                          }}
+                        />
+                      )}
+                      <XAxis
+                        dataKey="name"
+                        tick={{ fontSize: 11, fill: '#6b7280' }}
+                        tickLine={false}
+                        axisLine={{ stroke: '#6e7079' }}
+                        minTickGap={24}
+                        label={{
+                          value: 'DATE',
+                          position: 'insideBottomRight',
+                          offset: -4,
+                          fill: '#6E7079',
+                          fontSize: 11,
+                        }}
+                      />
+                      <YAxis
+                        tick={{ fontSize: 11, fill: '#6b7280' }}
+                        tickLine={false}
+                        axisLine={false}
+                        width={56}
+                        label={{
+                          value: 'PAGE VIEWS',
+                          angle: -90,
+                          position: 'insideLeft',
+                          fill: '#6E7079',
+                          fontSize: 11,
+                          offset: 10,
+                        }}
+                      />
+                      <Tooltip formatter={tooltipFormatter} labelFormatter={(l) => l} />
+                      {visibleKeys.map((k) => {
+                        const color = COLOR_BY_KEY[k] || '#64748b';
+                        let dataKey = k;
+                        if (stacked && logScale) dataKey = `${k}__stack__lg`;
+                        else if (stacked) dataKey = `${k}__stack`;
+                        else if (logScale) dataKey = `${k}__lg`;
+                        return (
+                          <Line
+                            key={k}
+                            type="monotone"
+                            dataKey={dataKey}
+                            name={k}
+                            stroke={color}
+                            strokeWidth={2}
+                            dot={{ r: 2.5, fill: '#fff', strokeWidth: 1 }}
+                            isAnimationActive={false}
+                            connectNulls
+                          />
+                        );
+                      })}
+                      <Brush
+                        dataKey="name"
+                        height={28}
+                        stroke="#cbd5e1"
+                        fill="#f8fafc"
+                        travellerWidth={8}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
             </div>
+
+            {!loading && !errorMsg && visibleKeys.length > 0 && (
+              <div style={PS.legend}>
+                {visibleKeys.map((k) => (
+                  <span key={k} style={PS.legendItem}>
+                    <span style={{ ...PS.legendDot, background: COLOR_BY_KEY[k] }} />
+                    <span>{LABEL_BY_KEY[k]}</span>
+                  </span>
+                ))}
+              </div>
+            )}
           </section>
         </main>
 
@@ -345,19 +605,12 @@ export default function PageViewsPage() {
             </header>
 
             <div style={PS.drawerBody}>
-              <FieldSelect
-                label="Interface language"
-                value={language}
-                onChange={setLanguage}
-                options={LANGUAGE_OPTIONS}
-              />
-
-              <FieldSelect
-                label="Authentication status"
-                value={authStatus}
-                onChange={setAuthStatus}
-                options={AUTH_OPTIONS}
-              />
+              <FieldSelect label="Interface language" value={language} onChange={setLanguage} options={LANGUAGE_OPTIONS} />
+              <FieldSelect label="Authentication status" value={authStatus} onChange={setAuthStatus} options={AUTH_OPTIONS} />
+              <p style={PS.filterHint}>
+                Interface language filters rows only when <code style={PS.code}>page.display</code> events include matching{' '}
+                <code style={PS.code}>data.filters</code> (optional future enrichment).
+              </p>
 
               <div style={PS.selectAllRow}>
                 <label style={{ ...PS.checkRow, fontWeight: 600 }}>
@@ -391,15 +644,9 @@ export default function PageViewsPage() {
                       {group.items.map((it) => (
                         <li key={it.key}>
                           <label style={PS.checkRow}>
-                            <Checkbox
-                              checked={selectedPages.has(it.key)}
-                              onChange={() => togglePage(it.key)}
-                            />
+                            <Checkbox checked={selectedPages.has(it.key)} onChange={() => togglePage(it.key)} />
                             <span style={{ ...PS.colorDot, background: it.color }} aria-hidden="true" />
-                            <span>
-                              <span>{it.label}</span>
-                              {it.suffix && <span style={PS.targetSuffix}>{it.suffix}</span>}
-                            </span>
+                            <span>{it.label}</span>
                           </label>
                           {it.url && <div style={PS.targetUrl}>{it.url}</div>}
                         </li>
@@ -409,18 +656,12 @@ export default function PageViewsPage() {
                 );
               })}
             </div>
-
-            <footer style={PS.drawerFoot}>
-              <button type="button" style={PS.applyBtn}>Apply</button>
-            </footer>
           </aside>
         )}
       </div>
     </AnalyticsShell>
   );
 }
-
-/* ------------------------------ FieldSelect ------------------------------ */
 
 function FieldSelect({ label, value, onChange, options }) {
   const [open, setOpen] = useState(false);
@@ -447,7 +688,9 @@ function FieldSelect({ label, value, onChange, options }) {
         aria-expanded={open}
       >
         <span>{current.label}</span>
-        <span style={FS.caret}><IconChevron /></span>
+        <span style={FS.caret}>
+          <IconChevron />
+        </span>
       </button>
       {open && (
         <ul style={FS.menu} role="listbox">
@@ -459,7 +702,10 @@ function FieldSelect({ label, value, onChange, options }) {
                   type="button"
                   role="option"
                   aria-selected={selected}
-                  onClick={() => { onChange(o.value); setOpen(false); }}
+                  onClick={() => {
+                    onChange(o.value);
+                    setOpen(false);
+                  }}
                   style={{
                     ...FS.option,
                     background: selected ? '#eff6ff' : 'transparent',
@@ -478,217 +724,6 @@ function FieldSelect({ label, value, onChange, options }) {
   );
 }
 
-/* ------------------------------ Checkbox ------------------------------ */
-
-function Checkbox({ checked, indeterminate, onChange }) {
-  const filled = checked || indeterminate;
-  return (
-    <span
-      role="checkbox"
-      aria-checked={indeterminate ? 'mixed' : checked}
-      tabIndex={0}
-      onClick={onChange}
-      onKeyDown={(e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); onChange(); } }}
-      style={{
-        ...CK.box,
-        background: filled ? '#1d4ed8' : '#ffffff',
-        borderColor: filled ? '#1d4ed8' : '#94a3b8',
-      }}
-    >
-      {indeterminate ? <span style={CK.dash} /> : checked ? <IconCheck /> : null}
-    </span>
-  );
-}
-
-/* ------------------------------ Chart ------------------------------ */
-
-function PageViewsChart({ series, stacked, logScale, empty }) {
-  const width = 1200;
-  const height = 380;
-  const padL = 80;
-  const padR = 28;
-  const padT = 38;
-  const padB = 70; /* extra room for the data-zoom strip */
-  const innerW = width - padL - padR;
-  const innerH = height - padT - padB;
-
-  const yTicks = logScale ? Y_TICKS_LOG : Y_TICKS_LINEAR;
-  const transform = (v) => (logScale ? Math.log10(Math.max(v, 1)) : v);
-
-  const yMin = 0;
-  const yMax = logScale
-    ? Math.log10(yTicks[yTicks.length - 1])
-    : yTicks[yTicks.length - 1];
-
-  const xStep = innerW / (MONTHS.length - 1);
-  const xPos = (i) => padL + i * xStep;
-  const yPos = (v) => {
-    const t = transform(v);
-    if (yMax === yMin) return padT + innerH;
-    const norm = (t - yMin) / (yMax - yMin);
-    return padT + innerH - Math.max(0, Math.min(1, norm)) * innerH;
-  };
-
-  /* Stacked = running cumulative across the selected series, in render order. */
-  const renderedSeries = useMemo(() => {
-    if (!stacked) return series;
-    const running = MONTHS.map(() => 0);
-    return series.map(({ key, label, color, values }) => {
-      const stackedVals = values.map((v, i) => {
-        running[i] += v;
-        return running[i];
-      });
-      return { key, label, color, values: stackedVals };
-    });
-  }, [series, stacked]);
-
-  const labelTickIdx = useMemo(
-    () => MONTH_LABELS.map((label) => MONTHS.indexOf(label)).filter((i) => i >= 0),
-    [],
-  );
-
-  const ongoingX = xPos(MONTHS.length - 1);
-  const lastTickX = xPos(MONTHS.length - 2);
-
-  const formatY = (v) => (v >= 1000 ? v.toLocaleString('en-US') : String(v));
-
-  /* Stylised zoom strip below the X axis. Mirrors the silhouette of the
-   * dominant series so it reads as a miniature overview. */
-  const stripTop = padT + innerH + 28;
-  const stripH = 22;
-  const dominantSeries = SERIES_VALUES['reader-default'];
-  const stripMax = Math.max(...dominantSeries);
-  const stripPath = useMemo(() => {
-    const points = dominantSeries.map((v, i) => {
-      const x = padL + (i / (MONTHS.length - 1)) * innerW;
-      const y = stripTop + stripH - (v / stripMax) * (stripH - 4);
-      return `${x},${y}`;
-    });
-    return [
-      `M ${padL},${stripTop + stripH}`,
-      `L ${points.join(' L ')}`,
-      `L ${padL + innerW},${stripTop + stripH} Z`,
-    ].join(' ');
-  }, [innerW, stripMax, dominantSeries, stripTop]);
-
-  return (
-    <div style={CS.wrap}>
-      <div style={CS.svgWrap}>
-        <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" style={{ width: '100%', height }}>
-          <text x={padL} y={padT - 18} fontSize="11" fill="#6E7079" textAnchor="middle" fontFamily="Inter, sans-serif" fontWeight="600">
-            PAGE VIEWS
-          </text>
-
-          {yTicks.map((t) => (
-            <g key={t}>
-              <line x1={padL} y1={yPos(t)} x2={padL + innerW} y2={yPos(t)} stroke="#e0e6f1" />
-              <text x={padL - 8} y={yPos(t) + 3} fontSize="11" fill="#6e7079" textAnchor="end" fontFamily="Inter, sans-serif">
-                {formatY(t)}
-              </text>
-            </g>
-          ))}
-
-          <line x1={padL} y1={padT + innerH} x2={padL + innerW} y2={padT + innerH} stroke="#6e7079" />
-          <text x={padL + innerW + 6} y={padT + innerH + 3} fontSize="11" fill="#6E7079" fontFamily="Inter, sans-serif">
-            DATE
-          </text>
-
-          {labelTickIdx.map((idx) => (
-            <g key={idx}>
-              <line x1={xPos(idx)} y1={padT + innerH} x2={xPos(idx)} y2={padT + innerH + 5} stroke="#6e7079" />
-              <text x={xPos(idx)} y={padT + innerH + 18} fontSize="11" fill="#6e7079" textAnchor="middle" fontFamily="Inter, sans-serif">
-                {MONTHS[idx]}
-              </text>
-            </g>
-          ))}
-
-          {/* Ongoing-period band */}
-          <rect
-            x={lastTickX}
-            y={padT - 10}
-            width={ongoingX - lastTickX}
-            height={innerH + 10}
-            fill="rgba(33,150,243,0.06)"
-          />
-          <text x={(lastTickX + ongoingX) / 2} y={padT - 14} fontSize="11" fill="#475569" textAnchor="middle" fontFamily="Inter, sans-serif">
-            Ongoing period
-          </text>
-
-          {!empty && renderedSeries.map(({ key, label, color, values }) => {
-            const points = values.map((v, i) => `${xPos(i)},${yPos(v)}`).join(' ');
-            const isFlatZero = values.every((v) => v === 0);
-            return (
-              <g key={key} opacity={isFlatZero ? 0.45 : 1}>
-                <polyline points={points} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="bevel" />
-                {values.map((v, i) => (
-                  <circle
-                    key={i}
-                    cx={xPos(i)}
-                    cy={yPos(v)}
-                    r="3"
-                    fill="#ffffff"
-                    stroke={color}
-                    strokeWidth="1"
-                    opacity={i === values.length - 1 ? 0.55 : 1}
-                  >
-                    <title>{`${label} — ${MONTHS[i]}: ${v.toLocaleString('en-US')}`}</title>
-                  </circle>
-                ))}
-              </g>
-            );
-          })}
-
-          {empty && (
-            <text x={padL + innerW / 2} y={padT + innerH / 2} fontSize="13" fill="#94a3b8" textAnchor="middle" fontFamily="Inter, sans-serif">
-              No pages selected
-            </text>
-          )}
-
-          {/* Data zoom strip (visual only) */}
-          <rect
-            x={padL}
-            y={stripTop}
-            width={innerW}
-            height={stripH}
-            fill="#f5f8ff"
-            stroke="#d2dbee"
-            rx="4"
-          />
-          <path d={stripPath} fill="rgba(135,175,255,0.45)" stroke="#8fb0f7" strokeWidth="0.6" />
-          <rect x={padL} y={stripTop} width={innerW} height={stripH} fill="rgba(135,175,255,0.18)" rx="4" />
-          {/* Two small grip handles to suggest a brushable range */}
-          <g transform={`translate(${padL + 4}, ${stripTop + stripH / 2})`}>
-            <circle r="6" fill="#ffffff" stroke="#acb8d1" strokeWidth="0.8" />
-            <line x1="-2" y1="-2" x2="-2" y2="2" stroke="#acb8d1" strokeWidth="0.8" strokeLinecap="round" />
-            <line x1="0"  y1="-2" x2="0"  y2="2" stroke="#acb8d1" strokeWidth="0.8" strokeLinecap="round" />
-            <line x1="2"  y1="-2" x2="2"  y2="2" stroke="#acb8d1" strokeWidth="0.8" strokeLinecap="round" />
-          </g>
-          <g transform={`translate(${padL + innerW - 4}, ${stripTop + stripH / 2})`}>
-            <circle r="6" fill="#ffffff" stroke="#acb8d1" strokeWidth="0.8" />
-            <line x1="-2" y1="-2" x2="-2" y2="2" stroke="#acb8d1" strokeWidth="0.8" strokeLinecap="round" />
-            <line x1="0"  y1="-2" x2="0"  y2="2" stroke="#acb8d1" strokeWidth="0.8" strokeLinecap="round" />
-            <line x1="2"  y1="-2" x2="2"  y2="2" stroke="#acb8d1" strokeWidth="0.8" strokeLinecap="round" />
-          </g>
-        </svg>
-      </div>
-
-      <div style={CS.legend}>
-        {series.map(({ key, label, color, values }) => {
-          const isFlatZero = values.every((v) => v === 0);
-          return (
-            <span key={key} style={{ ...CS.legendItem, opacity: isFlatZero ? 0.55 : 1 }}>
-              <span style={{ ...CS.legendDot, background: color }} />
-              <span>{label}</span>
-            </span>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-/* ------------------------------ Styles ------------------------------ */
-
 const PS = {
   layout: {
     position: 'relative',
@@ -703,7 +738,6 @@ const PS = {
     background: '#ffffff',
     transition: 'margin-right 200ms ease',
   },
-
   resultHead: {
     display: 'flex',
     alignItems: 'center',
@@ -713,7 +747,8 @@ const PS = {
     borderBottom: '1px solid #e5e7eb',
   },
   headTagline: { fontSize: '0.85rem', color: '#475569', flex: 1 },
-  headControls: { display: 'inline-flex', alignItems: 'center', gap: '12px' },
+  code: { fontSize: '0.8rem', fontFamily: 'ui-monospace, Menlo, Consolas, monospace' },
+  headControls: { display: 'inline-flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' },
   switch: {
     display: 'inline-flex',
     padding: '3px',
@@ -751,7 +786,6 @@ const PS = {
     borderRadius: '50%',
     cursor: 'pointer',
   },
-
   body: { padding: '18px 22px 28px', display: 'flex', flexDirection: 'column', gap: '16px' },
   chartCard: {
     background: '#ffffff',
@@ -759,7 +793,23 @@ const PS = {
     borderRadius: '12px',
     padding: '16px 18px 18px',
   },
-
+  loading: { padding: '48px', textAlign: 'center', color: '#64748b', fontSize: '0.9rem' },
+  errorBox: { padding: '24px', color: '#b91c1c', fontSize: '0.9rem' },
+  legend: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: '6px 18px',
+    padding: '6px 4px 0',
+    borderTop: '1px solid #f1f5f9',
+  },
+  legendItem: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '6px',
+    fontSize: '0.76rem',
+    color: '#334155',
+  },
+  legendDot: { width: '10px', height: '10px', borderRadius: '50%', display: 'inline-block' },
   drawer: {
     position: 'absolute',
     top: 0,
@@ -794,11 +844,10 @@ const PS = {
     cursor: 'pointer',
   },
   drawerBody: { flex: 1, overflowY: 'auto', padding: '14px 16px 18px' },
-
+  filterHint: { fontSize: '0.72rem', color: '#64748b', margin: '0 0 12px', lineHeight: 1.45 },
   selectAllRow: { paddingTop: '10px', paddingBottom: '6px', marginBottom: '4px' },
   categoryGroup: { padding: '6px 0' },
   categoryHeader: { paddingBottom: '2px' },
-
   list: {
     listStyle: 'none',
     padding: '0 0 0 28px',
@@ -825,31 +874,12 @@ const PS = {
     marginRight: '2px',
     flexShrink: 0,
   },
-  targetSuffix: { color: '#1f2937' },
   targetUrl: {
     fontSize: '0.72rem',
     color: '#64748b',
     paddingLeft: '42px',
     marginTop: '-2px',
     fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-  },
-
-  drawerFoot: {
-    borderTop: '1px solid #e5e7eb',
-    padding: '12px 18px',
-    display: 'flex',
-    justifyContent: 'flex-end',
-  },
-  applyBtn: {
-    padding: '8px 22px',
-    background: '#1d4ed8',
-    color: '#ffffff',
-    border: 'none',
-    borderRadius: '6px',
-    fontSize: '0.82rem',
-    fontWeight: 600,
-    cursor: 'pointer',
-    fontFamily: 'inherit',
   },
 };
 
@@ -906,27 +936,6 @@ const FS = {
     cursor: 'pointer',
     fontFamily: 'inherit',
   },
-};
-
-const CS = {
-  wrap: { display: 'flex', flexDirection: 'column', gap: '8px' },
-  svgWrap: { width: '100%' },
-  legend: {
-    display: 'flex',
-    flexWrap: 'wrap',
-    gap: '6px 18px',
-    marginTop: '6px',
-    padding: '6px 4px 0',
-    borderTop: '1px solid #f1f5f9',
-  },
-  legendItem: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: '6px',
-    fontSize: '0.76rem',
-    color: '#334155',
-  },
-  legendDot: { width: '10px', height: '10px', borderRadius: '50%', display: 'inline-block' },
 };
 
 const CK = {

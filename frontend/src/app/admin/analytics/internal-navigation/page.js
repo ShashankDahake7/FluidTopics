@@ -218,7 +218,6 @@ export default function InternalNavigationPage() {
     <AnalyticsShell
       active="internal-navigation"
       breadcrumb={{ prefix: 'Traffic', title: 'Internal navigation' }}
-      feedbackSubject="Feedback about internal navigation"
       toolbarExtras={
         <>
           <div style={PS.dateIndicator} title="Date range" aria-label="Date range">
